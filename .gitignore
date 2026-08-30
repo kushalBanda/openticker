@@ -1,3 +1,6 @@
+# Reference repos cloned for study (kept locally, not vendored into this repo)
+docs/resources/*/
+
 # Logs
 logs
 *.log
