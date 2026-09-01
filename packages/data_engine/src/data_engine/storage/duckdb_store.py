@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -18,7 +18,7 @@ class DuckDBStore:
             CREATE TABLE IF NOT EXISTS {TABLE_BARS} (
                 symbol TEXT NOT NULL,
                 interval TEXT NOT NULL,
-                ts TIMESTAMP NOT NULL,
+                ts TIMESTAMPTZ NOT NULL,
                 open DOUBLE NOT NULL,
                 high DOUBLE NOT NULL,
                 low DOUBLE NOT NULL,
@@ -31,7 +31,7 @@ class DuckDBStore:
         self._conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {TABLE_TICKS} (
                 symbol TEXT NOT NULL,
-                ts TIMESTAMP NOT NULL,
+                ts TIMESTAMPTZ NOT NULL,
                 price DOUBLE NOT NULL,
                 volume BIGINT NOT NULL,
                 provider TEXT NOT NULL
@@ -68,12 +68,25 @@ class DuckDBStore:
     def find_missing_range(
         self, symbol: str, interval: str, from_: datetime, to: datetime
     ) -> list[tuple[datetime, datetime]]:
+        # Detects a leading gap (requested range starts before the earliest
+        # cached bar) and a trailing gap (ends after the latest cached bar).
+        # Does not detect a hole in the middle of an otherwise-cached range,
+        # that would need a trading-calendar model to distinguish "no trading
+        # that day" from "never fetched", out of scope for this slice.
         existing = self.query_bars(symbol, interval, from_, to)
         if not existing:
             return [(from_, to)]
-        if existing[0].ts <= from_ and existing[-1].ts >= to:
-            return []
-        return [(from_, to)]
+
+        gaps: list[tuple[datetime, datetime]] = []
+        earliest = existing[0].ts
+        latest = existing[-1].ts
+
+        if earliest > from_:
+            gaps.append((from_, earliest - timedelta(microseconds=1)))
+        if latest < to:
+            gaps.append((latest + timedelta(microseconds=1), to))
+
+        return gaps
 
     def write_bars(self, bars: list[Bar]) -> None:
         if not bars:

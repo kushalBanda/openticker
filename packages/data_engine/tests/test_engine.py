@@ -46,3 +46,44 @@ async def test_tracer_bullet_fetch_historical_end_to_end(duckdb_store: DuckDBSto
     assert result[0].close == 104.0
     assert result[1].close == 107.0
     assert adapter.fetch_historical_calls == 1
+
+
+async def test_fetch_historical_extends_cached_range_fetches_only_the_gap(
+    duckdb_store: DuckDBStore,
+) -> None:
+    all_bars = [
+        Bar(
+            symbol="RELIANCE",
+            interval="1d",
+            ts=datetime(2026, 1, day, tzinfo=UTC),
+            open=100.0,
+            high=100.0,
+            low=100.0,
+            close=100.0,
+            volume=100,
+            provider="fake",
+        )
+        for day in range(1, 6)
+    ]
+    adapter = FakeAdapter(bars=all_bars)
+    engine = DataEngine(
+        adapters={"fake": adapter},
+        store=duckdb_store,
+        provider_routes={"RELIANCE": "fake"},
+    )
+
+    first = await engine.fetch_historical(
+        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+    )
+    assert len(first) == 2
+    assert adapter.fetch_historical_calls == 1
+
+    extended = await engine.fetch_historical(
+        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 5, tzinfo=UTC)
+    )
+
+    assert len(extended) == 5
+    assert adapter.fetch_historical_calls == 2
+    second_call_from, second_call_to = adapter.fetch_historical_ranges[1]
+    assert second_call_from > datetime(2026, 1, 2, tzinfo=UTC)
+    assert second_call_to == datetime(2026, 1, 5, tzinfo=UTC)
