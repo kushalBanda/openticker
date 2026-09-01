@@ -1,4 +1,4 @@
-import data_engine.adapters.groww.intervals  # noqa: F401
+import data_engine.adapters.groww.intervals
 import pytest
 from data_engine.core.constants import CANONICAL_INTERVALS, PROVIDER_GROWW
 from data_engine.core.exceptions import DataUnavailableError
@@ -7,7 +7,7 @@ from data_engine.core.intervals import to_provider_interval
 
 @pytest.mark.parametrize(
     ("canonical", "expected"),
-    [("1m", 1), ("5m", 5), ("1d", "day")],
+    [("1m", "1minute"), ("5m", "5minute"), ("1d", "1day")],
 )
 def test_to_provider_interval_groww(canonical: str, expected: str | int) -> None:
     assert to_provider_interval(PROVIDER_GROWW, canonical) == expected

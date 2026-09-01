@@ -5,7 +5,7 @@ from http import HTTPStatus
 import httpx
 
 from data_engine.adapters.kite import (
-    intervals as _register_kite_intervals,  # noqa: F401
+    intervals as _register_kite_intervals,
 )
 from data_engine.adapters.kite.instrument_master import InstrumentMaster
 from data_engine.adapters.kite.mapper import map_candle_to_bar
@@ -68,7 +68,7 @@ class KiteAdapter:
 
     async def subscribe_live(self, symbols: list[str]) -> AsyncIterator[Tick]:
         raise NotImplementedError("Kite live tick subscription lands in Slice 7")
-        yield  # pragma: no cover
+        yield
 
     async def disconnect(self) -> None:
         await self._http.aclose()

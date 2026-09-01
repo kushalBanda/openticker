@@ -8,6 +8,7 @@ dependencies = [
     "pyotp>=2.9",
     "pytz>=2024.2",
     "httpx>=0.27",
+    "growwapi>=1.5",
 ]
 
 [build-system]

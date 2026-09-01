@@ -38,5 +38,9 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 mypy_path = "packages/data_engine/src"
 
+[[tool.mypy.overrides]]
+module = ["growwapi", "growwapi.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

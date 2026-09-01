@@ -1,4 +1,4 @@
-import data_engine.adapters.kite.intervals  # noqa: F401
+import data_engine.adapters.kite.intervals
 import pytest
 from data_engine.core.constants import CANONICAL_INTERVALS, PROVIDER_KITE
 from data_engine.core.exceptions import DataUnavailableError

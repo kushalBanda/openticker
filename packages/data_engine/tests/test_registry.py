@@ -26,9 +26,8 @@ def test_unknown_provider_raises() -> None:
 
 
 def test_kite_and_groww_register_under_constants_names() -> None:
-    import data_engine.adapters.kite.adapter  # noqa: F401
+    import data_engine.adapters.groww.adapter
+    import data_engine.adapters.kite.adapter
 
     assert get_adapter_class(PROVIDER_KITE).__name__ == "KiteAdapter"
-
-    register_adapter(PROVIDER_GROWW)(DummyAdapter)
-    assert get_adapter_class(PROVIDER_GROWW) is DummyAdapter
+    assert get_adapter_class(PROVIDER_GROWW).__name__ == "GrowwAdapter"
