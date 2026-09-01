@@ -28,6 +28,7 @@ dev = [
     "black>=24.10",
     "ruff>=0.7",
     "respx>=0.21",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.mypy]

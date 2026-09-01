@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from datetime import datetime
 
+from data_engine.core.exceptions import DataUnavailableError
 from data_engine.core.interfaces import MarketDataAdapter
 from data_engine.core.models import Bar, Tick
 from data_engine.storage.duckdb_store import DuckDBStore
@@ -20,7 +21,13 @@ class DataEngine:
     def _resolve_provider(self, symbol: str, provider: str | None) -> str:
         if provider is not None:
             return provider
-        return self._provider_routes[symbol]
+        try:
+            return self._provider_routes[symbol]
+        except KeyError:
+            raise DataUnavailableError(
+                f"no provider route configured for {symbol!r}, "
+                "pass an explicit provider= or add it to providers.yaml"
+            ) from None
 
     async def fetch_historical(
         self,
