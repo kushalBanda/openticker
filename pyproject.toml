@@ -4,9 +4,21 @@ version = "0.1.0"
 description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Quant Research Layer, Execution Engine"
 requires-python = ">=3.13"
 dependencies = [
-    "duckdb>=1.1",
-    "pyotp>=2.9",
+    "data-engine",
 ]
+
+[tool.uv.sources]
+data-engine = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
 
 [dependency-groups]
 dev = [
@@ -23,6 +35,7 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+mypy_path = "packages/data_engine/src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
