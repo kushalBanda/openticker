@@ -145,4 +145,16 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# DataEngine local storage (fetched market data, not source)
+data/
+
+# Docs
 docs/

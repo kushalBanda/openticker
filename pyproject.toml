@@ -1,0 +1,28 @@
+[project]
+name = "quant-platform"
+version = "0.1.0"
+description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Quant Research Layer, Execution Engine"
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb>=1.1",
+    "pyotp>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.13",
+    "black>=24.10",
+    "ruff>=0.7",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
