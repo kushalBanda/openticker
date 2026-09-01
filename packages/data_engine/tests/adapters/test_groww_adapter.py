@@ -4,10 +4,15 @@ from unittest.mock import patch
 
 import pytest
 from data_engine.adapters.groww.adapter import GrowwAdapter
-from data_engine.core.exceptions import AuthExpiredError, RateLimitError
+from data_engine.core.exceptions import (
+    AuthExpiredError,
+    DataUnavailableError,
+    RateLimitError,
+)
 from growwapi import GrowwAPI
 from growwapi.groww.exceptions import (
     GrowwAPIAuthenticationException,
+    GrowwAPINotFoundException,
     GrowwAPIRateLimitException,
 )
 
@@ -22,13 +27,18 @@ _HISTORICAL_RESPONSE: dict[str, Any] = {
 async def test_groww_adapter_fetch_historical_happy_path() -> None:
     with (
         patch.object(GrowwAPI, "get_access_token", return_value="fake-token"),
-        patch.object(GrowwAPI, "get_historical_candles", return_value=_HISTORICAL_RESPONSE),
+        patch.object(
+            GrowwAPI, "get_historical_candles", return_value=_HISTORICAL_RESPONSE
+        ),
     ):
         adapter = GrowwAdapter(api_key="key", totp_secret="JBSWY3DPEHPK3PXP")
         await adapter.connect()
 
         bars = await adapter.fetch_historical(
-            "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 4, tzinfo=UTC),
         )
 
     assert len(bars) == 2
@@ -51,7 +61,10 @@ async def test_groww_adapter_fetch_historical_auth_expired() -> None:
 
         with pytest.raises(AuthExpiredError):
             await adapter.fetch_historical(
-                "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+                "RELIANCE",
+                "1d",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 4, tzinfo=UTC),
             )
     await adapter.disconnect()
 
@@ -70,6 +83,31 @@ async def test_groww_adapter_fetch_historical_rate_limited() -> None:
 
         with pytest.raises(RateLimitError):
             await adapter.fetch_historical(
-                "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+                "RELIANCE",
+                "1d",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 4, tzinfo=UTC),
+            )
+    await adapter.disconnect()
+
+
+async def test_groww_adapter_fetch_historical_generic_error_wrapped() -> None:
+    with (
+        patch.object(GrowwAPI, "get_access_token", return_value="fake-token"),
+        patch.object(
+            GrowwAPI,
+            "get_historical_candles",
+            side_effect=GrowwAPINotFoundException(),
+        ),
+    ):
+        adapter = GrowwAdapter(api_key="key", totp_secret="JBSWY3DPEHPK3PXP")
+        await adapter.connect()
+
+        with pytest.raises(DataUnavailableError):
+            await adapter.fetch_historical(
+                "NOT_A_REAL_SYMBOL",
+                "1d",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 4, tzinfo=UTC),
             )
     await adapter.disconnect()

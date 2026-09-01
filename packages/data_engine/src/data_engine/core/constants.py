@@ -4,7 +4,16 @@ from typing import Final
 PROVIDER_KITE: Final = "kite"
 PROVIDER_GROWW: Final = "groww"
 
-CANONICAL_INTERVALS: Final[tuple[str, ...]] = ("1m", "3m", "5m", "10m", "15m", "30m", "60m", "1d")
+CANONICAL_INTERVALS: Final[tuple[str, ...]] = (
+    "1m",
+    "3m",
+    "5m",
+    "10m",
+    "15m",
+    "30m",
+    "60m",
+    "1d",
+)
 
 DEFAULT_DB_PATH: Final = Path("data/quant.duckdb")
 TABLE_BARS: Final = "bars"

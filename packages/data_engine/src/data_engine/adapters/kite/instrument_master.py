@@ -36,7 +36,9 @@ class InstrumentMaster:
             headers=kite_auth_headers(self._api_key, self._access_token),
         )
         if response.status_code == HTTPStatus.FORBIDDEN:
-            raise AuthExpiredError("Kite session expired while fetching instrument master")
+            raise AuthExpiredError(
+                "Kite session expired while fetching instrument master"
+            )
         response.raise_for_status()
 
         reader = csv.DictReader(io.StringIO(response.text))

@@ -6,7 +6,11 @@ import pytest
 import respx
 from data_engine.adapters.kite.adapter import KiteAdapter
 from data_engine.core.constants import KITE_BASE_URL
-from data_engine.core.exceptions import AuthExpiredError, RateLimitError
+from data_engine.core.exceptions import (
+    AuthExpiredError,
+    DataUnavailableError,
+    RateLimitError,
+)
 
 _INSTRUMENTS_CSV = (
     "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
@@ -38,7 +42,10 @@ async def test_kite_adapter_fetch_historical_happy_path() -> None:
     await adapter.connect()
 
     bars = await adapter.fetch_historical(
-        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+        "RELIANCE",
+        "1d",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 4, tzinfo=UTC),
     )
 
     assert len(bars) == 2
@@ -61,7 +68,10 @@ async def test_kite_adapter_fetch_historical_auth_expired() -> None:
 
     with pytest.raises(AuthExpiredError):
         await adapter.fetch_historical(
-            "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 4, tzinfo=UTC),
         )
     await adapter.disconnect()
 
@@ -80,6 +90,28 @@ async def test_kite_adapter_fetch_historical_rate_limited() -> None:
 
     with pytest.raises(RateLimitError):
         await adapter.fetch_historical(
-            "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 4, tzinfo=UTC),
+        )
+    await adapter.disconnect()
+
+
+@respx.mock
+async def test_kite_adapter_fetch_historical_unknown_symbol_propagates() -> None:
+    respx.get(f"{KITE_BASE_URL}/instruments").mock(
+        return_value=httpx.Response(200, text=_INSTRUMENTS_CSV)
+    )
+
+    adapter = KiteAdapter(api_key="key", access_token="token")
+    await adapter.connect()
+
+    with pytest.raises(DataUnavailableError):
+        await adapter.fetch_historical(
+            "NOT_A_REAL_SYMBOL",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 4, tzinfo=UTC),
         )
     await adapter.disconnect()

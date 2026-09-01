@@ -19,7 +19,9 @@ def get_adapter_class(name: str) -> type[MarketDataAdapter]:
     try:
         return _REGISTRY[name]
     except KeyError:
-        raise DataUnavailableError(f"no adapter registered for provider {name!r}") from None
+        raise DataUnavailableError(
+            f"no adapter registered for provider {name!r}"
+        ) from None
 
 
 class AdapterFactory:

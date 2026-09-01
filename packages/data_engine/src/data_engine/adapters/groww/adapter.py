@@ -7,12 +7,11 @@ from growwapi import GrowwAPI
 from growwapi.groww.exceptions import (
     GrowwAPIAuthenticationException,
     GrowwAPIAuthorisationException,
+    GrowwAPIException,
     GrowwAPIRateLimitException,
 )
 
-from data_engine.adapters.groww import (
-    intervals as _register_groww_intervals,
-)
+from data_engine.adapters.groww.intervals import GROWW_INTERVAL_MAP
 from data_engine.adapters.groww.mapper import map_candle_to_bar
 from data_engine.core.constants import (
     GROWW_NON_TRADING_REQUESTS_PER_SECOND,
@@ -23,10 +22,12 @@ from data_engine.core.exceptions import (
     DataUnavailableError,
     RateLimitError,
 )
-from data_engine.core.intervals import to_provider_interval
+from data_engine.core.intervals import register_interval_map, to_provider_interval
 from data_engine.core.models import Bar, Tick
 from data_engine.core.rate_limiter import RateLimiter
 from data_engine.core.registry import register_adapter
+
+register_interval_map(PROVIDER_GROWW, GROWW_INTERVAL_MAP)
 
 
 @register_adapter(PROVIDER_GROWW)
@@ -48,7 +49,9 @@ class GrowwAdapter:
         self, symbol: str, interval: str, from_: datetime, to: datetime
     ) -> list[Bar]:
         if self._client is None:
-            raise DataUnavailableError("GrowwAdapter.connect() must be called before use")
+            raise DataUnavailableError(
+                "GrowwAdapter.connect() must be called before use"
+            )
 
         groww_interval = to_provider_interval(PROVIDER_GROWW, interval)
         await self._rate_limiter.acquire()
@@ -64,9 +67,17 @@ class GrowwAdapter:
                 candle_interval=groww_interval,
             )
         except (GrowwAPIAuthenticationException, GrowwAPIAuthorisationException) as exc:
-            raise AuthExpiredError("Groww session expired during fetch_historical") from exc
+            raise AuthExpiredError(
+                "Groww session expired during fetch_historical"
+            ) from exc
         except GrowwAPIRateLimitException as exc:
-            raise RateLimitError("Groww rejected the call for exceeding its rate limit") from exc
+            raise RateLimitError(
+                "Groww rejected the call for exceeding its rate limit"
+            ) from exc
+        except GrowwAPIException as exc:
+            raise DataUnavailableError(
+                f"Groww historical fetch failed for {symbol!r}: {exc.msg}"
+            ) from exc
 
         candles = response["candles"]
         return [map_candle_to_bar(c, symbol, interval) for c in candles]

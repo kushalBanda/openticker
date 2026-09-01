@@ -1,6 +1,3 @@
-from data_engine.core.constants import PROVIDER_KITE
-from data_engine.core.intervals import register_interval_map
-
 KITE_INTERVAL_MAP: dict[str, str] = {
     "1m": "minute",
     "3m": "3minute",
@@ -11,5 +8,3 @@ KITE_INTERVAL_MAP: dict[str, str] = {
     "60m": "60minute",
     "1d": "day",
 }
-
-register_interval_map(PROVIDER_KITE, KITE_INTERVAL_MAP)

@@ -8,8 +8,11 @@ from data_engine.storage.duckdb_store import DuckDBStore
 
 
 class FakeAdapter:
-    def __init__(self, bars: list[Bar] | None = None) -> None:
+    def __init__(
+        self, bars: list[Bar] | None = None, raises: Exception | None = None
+    ) -> None:
         self.bars = bars or []
+        self.raises = raises
         self.fetch_historical_calls = 0
         self.fetch_historical_ranges: list[tuple[datetime, datetime]] = []
 
@@ -21,6 +24,8 @@ class FakeAdapter:
     ) -> list[Bar]:
         self.fetch_historical_calls += 1
         self.fetch_historical_ranges.append((from_, to))
+        if self.raises is not None:
+            raise self.raises
         return [b for b in self.bars if from_ <= b.ts <= to]
 
     async def subscribe_live(self, symbols: list[str]) -> AsyncIterator[Tick]:

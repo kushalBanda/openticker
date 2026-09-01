@@ -18,7 +18,9 @@ async def test_resolve_after_refresh() -> None:
         return_value=httpx.Response(200, text=_CSV_BODY)
     )
     async with httpx.AsyncClient() as client:
-        master = InstrumentMaster(api_key="key", access_token="token", http_client=client)
+        master = InstrumentMaster(
+            api_key="key", access_token="token", http_client=client
+        )
         await master.refresh()
         assert master.resolve("RELIANCE") == 128083204
         assert master.last_refreshed() is not None
@@ -30,7 +32,9 @@ async def test_resolve_unknown_symbol_raises() -> None:
         return_value=httpx.Response(200, text=_CSV_BODY)
     )
     async with httpx.AsyncClient() as client:
-        master = InstrumentMaster(api_key="key", access_token="token", http_client=client)
+        master = InstrumentMaster(
+            api_key="key", access_token="token", http_client=client
+        )
         await master.refresh()
         with pytest.raises(DataUnavailableError):
             master.resolve("UNKNOWN_SYMBOL")
@@ -40,6 +44,8 @@ async def test_resolve_unknown_symbol_raises() -> None:
 async def test_refresh_raises_auth_expired_on_403() -> None:
     respx.get(f"{KITE_BASE_URL}/instruments").mock(return_value=httpx.Response(403))
     async with httpx.AsyncClient() as client:
-        master = InstrumentMaster(api_key="key", access_token="expired", http_client=client)
+        master = InstrumentMaster(
+            api_key="key", access_token="expired", http_client=client
+        )
         with pytest.raises(AuthExpiredError):
             await master.refresh()

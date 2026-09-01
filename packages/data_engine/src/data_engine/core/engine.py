@@ -42,7 +42,9 @@ class DataEngine:
         if gaps:
             adapter = self._adapters[resolved_provider]
             for gap_from, gap_to in gaps:
-                fetched = await adapter.fetch_historical(symbol, interval, gap_from, gap_to)
+                fetched = await adapter.fetch_historical(
+                    symbol, interval, gap_from, gap_to
+                )
                 self._store.write_bars(fetched)
         return self._store.query_bars(symbol, interval, from_, to)
 

@@ -1,8 +1,10 @@
-import data_engine.adapters.kite.intervals  # noqa: F401
 import pytest
+from data_engine.adapters.kite.intervals import KITE_INTERVAL_MAP
 from data_engine.core.constants import CANONICAL_INTERVALS, PROVIDER_KITE
 from data_engine.core.exceptions import DataUnavailableError
-from data_engine.core.intervals import to_provider_interval
+from data_engine.core.intervals import register_interval_map, to_provider_interval
+
+register_interval_map(PROVIDER_KITE, KITE_INTERVAL_MAP)
 
 
 @pytest.mark.parametrize(

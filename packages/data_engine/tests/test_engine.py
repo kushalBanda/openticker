@@ -3,12 +3,18 @@ from datetime import UTC, datetime
 import pytest
 from conftest import FakeAdapter
 from data_engine.core.engine import DataEngine
-from data_engine.core.exceptions import DataUnavailableError
+from data_engine.core.exceptions import (
+    AuthExpiredError,
+    DataUnavailableError,
+    RateLimitError,
+)
 from data_engine.core.models import Bar
 from data_engine.storage.duckdb_store import DuckDBStore
 
 
-async def test_tracer_bullet_fetch_historical_end_to_end(duckdb_store: DuckDBStore) -> None:
+async def test_tracer_bullet_fetch_historical_end_to_end(
+    duckdb_store: DuckDBStore,
+) -> None:
     fake_bars = [
         Bar(
             symbol="RELIANCE",
@@ -41,7 +47,10 @@ async def test_tracer_bullet_fetch_historical_end_to_end(duckdb_store: DuckDBSto
     )
 
     result = await engine.fetch_historical(
-        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 4, tzinfo=UTC)
+        "RELIANCE",
+        "1d",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 4, tzinfo=UTC),
     )
 
     assert len(result) == 2
@@ -75,13 +84,19 @@ async def test_fetch_historical_extends_cached_range_fetches_only_the_gap(
     )
 
     first = await engine.fetch_historical(
-        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+        "RELIANCE",
+        "1d",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 2, tzinfo=UTC),
     )
     assert len(first) == 2
     assert adapter.fetch_historical_calls == 1
 
     extended = await engine.fetch_historical(
-        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 5, tzinfo=UTC)
+        "RELIANCE",
+        "1d",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 5, tzinfo=UTC),
     )
 
     assert len(extended) == 5
@@ -131,7 +146,10 @@ async def test_explicit_provider_override_reaches_the_named_adapter(
     )
 
     default_result = await engine.fetch_historical(
-        "RELIANCE", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 3, tzinfo=UTC)
+        "RELIANCE",
+        "1d",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 3, tzinfo=UTC),
     )
     assert default_result[0].close == 100.0
     assert kite_adapter.fetch_historical_calls == 1
@@ -148,7 +166,9 @@ async def test_explicit_provider_override_reaches_the_named_adapter(
     assert groww_adapter.fetch_historical_calls == 1
 
 
-async def test_fetch_historical_unmapped_symbol_raises(duckdb_store: DuckDBStore) -> None:
+async def test_fetch_historical_unmapped_symbol_raises(
+    duckdb_store: DuckDBStore,
+) -> None:
     engine = DataEngine(
         adapters={"kite": FakeAdapter()},
         store=duckdb_store,
@@ -157,5 +177,68 @@ async def test_fetch_historical_unmapped_symbol_raises(duckdb_store: DuckDBStore
 
     with pytest.raises(DataUnavailableError):
         await engine.fetch_historical(
-            "UNMAPPED", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+            "UNMAPPED",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
         )
+
+
+async def test_fetch_historical_auth_expired_propagates(
+    duckdb_store: DuckDBStore,
+) -> None:
+    adapter = FakeAdapter(raises=AuthExpiredError("session expired"))
+    engine = DataEngine(
+        adapters={"fake": adapter},
+        store=duckdb_store,
+        provider_routes={"RELIANCE": "fake"},
+    )
+
+    with pytest.raises(AuthExpiredError):
+        await engine.fetch_historical(
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
+        )
+    assert adapter.fetch_historical_calls == 1
+
+
+async def test_fetch_historical_rate_limit_propagates(
+    duckdb_store: DuckDBStore,
+) -> None:
+    adapter = FakeAdapter(raises=RateLimitError("too many requests"))
+    engine = DataEngine(
+        adapters={"fake": adapter},
+        store=duckdb_store,
+        provider_routes={"RELIANCE": "fake"},
+    )
+
+    with pytest.raises(RateLimitError):
+        await engine.fetch_historical(
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
+        )
+    assert adapter.fetch_historical_calls == 1
+
+
+async def test_fetch_historical_data_unavailable_propagates(
+    duckdb_store: DuckDBStore,
+) -> None:
+    adapter = FakeAdapter(raises=DataUnavailableError("symbol not found upstream"))
+    engine = DataEngine(
+        adapters={"fake": adapter},
+        store=duckdb_store,
+        provider_routes={"RELIANCE": "fake"},
+    )
+
+    with pytest.raises(DataUnavailableError):
+        await engine.fetch_historical(
+            "RELIANCE",
+            "1d",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
+        )
+    assert adapter.fetch_historical_calls == 1

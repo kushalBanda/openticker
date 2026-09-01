@@ -4,10 +4,8 @@ from http import HTTPStatus
 
 import httpx
 
-from data_engine.adapters.kite import (
-    intervals as _register_kite_intervals,
-)
 from data_engine.adapters.kite.instrument_master import InstrumentMaster
+from data_engine.adapters.kite.intervals import KITE_INTERVAL_MAP
 from data_engine.adapters.kite.mapper import map_candle_to_bar
 from data_engine.core.constants import (
     KITE_BASE_URL,
@@ -20,10 +18,12 @@ from data_engine.core.exceptions import (
     DataUnavailableError,
     RateLimitError,
 )
-from data_engine.core.intervals import to_provider_interval
+from data_engine.core.intervals import register_interval_map, to_provider_interval
 from data_engine.core.models import Bar, Tick
 from data_engine.core.rate_limiter import RateLimiter
 from data_engine.core.registry import register_adapter
+
+register_interval_map(PROVIDER_KITE, KITE_INTERVAL_MAP)
 
 
 @register_adapter(PROVIDER_KITE)
