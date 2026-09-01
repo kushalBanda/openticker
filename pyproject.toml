@@ -27,6 +27,7 @@ dev = [
     "mypy>=1.13",
     "black>=24.10",
     "ruff>=0.7",
+    "respx>=0.21",
 ]
 
 [tool.mypy]
