@@ -1,9 +1,10 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime
+from typing import Any
 
 import pyotp
-from growwapi import GrowwAPI
+from growwapi import GrowwAPI, GrowwFeed
 from growwapi.groww.exceptions import (
     GrowwAPIAuthenticationException,
     GrowwAPIAuthorisationException,
@@ -12,7 +13,7 @@ from growwapi.groww.exceptions import (
 )
 
 from data_engine.adapters.groww.intervals import GROWW_INTERVAL_MAP
-from data_engine.adapters.groww.mapper import map_candle_to_bar
+from data_engine.adapters.groww.mapper import map_candle_to_bar, map_tick
 from data_engine.core.constants import (
     GROWW_NON_TRADING_REQUESTS_PER_SECOND,
     PROVIDER_GROWW,
@@ -37,6 +38,8 @@ class GrowwAdapter:
         self._totp_secret = totp_secret
         self._client: GrowwAPI | None = None
         self._rate_limiter = RateLimiter(GROWW_NON_TRADING_REQUESTS_PER_SECOND)
+        self._feed: GrowwFeed | None = None
+        self._feed_instruments: list[dict[str, str]] = []
 
     async def connect(self) -> None:
         totp = pyotp.TOTP(self._totp_secret).now()
@@ -83,8 +86,71 @@ class GrowwAdapter:
         return [map_candle_to_bar(c, symbol, interval) for c in candles]
 
     async def subscribe_live(self, symbols: list[str]) -> AsyncIterator[Tick]:
-        raise NotImplementedError("Groww live tick subscription lands in Slice 8")
-        yield
+        if self._client is None:
+            raise DataUnavailableError("GrowwAdapter.connect() must be called before use")
+
+        # Ground truth for exchange/segment/exchange_token and the ltp/volume/
+        # tsInMillis field names, source-verified against the installed
+        # growwapi SDK (proto_parser.py, feed.py, constants.py), not
+        # documented anywhere and not run against a live connection.
+        instrument_rows = {
+            s: self._client.get_instrument_by_groww_symbol(s) for s in symbols
+        }
+        instrument_list = [
+            {
+                "exchange": row["exchange"],
+                "segment": row["segment"],
+                "exchange_token": row["exchange_token"],
+            }
+            for row in instrument_rows.values()
+        ]
+        key_to_symbol = {
+            (row["exchange"], row["segment"], row["exchange_token"]): symbol
+            for symbol, row in instrument_rows.items()
+        }
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[Tick | Exception] = asyncio.Queue()
+        feed = GrowwFeed(self._client)
+
+        def on_data_received(meta: dict[str, Any]) -> None:
+            try:
+                key = (meta["exchange"], meta["segment"], meta["feed_key"])
+                symbol = key_to_symbol.get(key)
+                if symbol is None:
+                    return
+                ltp_data = (
+                    feed.get_ltp()
+                    .get(meta["exchange"], {})
+                    .get(meta["segment"], {})
+                    .get(meta["feed_key"])
+                )
+                if ltp_data is None:
+                    return
+                tick = map_tick(ltp_data, symbol)
+                loop.call_soon_threadsafe(queue.put_nowait, tick)
+            except Exception as exc:
+                error = DataUnavailableError(f"Groww feed callback failed: {exc}")
+                loop.call_soon_threadsafe(queue.put_nowait, error)
+
+        self._feed = feed
+        self._feed_instruments = instrument_list
+        feed.subscribe_ltp(instrument_list, on_data_received=on_data_received)
+
+        try:
+            while True:
+                item = await queue.get()
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            feed.unsubscribe_ltp(instrument_list)
+            self._feed = None
+            self._feed_instruments = []
 
     async def disconnect(self) -> None:
+        if self._feed is not None and self._feed_instruments:
+            self._feed.unsubscribe_ltp(self._feed_instruments)
+            self._feed = None
+            self._feed_instruments = []
         self._client = None

@@ -51,8 +51,13 @@ class DataEngine:
     async def subscribe_live(
         self, symbols: list[str], provider: str | None = None
     ) -> AsyncIterator[Tick]:
-        resolved_provider = provider or next(iter(self._adapters))
-        adapter = self._adapters[resolved_provider]
+        resolved_providers = {self._resolve_provider(s, provider) for s in symbols}
+        if len(resolved_providers) > 1:
+            raise DataUnavailableError(
+                f"symbols {symbols!r} route to different providers "
+                f"{resolved_providers!r}, subscribe_live needs one call per provider"
+            )
+        adapter = self._adapters[resolved_providers.pop()]
         async for tick in adapter.subscribe_live(symbols):
             self._store.write_tick(tick)
             yield tick

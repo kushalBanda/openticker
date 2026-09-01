@@ -1,5 +1,6 @@
+import asyncio
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest

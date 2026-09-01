@@ -31,6 +31,13 @@ dev = [
     "types-pyyaml>=6.0",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# These tests deliberately construct naive datetimes to reproduce Kite's
+# real WebSocket tick shape (exchange_timestamp/last_trade_time come back
+# with no tzinfo), not a bug, DTZ001 doesn't apply here.
+"packages/data_engine/tests/adapters/test_kite_mapper.py" = ["DTZ001"]
+"packages/data_engine/tests/adapters/test_kite_adapter.py" = ["DTZ001"]
+
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -40,7 +47,7 @@ disallow_untyped_defs = true
 mypy_path = "packages/data_engine/src"
 
 [[tool.mypy.overrides]]
-module = ["growwapi", "growwapi.*"]
+module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

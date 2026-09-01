@@ -1,12 +1,15 @@
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime
 from http import HTTPStatus
+from typing import Any
 
 import httpx
+from kiteconnect import KiteTicker
 
 from data_engine.adapters.kite.instrument_master import InstrumentMaster
 from data_engine.adapters.kite.intervals import KITE_INTERVAL_MAP
-from data_engine.adapters.kite.mapper import map_candle_to_bar
+from data_engine.adapters.kite.mapper import map_candle_to_bar, map_tick
 from data_engine.core.constants import (
     KITE_BASE_URL,
     KITE_HISTORICAL_REQUESTS_PER_SECOND,
@@ -34,6 +37,7 @@ class KiteAdapter:
         self._http = httpx.AsyncClient(base_url=KITE_BASE_URL)
         self._instrument_master = InstrumentMaster(api_key, access_token, self._http)
         self._rate_limiter = RateLimiter(KITE_HISTORICAL_REQUESTS_PER_SECOND)
+        self._ticker: KiteTicker | None = None
 
     async def connect(self) -> None:
         await self._instrument_master.refresh()
@@ -67,8 +71,51 @@ class KiteAdapter:
         return [map_candle_to_bar(c, symbol, interval) for c in candles]
 
     async def subscribe_live(self, symbols: list[str]) -> AsyncIterator[Tick]:
-        raise NotImplementedError("Kite live tick subscription lands in Slice 7")
-        yield
+        token_to_symbol = {self._instrument_master.resolve(s): s for s in symbols}
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[Tick | Exception] = asyncio.Queue()
+
+        ticker = KiteTicker(self._api_key, self._access_token)
+
+        def on_ticks(_ws: object, ticks: list[dict[str, Any]]) -> None:
+            for raw in ticks:
+                symbol = token_to_symbol.get(raw["instrument_token"])
+                if symbol is None:
+                    continue
+                tick = map_tick(raw, symbol)
+                loop.call_soon_threadsafe(queue.put_nowait, tick)
+
+        def on_connect(ws: KiteTicker, _response: object) -> None:
+            ws.subscribe(list(token_to_symbol))
+
+        def on_close(_ws: object, code: int, reason: str) -> None:
+            error = AuthExpiredError(f"Kite WebSocket closed: {code} {reason}")
+            loop.call_soon_threadsafe(queue.put_nowait, error)
+
+        def on_error(_ws: object, code: int, reason: str) -> None:
+            error = DataUnavailableError(f"Kite WebSocket error: {code} {reason}")
+            loop.call_soon_threadsafe(queue.put_nowait, error)
+
+        ticker.on_ticks = on_ticks
+        ticker.on_connect = on_connect
+        ticker.on_close = on_close
+        ticker.on_error = on_error
+        self._ticker = ticker
+
+        ticker.connect(threaded=True)
+
+        try:
+            while True:
+                item = await queue.get()
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            ticker.close()
+            self._ticker = None
 
     async def disconnect(self) -> None:
+        if self._ticker is not None:
+            self._ticker.close()
+            self._ticker = None
         await self._http.aclose()
