@@ -1,0 +1,11 @@
+# Which strategy runs against which symbol, with what parameters.
+# Adding a new run means adding one entry here, no engine code changes.
+runs:
+  - name: sma_crossover
+    symbol: NSE-RELIANCE
+    interval: 1d
+    starting_cash: 100000.0
+    params:
+      short_window: 5
+      long_window: 20
+      quantity: 10
