@@ -1,7 +1,11 @@
+import logging
+
 from data_engine.core.models import Bar
 
 from strategy_engine.core.interfaces import Broker, Strategy
 from strategy_engine.core.portfolio import Portfolio
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
@@ -16,4 +20,12 @@ class BacktestEngine:
                 fills = self._broker.match_pending_orders(bars[i + 1])
                 self._portfolio.apply_fills(fills)
             self._portfolio.mark_to_market(bar)
+
+        dropped = self._broker.close()
+        if dropped:
+            logger.warning(
+                "%d order(s) placed on the last bar had no next bar to fill against, dropped: %s",
+                len(dropped),
+                dropped,
+            )
         return self._portfolio
