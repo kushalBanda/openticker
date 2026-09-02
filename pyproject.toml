@@ -5,10 +5,12 @@ description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Qua
 requires-python = ">=3.13"
 dependencies = [
     "data-engine",
+    "strategy-engine",
 ]
 
 [tool.uv.sources]
 data-engine = { workspace = true }
+strategy-engine = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -50,7 +52,7 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/data_engine/src"
+mypy_path = "packages/data_engine/src:packages/strategy_engine/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]

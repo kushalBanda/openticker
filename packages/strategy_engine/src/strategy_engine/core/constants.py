@@ -1,0 +1,14 @@
+from typing import Final
+
+ORDER_SIDE_BUY: Final = "buy"
+ORDER_SIDE_SELL: Final = "sell"
+
+ORDER_TYPE_MARKET: Final = "market"
+
+ORDER_STATUS_PENDING: Final = "pending"
+ORDER_STATUS_FILLED: Final = "filled"
+ORDER_STATUS_REJECTED: Final = "rejected"
+
+DEFAULT_STARTING_CASH: Final = 100_000.0
+DEFAULT_SLIPPAGE_BPS: Final = 0.0
+DEFAULT_COMMISSION_PER_SHARE: Final = 0.0
