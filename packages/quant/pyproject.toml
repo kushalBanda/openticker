@@ -5,6 +5,7 @@ description = "Quant Research Layer: signal generation, forecast scaling, positi
 requires-python = ">=3.13"
 dependencies = [
     "ingest",
+    "duckdb>=1.1",
 ]
 
 [tool.uv.sources]

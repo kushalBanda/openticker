@@ -1575,11 +1575,15 @@ name = "quant"
 version = "0.1.0"
 source = { editable = "packages/quant" }
 dependencies = [
+    { name = "duckdb" },
     { name = "ingest" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ingest", editable = "packages/ingest" }]
+requires-dist = [
+    { name = "duckdb", specifier = ">=1.1" },
+    { name = "ingest", editable = "packages/ingest" },
+]
 
 [[package]]
 name = "quant-platform"
