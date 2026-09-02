@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "execution",
     "ingest",
     "quant",
     "quant-platform",
@@ -588,6 +589,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/43/3a5e81d1728f4d234c79bfe385808ee7c04834f7c37a4b5c257459c25614/duckdb-1.5.5-cp314-cp314-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fbf0f2d48b43c6c304d00463b463c27ead6c4b01c3c1816b750f728decf71afe", size = 21513851, upload_time = "2026-07-22T10:55:07.864Z" },
     { url = "https://files.pythonhosted.org/packages/91/41/fc7c829172c60ca22485251eab285f4f1a0d87b486a024c726f21471d86e/duckdb-1.5.5-cp314-cp314-win_amd64.whl", hash = "sha256:9dc826c4b50e64f6c4e4d07a3a9cb075ef70ba3899dc43ec5493dc3d7b04b353", size = 13691858, upload_time = "2026-07-22T10:55:11.181Z" },
     { url = "https://files.pythonhosted.org/packages/e1/2c/95d9216b79e9273689d7ebce125a54503ed0c9bd7da931f0265888e99779/duckdb-1.5.5-cp314-cp314-win_arm64.whl", hash = "sha256:63e48d4b74b15aeacd688976432a7225163df8c226eddeb8536bba2d4d4ff433", size = 14470180, upload_time = "2026-07-22T10:55:14.445Z" },
+]
+
+[[package]]
+name = "execution"
+version = "0.1.0"
+source = { editable = "packages/execution" }
+dependencies = [
+    { name = "ingest" },
+    { name = "strategy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ingest", editable = "packages/ingest" },
+    { name = "strategy", editable = "packages/strategy" },
 ]
 
 [[package]]
@@ -1590,6 +1606,7 @@ name = "quant-platform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "execution" },
     { name = "ingest" },
     { name = "quant" },
     { name = "strategy" },
@@ -1609,6 +1626,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "execution", editable = "packages/execution" },
     { name = "ingest", editable = "packages/ingest" },
     { name = "quant", editable = "packages/quant" },
     { name = "strategy", editable = "packages/strategy" },

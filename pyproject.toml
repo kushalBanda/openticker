@@ -7,12 +7,14 @@ dependencies = [
     "ingest",
     "strategy",
     "quant",
+    "execution",
 ]
 
 [tool.uv.sources]
 ingest = { workspace = true }
 strategy = { workspace = true }
 quant = { workspace = true }
+execution = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -54,7 +56,7 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src"
+mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]
