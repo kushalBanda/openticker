@@ -12,4 +12,7 @@ class RiskResult:
 
 
 class RiskCheck(Protocol):
-    def check(self, order: Order, portfolio: Portfolio) -> RiskResult: ...
+    def check(self, order: Order, portfolio: Portfolio, reference_price: float) -> RiskResult: ...
+    # reference_price is the latest known market price for order.symbol —
+    # Order carries no price (market orders), so notional/collar checks
+    # need it passed in explicitly rather than reading it off the order.

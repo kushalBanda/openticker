@@ -13,9 +13,9 @@ class RiskPipeline:
     def __init__(self, checks: list[RiskCheck]) -> None:
         self._checks = checks
 
-    def check(self, order: Order, portfolio: Portfolio) -> RiskResult:
+    def check(self, order: Order, portfolio: Portfolio, reference_price: float) -> RiskResult:
         for risk_check in self._checks:
-            result = risk_check.check(order, portfolio)
+            result = risk_check.check(order, portfolio, reference_price)
             if not result.passed:
                 return result
         return _PASS

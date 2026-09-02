@@ -14,7 +14,7 @@ class MaxPositionSizeCheck:
             raise ValueError("max_shares_per_symbol must be positive")
         self._max_shares_per_symbol = max_shares_per_symbol
 
-    def check(self, order: Order, portfolio: Portfolio) -> RiskResult:
+    def check(self, order: Order, portfolio: Portfolio, reference_price: float) -> RiskResult:
         current = portfolio.positions.get(order.symbol, 0)
         delta = order.quantity if order.side == ORDER_SIDE_BUY else -order.quantity
         resulting = abs(current + delta)

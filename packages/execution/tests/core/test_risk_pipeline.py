@@ -24,7 +24,7 @@ class _AlwaysPass:
     def __init__(self) -> None:
         self.called = False
 
-    def check(self, order: Order, portfolio: Portfolio) -> RiskResult:
+    def check(self, order: Order, portfolio: Portfolio, reference_price: float) -> RiskResult:
         self.called = True
         return RiskResult(passed=True)
 
@@ -33,7 +33,7 @@ class _AlwaysReject:
     def __init__(self) -> None:
         self.called = False
 
-    def check(self, order: Order, portfolio: Portfolio) -> RiskResult:
+    def check(self, order: Order, portfolio: Portfolio, reference_price: float) -> RiskResult:
         self.called = True
         return RiskResult(passed=False, reason="rejected by test double")
 
@@ -42,7 +42,7 @@ def test_pipeline_passes_when_all_checks_pass() -> None:
     pipeline = RiskPipeline([_AlwaysPass(), _AlwaysPass()])
     portfolio = Portfolio(starting_cash=100_000.0)
 
-    result = pipeline.check(_order(), portfolio)
+    result = pipeline.check(_order(), portfolio, 100.0)
 
     assert result.passed is True
 
@@ -53,7 +53,7 @@ def test_pipeline_short_circuits_on_first_rejection() -> None:
     pipeline = RiskPipeline([first, second])
     portfolio = Portfolio(starting_cash=100_000.0)
 
-    result = pipeline.check(_order(), portfolio)
+    result = pipeline.check(_order(), portfolio, 100.0)
 
     assert result.passed is False
     assert first.called is True
@@ -69,6 +69,6 @@ def test_from_config_builds_pipeline_in_declared_order() -> None:
     pipeline = RiskPipeline.from_config(config)
     portfolio = Portfolio(starting_cash=100_000.0)
 
-    result = pipeline.check(_order(quantity=50), portfolio)
+    result = pipeline.check(_order(quantity=50), portfolio, 100.0)
 
     assert result.passed is False
