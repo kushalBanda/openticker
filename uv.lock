@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "ingest",
+    "quant",
     "quant-platform",
     "strategy",
 ]
@@ -1570,11 +1571,23 @@ wheels = [
 ]
 
 [[package]]
+name = "quant"
+version = "0.1.0"
+source = { editable = "packages/quant" }
+dependencies = [
+    { name = "ingest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "ingest", editable = "packages/ingest" }]
+
+[[package]]
 name = "quant-platform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ingest" },
+    { name = "quant" },
     { name = "strategy" },
 ]
 
@@ -1593,6 +1606,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ingest", editable = "packages/ingest" },
+    { name = "quant", editable = "packages/quant" },
     { name = "strategy", editable = "packages/strategy" },
 ]
 
