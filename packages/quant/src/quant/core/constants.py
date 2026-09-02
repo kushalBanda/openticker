@@ -5,3 +5,5 @@ TABLE_FORECASTS: Final = "forecasts"
 
 FORECAST_SCALE_MAX: Final = 20.0
 FORECAST_SCALE_MIN: Final = -20.0
+
+RSI_MIDPOINT: Final = 50.0
