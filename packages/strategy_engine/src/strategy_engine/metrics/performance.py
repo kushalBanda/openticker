@@ -2,8 +2,7 @@ import statistics
 from dataclasses import dataclass
 from datetime import datetime
 
-TRADING_DAYS_PER_YEAR = 252
-DAYS_PER_YEAR = 365
+from strategy_engine.core.constants import DAYS_PER_YEAR, TRADING_DAYS_PER_YEAR
 
 
 @dataclass(frozen=True)

@@ -54,7 +54,7 @@ def test_engine_wires_end_to_end_with_next_bar_open_fill() -> None:
 
     result = engine.run(bars, strategy)
 
-    assert len(strategy.on_bar_calls) == 3
+    assert strategy.on_bar_calls == bars  # called once per bar, in sequence
     assert result.positions["NSE-RELIANCE"] == 1
     assert result.cash == 1000.0 - 110.0
     assert len(result.equity_curve) == 3
