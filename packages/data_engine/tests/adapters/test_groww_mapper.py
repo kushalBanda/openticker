@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from data_engine.adapters.groww.mapper import map_candle_to_bar
+from data_engine.adapters.groww.mapper import map_candle_to_bar, map_tick
 
 
 def test_map_candle_to_bar_matches_groww_shape() -> None:
@@ -17,3 +17,24 @@ def test_map_candle_to_bar_matches_groww_shape() -> None:
     assert bar.close == 104.25
     assert bar.volume == 12345
     assert bar.provider == "groww"
+
+
+def test_map_tick_matches_groww_proto_shape() -> None:
+    raw = {"ltp": 4084.0, "volume": 12510, "tsInMillis": 1735718400000}
+
+    tick = map_tick(raw, symbol="RELIANCE")
+
+    assert tick.symbol == "RELIANCE"
+    assert tick.price == 4084.0
+    assert tick.volume == 12510
+    assert tick.ts == datetime.fromtimestamp(1735718400, tz=UTC)
+    assert tick.provider == "groww"
+
+
+def test_map_tick_defaults_volume_and_ts_when_missing() -> None:
+    raw = {"ltp": 100.0}
+
+    tick = map_tick(raw, symbol="RELIANCE")
+
+    assert tick.volume == 0
+    assert tick.ts.tzinfo == UTC

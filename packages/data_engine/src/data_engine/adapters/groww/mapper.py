@@ -26,7 +26,11 @@ def map_tick(raw: dict[str, Any], symbol: str) -> Tick:
     # (proto field names: ltp, volume, tsInMillis), not documented anywhere,
     # source-inspected against the installed SDK.
     ts_millis = raw.get("tsInMillis")
-    ts = datetime.fromtimestamp(int(ts_millis) / 1000, tz=UTC) if ts_millis else datetime.now(UTC)
+    ts = (
+        datetime.fromtimestamp(int(ts_millis) / 1000, tz=UTC)
+        if ts_millis
+        else datetime.now(UTC)
+    )
     return Tick(
         symbol=symbol,
         ts=ts,

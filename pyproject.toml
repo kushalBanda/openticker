@@ -29,6 +29,7 @@ dev = [
     "ruff>=0.7",
     "respx>=0.21",
     "types-pyyaml>=6.0",
+    "python-dotenv>=1.0",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -37,6 +38,11 @@ dev = [
 # with no tzinfo), not a bug, DTZ001 doesn't apply here.
 "packages/data_engine/tests/adapters/test_kite_mapper.py" = ["DTZ001"]
 "packages/data_engine/tests/adapters/test_kite_adapter.py" = ["DTZ001"]
+# Deliberate defensive catch-all inside a background-thread SDK callback
+# (Groww's NATS feed client). Anything raised here would otherwise vanish
+# silently in that thread instead of surfacing through DataEngine's queue,
+# so a blind except converting to a typed error is the correct boundary.
+"packages/data_engine/src/data_engine/adapters/groww/adapter.py" = ["BLE001"]
 
 [tool.mypy]
 python_version = "3.13"

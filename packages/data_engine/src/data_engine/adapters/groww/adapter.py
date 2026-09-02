@@ -33,19 +33,36 @@ register_interval_map(PROVIDER_GROWW, GROWW_INTERVAL_MAP)
 
 @register_adapter(PROVIDER_GROWW)
 class GrowwAdapter:
-    def __init__(self, api_key: str, totp_secret: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        totp_secret: str | None = None,
+        api_secret: str | None = None,
+    ) -> None:
+        if (totp_secret is None) == (api_secret is None):
+            raise ValueError(
+                "GrowwAdapter requires exactly one of totp_secret or api_secret"
+            )
         self._api_key = api_key
         self._totp_secret = totp_secret
+        self._api_secret = api_secret
         self._client: GrowwAPI | None = None
         self._rate_limiter = RateLimiter(GROWW_NON_TRADING_REQUESTS_PER_SECOND)
         self._feed: GrowwFeed | None = None
         self._feed_instruments: list[dict[str, str]] = []
 
     async def connect(self) -> None:
-        totp = pyotp.TOTP(self._totp_secret).now()
-        access_token = await asyncio.to_thread(
-            GrowwAPI.get_access_token, api_key=self._api_key, totp=totp
-        )
+        if self._totp_secret is not None:
+            totp = pyotp.TOTP(self._totp_secret).now()
+            access_token = await asyncio.to_thread(
+                GrowwAPI.get_access_token, api_key=self._api_key, totp=totp
+            )
+        else:
+            access_token = await asyncio.to_thread(
+                GrowwAPI.get_access_token,
+                api_key=self._api_key,
+                secret=self._api_secret,
+            )
         self._client = GrowwAPI(access_token)
 
     async def fetch_historical(
@@ -87,7 +104,9 @@ class GrowwAdapter:
 
     async def subscribe_live(self, symbols: list[str]) -> AsyncIterator[Tick]:
         if self._client is None:
-            raise DataUnavailableError("GrowwAdapter.connect() must be called before use")
+            raise DataUnavailableError(
+                "GrowwAdapter.connect() must be called before use"
+            )
 
         # Ground truth for exchange/segment/exchange_token and the ltp/volume/
         # tsInMillis field names, source-verified against the installed
