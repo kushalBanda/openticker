@@ -22,7 +22,7 @@ def _bar(day: int, close: float) -> Bar:
     )
 
 
-def test_generates_buy_signal_on_golden_cross() -> None:
+async def test_generates_buy_signal_on_golden_cross() -> None:
     # Flat prices establish both SMAs equal (short below/equal long), then a
     # sharp rise pulls the short SMA above the long SMA, a golden cross.
     closes = [100.0] * 20 + [110.0, 120.0, 130.0, 140.0, 150.0]
@@ -33,12 +33,12 @@ def test_generates_buy_signal_on_golden_cross() -> None:
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    result = engine.run(bars, strategy)
+    result = await engine.run(bars, strategy)
 
     assert result.positions.get("NSE-RELIANCE", 0) == 10
 
 
-def test_migration_produces_identical_backtest_result_to_baseline() -> None:
+async def test_migration_produces_identical_backtest_result_to_baseline() -> None:
     # Baseline captured from the pre-migration implementation (inline
     # deque[float] SMA math, before SmaSignal existed) against this exact
     # fixture: flat, then a golden cross (rise), then a death cross
@@ -56,7 +56,7 @@ def test_migration_produces_identical_backtest_result_to_baseline() -> None:
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    result = engine.run(bars, strategy)
+    result = await engine.run(bars, strategy)
 
     assert result.positions == {"NSE-RELIANCE": 0}
     assert result.cash == 99600.0

@@ -29,7 +29,7 @@ class RsiMeanReversionStrategy:
         self._bars: deque[Bar] = deque(maxlen=period + 1)
         self._signal = RsiSignal(period=period)
 
-    def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
         self._bars.append(bar)
         try:
             raw = self._signal.compute(list(self._bars))
@@ -44,7 +44,7 @@ class RsiMeanReversionStrategy:
         position = portfolio.positions.get(bar.symbol, 0)
 
         if raw.value < self._oversold and position == 0:
-            broker.submit_order(
+            await broker.submit_order(
                 Order(
                     symbol=bar.symbol,
                     side=ORDER_SIDE_BUY,
@@ -54,7 +54,7 @@ class RsiMeanReversionStrategy:
                 )
             )
         elif raw.value > self._overbought and position > 0:
-            broker.submit_order(
+            await broker.submit_order(
                 Order(
                     symbol=bar.symbol,
                     side=ORDER_SIDE_SELL,

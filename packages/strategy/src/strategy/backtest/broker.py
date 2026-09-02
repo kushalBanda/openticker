@@ -4,8 +4,9 @@ from strategy.core.constants import (
     DEFAULT_COMMISSION_PER_SHARE,
     DEFAULT_SLIPPAGE_BPS,
     ORDER_SIDE_BUY,
+    ORDER_STATUS_PENDING,
 )
-from strategy.core.models import Fill, Order
+from strategy.core.models import Fill, Order, OrderState
 
 
 class BacktestBroker:
@@ -18,10 +19,22 @@ class BacktestBroker:
         self._commission_per_share = commission_per_share
         self._pending_orders: list[Order] = []
 
-    def submit_order(self, order: Order) -> None:
+    async def submit_order(self, order: Order) -> OrderState:
         self._pending_orders.append(order)
+        return OrderState(order=order, status=ORDER_STATUS_PENDING)
 
-    def match_pending_orders(self, next_bar: Bar) -> list[Fill]:
+    async def cancel_order(self, order_id: str) -> None:
+        # BacktestBroker fills against the very next bar, there is no
+        # window in which a backtest order can be cancelled — no caller
+        # in the backtest path needs this today.
+        raise NotImplementedError("BacktestBroker does not support cancel_order")
+
+    async def get_fills(self, order_id: str) -> list[Fill]:
+        # BacktestBroker never tracked fills by order id, only by bar —
+        # fills are consumed from match_pending_orders as they happen.
+        raise NotImplementedError("BacktestBroker does not support get_fills")
+
+    async def match_pending_orders(self, next_bar: Bar) -> list[Fill]:
         fills = [
             Fill(
                 order=order,
@@ -34,7 +47,7 @@ class BacktestBroker:
         self._pending_orders = []
         return fills
 
-    def close(self) -> list[Order]:
+    async def close(self) -> list[Order]:
         dropped = self._pending_orders
         self._pending_orders = []
         return dropped

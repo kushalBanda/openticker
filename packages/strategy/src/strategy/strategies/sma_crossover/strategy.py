@@ -27,7 +27,7 @@ class SmaCrossoverStrategy:
         self._long_signal = SmaSignal(window=long_window)
         self._was_short_above_long: bool | None = None
 
-    def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
         self._bars.append(bar)
         if len(self._bars) < self._long_window:
             return
@@ -43,7 +43,7 @@ class SmaCrossoverStrategy:
             position = portfolio.positions.get(bar.symbol, 0)
 
             if crossed_up and position == 0:
-                broker.submit_order(
+                await broker.submit_order(
                     Order(
                         symbol=bar.symbol,
                         side=ORDER_SIDE_BUY,
@@ -53,7 +53,7 @@ class SmaCrossoverStrategy:
                     )
                 )
             elif crossed_down and position > 0:
-                broker.submit_order(
+                await broker.submit_order(
                     Order(
                         symbol=bar.symbol,
                         side=ORDER_SIDE_SELL,

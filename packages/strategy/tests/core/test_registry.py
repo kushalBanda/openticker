@@ -11,7 +11,7 @@ class FakeStrategy:
     def __init__(self, multiplier: int) -> None:
         self.multiplier = multiplier
 
-    def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
         pass
 
 

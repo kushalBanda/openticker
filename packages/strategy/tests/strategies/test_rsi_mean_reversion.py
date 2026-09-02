@@ -24,7 +24,7 @@ def _bar(day: int, close: float) -> Bar:
     )
 
 
-def test_generates_buy_signal_when_oversold() -> None:
+async def test_generates_buy_signal_when_oversold() -> None:
     # A sustained decline drives average loss well above average gain,
     # pushing RSI below the oversold threshold.
     closes = [100.0 - i for i in range(20)]
@@ -37,12 +37,12 @@ def test_generates_buy_signal_when_oversold() -> None:
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    result = engine.run(bars, strategy)
+    result = await engine.run(bars, strategy)
 
     assert result.positions.get("NSE-RELIANCE", 0) == 5
 
 
-def test_migration_produces_identical_backtest_result_to_baseline() -> None:
+async def test_migration_produces_identical_backtest_result_to_baseline() -> None:
     # Baseline captured from the pre-migration implementation (inline
     # deque[float] + _compute_rsi, before RsiSignal existed) against this
     # exact fixture: a decline (triggers BUY once oversold) followed by a
@@ -58,7 +58,7 @@ def test_migration_produces_identical_backtest_result_to_baseline() -> None:
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    result = engine.run(bars, strategy)
+    result = await engine.run(bars, strategy)
 
     assert result.positions == {"NSE-RELIANCE": 0}
     assert result.cash == 100065.0

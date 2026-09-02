@@ -27,10 +27,10 @@ class BuyOnFirstBarStrategy:
     def __init__(self) -> None:
         self.on_bar_calls: list[Bar] = []
 
-    def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
         self.on_bar_calls.append(bar)
         if len(self.on_bar_calls) == 1:
-            broker.submit_order(
+            await broker.submit_order(
                 Order(
                     symbol=bar.symbol,
                     side=ORDER_SIDE_BUY,
@@ -41,7 +41,7 @@ class BuyOnFirstBarStrategy:
             )
 
 
-def test_engine_wires_end_to_end_with_next_bar_open_fill() -> None:
+async def test_engine_wires_end_to_end_with_next_bar_open_fill() -> None:
     bars = [
         _bar(datetime(2026, 1, 1, tzinfo=UTC), open_=100.0, close=105.0),
         _bar(datetime(2026, 1, 2, tzinfo=UTC), open_=110.0, close=108.0),
@@ -52,7 +52,7 @@ def test_engine_wires_end_to_end_with_next_bar_open_fill() -> None:
     portfolio = Portfolio(starting_cash=1000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    result = engine.run(bars, strategy)
+    result = await engine.run(bars, strategy)
 
     assert strategy.on_bar_calls == bars  # called once per bar, in sequence
     assert result.positions["NSE-RELIANCE"] == 1
@@ -60,7 +60,7 @@ def test_engine_wires_end_to_end_with_next_bar_open_fill() -> None:
     assert len(result.equity_curve) == 3
 
 
-def test_engine_no_lookahead_order_not_filled_on_same_bar() -> None:
+async def test_engine_no_lookahead_order_not_filled_on_same_bar() -> None:
     bars = [
         _bar(datetime(2026, 1, 1, tzinfo=UTC), open_=100.0, close=105.0),
         _bar(datetime(2026, 1, 2, tzinfo=UTC), open_=110.0, close=108.0),
@@ -70,6 +70,6 @@ def test_engine_no_lookahead_order_not_filled_on_same_bar() -> None:
     portfolio = Portfolio(starting_cash=1000.0)
     engine = BacktestEngine(broker, portfolio)
 
-    engine.run(bars[:1], strategy)
+    await engine.run(bars[:1], strategy)
 
     assert portfolio.positions.get("NSE-RELIANCE", 0) == 0

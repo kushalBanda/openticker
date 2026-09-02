@@ -45,7 +45,7 @@ class RsiMeanReversionSizedStrategy:
         self._signal = RsiSignal(period=period)
         self._sizer = PositionSizer(target_risk_pct=target_risk_pct)
 
-    def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
         self._bars.append(bar)
         try:
             raw = self._signal.compute(list(self._bars))
@@ -75,7 +75,7 @@ class RsiMeanReversionSizedStrategy:
             if quantity < 1:
                 return
 
-            broker.submit_order(
+            await broker.submit_order(
                 Order(
                     symbol=bar.symbol,
                     side=ORDER_SIDE_BUY,
@@ -85,7 +85,7 @@ class RsiMeanReversionSizedStrategy:
                 )
             )
         elif raw.value > self._overbought and position > 0:
-            broker.submit_order(
+            await broker.submit_order(
                 Order(
                     symbol=bar.symbol,
                     side=ORDER_SIDE_SELL,

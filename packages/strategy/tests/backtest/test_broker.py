@@ -38,50 +38,52 @@ def _order(side: str) -> Order:
     )
 
 
-def test_submit_then_match_next_bar_fills_at_next_open() -> None:
+async def test_submit_then_match_next_bar_fills_at_next_open() -> None:
     broker = BacktestBroker()
-    broker.submit_order(_order(ORDER_SIDE_BUY))
+    await broker.submit_order(_order(ORDER_SIDE_BUY))
 
-    fills = broker.match_pending_orders(_bar(open_=110.0))
+    fills = await broker.match_pending_orders(_bar(open_=110.0))
 
     assert len(fills) == 1
     assert fills[0].fill_price == 110.0
     assert fills[0].fill_ts == datetime(2026, 1, 2, tzinfo=UTC)
 
 
-def test_slippage_worsens_buy_and_sell_in_opposite_directions() -> None:
+async def test_slippage_worsens_buy_and_sell_in_opposite_directions() -> None:
     broker = BacktestBroker(slippage_bps=100.0)  # 1%
 
-    broker.submit_order(_order(ORDER_SIDE_BUY))
-    buy_fill = broker.match_pending_orders(_bar(open_=100.0))[0]
+    await broker.submit_order(_order(ORDER_SIDE_BUY))
+    buy_fill = (await broker.match_pending_orders(_bar(open_=100.0)))[0]
     assert buy_fill.fill_price == 101.0  # buy pays more
 
-    broker.submit_order(_order(ORDER_SIDE_SELL))
-    sell_fill = broker.match_pending_orders(_bar(open_=100.0))[0]
+    await broker.submit_order(_order(ORDER_SIDE_SELL))
+    sell_fill = (await broker.match_pending_orders(_bar(open_=100.0)))[0]
     assert sell_fill.fill_price == 99.0  # sell receives less
 
 
-def test_commission_applied_per_share() -> None:
+async def test_commission_applied_per_share() -> None:
     broker = BacktestBroker(commission_per_share=0.5)
-    broker.submit_order(_order(ORDER_SIDE_BUY))
+    await broker.submit_order(_order(ORDER_SIDE_BUY))
 
-    fill = broker.match_pending_orders(_bar(open_=100.0))[0]
+    fill = (await broker.match_pending_orders(_bar(open_=100.0)))[0]
 
     assert fill.commission == 5.0  # 10 shares * 0.5
 
 
-def test_no_next_bar_drops_pending_order_and_logs(caplog: pytest.LogCaptureFixture) -> None:
+async def test_no_next_bar_drops_pending_order_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     bars = [_bar(open_=100.0)]
 
     class BuyStrategy:
-        def on_bar(self, bar: Bar, portfolio: Portfolio, broker: BacktestBroker) -> None:
-            broker.submit_order(_order(ORDER_SIDE_BUY))
+        async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: BacktestBroker) -> None:
+            await broker.submit_order(_order(ORDER_SIDE_BUY))
 
     broker = BacktestBroker()
     engine = BacktestEngine(broker, Portfolio(starting_cash=1000.0))
 
     with caplog.at_level(logging.WARNING, logger="strategy.core.engine"):
-        result = engine.run(bars, BuyStrategy())
+        result = await engine.run(bars, BuyStrategy())
 
     assert result.positions.get("NSE-RELIANCE", 0) == 0
     assert "dropped" in caplog.text
