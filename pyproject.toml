@@ -4,13 +4,13 @@ version = "0.1.0"
 description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Quant Research Layer, Execution Engine"
 requires-python = ">=3.13"
 dependencies = [
-    "data-engine",
-    "strategy-engine",
+    "ingest",
+    "strategy",
 ]
 
 [tool.uv.sources]
-data-engine = { workspace = true }
-strategy-engine = { workspace = true }
+ingest = { workspace = true }
+strategy = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -38,13 +38,13 @@ dev = [
 # These tests deliberately construct naive datetimes to reproduce Kite's
 # real WebSocket tick shape (exchange_timestamp/last_trade_time come back
 # with no tzinfo), not a bug, DTZ001 doesn't apply here.
-"packages/data_engine/tests/adapters/test_kite_mapper.py" = ["DTZ001"]
-"packages/data_engine/tests/adapters/test_kite_adapter.py" = ["DTZ001"]
+"packages/ingest/tests/adapters/test_kite_mapper.py" = ["DTZ001"]
+"packages/ingest/tests/adapters/test_kite_adapter.py" = ["DTZ001"]
 # Deliberate defensive catch-all inside a background-thread SDK callback
 # (Groww's NATS feed client). Anything raised here would otherwise vanish
 # silently in that thread instead of surfacing through DataEngine's queue,
 # so a blind except converting to a typed error is the correct boundary.
-"packages/data_engine/src/data_engine/adapters/groww/adapter.py" = ["BLE001"]
+"packages/ingest/src/ingest/adapters/groww/adapter.py" = ["BLE001"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -52,7 +52,7 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/data_engine/src:packages/strategy_engine/src"
+mypy_path = "packages/ingest/src:packages/strategy/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]

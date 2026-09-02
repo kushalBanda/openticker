@@ -8,9 +8,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "data-engine",
+    "ingest",
     "quant-platform",
-    "strategy-engine",
+    "strategy",
 ]
 
 [[package]]
@@ -568,31 +568,6 @@ wheels = [
 ]
 
 [[package]]
-name = "data-engine"
-version = "0.1.0"
-source = { editable = "packages/data_engine" }
-dependencies = [
-    { name = "duckdb" },
-    { name = "growwapi" },
-    { name = "httpx" },
-    { name = "kiteconnect" },
-    { name = "pyotp" },
-    { name = "pytz" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "duckdb", specifier = ">=1.1" },
-    { name = "growwapi", specifier = ">=1.5" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "kiteconnect", specifier = ">=5.0" },
-    { name = "pyotp", specifier = ">=2.9" },
-    { name = "pytz", specifier = ">=2024.2" },
-    { name = "pyyaml", specifier = ">=6.0" },
-]
-
-[[package]]
 name = "duckdb"
 version = "1.5.5"
 source = { registry = "https://pypi.org/simple" }
@@ -790,6 +765,31 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ef/3c/82e84109e02c492f382c711c58a3dd91badda6d746def81a1465f74dc9f5/incremental-24.11.0.tar.gz", hash = "sha256:87d3480dbb083c1d736222511a8cf380012a8176c2456d01ef483242abbbcf8c", size = 24000, upload_time = "2025-11-28T02:30:17.861Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/55/0f4df2a44053867ea9cbea73fc588b03c55605cd695cee0a3d86f0029cb2/incremental-24.11.0-py3-none-any.whl", hash = "sha256:a34450716b1c4341fe6676a0598e88a39e04189f4dce5dc96f656e040baa10b3", size = 21109, upload_time = "2025-11-28T02:30:16.442Z" },
+]
+
+[[package]]
+name = "ingest"
+version = "0.1.0"
+source = { editable = "packages/ingest" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "growwapi" },
+    { name = "httpx" },
+    { name = "kiteconnect" },
+    { name = "pyotp" },
+    { name = "pytz" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckdb", specifier = ">=1.1" },
+    { name = "growwapi", specifier = ">=1.5" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "kiteconnect", specifier = ">=5.0" },
+    { name = "pyotp", specifier = ">=2.9" },
+    { name = "pytz", specifier = ">=2024.2" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
@@ -1574,8 +1574,8 @@ name = "quant-platform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "data-engine" },
-    { name = "strategy-engine" },
+    { name = "ingest" },
+    { name = "strategy" },
 ]
 
 [package.dev-dependencies]
@@ -1592,8 +1592,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "data-engine", editable = "packages/data_engine" },
-    { name = "strategy-engine", editable = "packages/strategy_engine" },
+    { name = "ingest", editable = "packages/ingest" },
+    { name = "strategy", editable = "packages/strategy" },
 ]
 
 [package.metadata.requires-dev]
@@ -1692,15 +1692,15 @@ wheels = [
 ]
 
 [[package]]
-name = "strategy-engine"
+name = "strategy"
 version = "0.1.0"
-source = { editable = "packages/strategy_engine" }
+source = { editable = "packages/strategy" }
 dependencies = [
-    { name = "data-engine" },
+    { name = "ingest" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "data-engine", editable = "packages/data_engine" }]
+requires-dist = [{ name = "ingest", editable = "packages/ingest" }]
 
 [[package]]
 name = "twisted"
