@@ -1,11 +1,10 @@
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from ingest.core.models import Bar
 
 from strategy.core.models import Fill, Order
 
-if TYPE_CHECKING:
-    from strategy.core.portfolio import Portfolio
+from strategy.core.portfolio import Portfolio
 
 
 class Broker(Protocol):
