@@ -1,6 +1,16 @@
 import pytest
 from quant.core.exceptions import InsufficientDataError
-from quant.features.rolling_stats import simple_rsi
+from quant.features.rolling_stats import simple_moving_average, simple_rsi
+
+
+def test_simple_moving_average_matches_known_reference() -> None:
+    assert simple_moving_average([1.0, 2.0, 3.0, 4.0, 5.0], window=5) == 3.0
+    assert simple_moving_average([10.0, 20.0, 30.0], window=2) == 25.0
+
+
+def test_simple_moving_average_raises_when_insufficient_closes() -> None:
+    with pytest.raises(InsufficientDataError):
+        simple_moving_average([1.0, 2.0], window=5)
 
 
 def test_simple_rsi_matches_known_reference() -> None:

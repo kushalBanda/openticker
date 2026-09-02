@@ -18,3 +18,12 @@ runs:
       oversold: 30.0
       overbought: 70.0
       quantity: 5
+  - name: rsi_mean_reversion_sized
+    symbol: NSE-RELIANCE
+    interval: 1d
+    starting_cash: 100000.0
+    params:
+      period: 14
+      oversold: 30.0
+      overbought: 70.0
+      target_risk_pct: 0.02

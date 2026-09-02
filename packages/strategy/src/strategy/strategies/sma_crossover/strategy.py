@@ -1,6 +1,7 @@
 from collections import deque
 
 from ingest.core.models import Bar
+from quant.signals.sma.signal import SmaSignal
 
 from strategy.core.constants import (
     ORDER_SIDE_BUY,
@@ -21,16 +22,19 @@ class SmaCrossoverStrategy:
         self._short_window = short_window
         self._long_window = long_window
         self._quantity = quantity
-        self._closes: deque[float] = deque(maxlen=long_window)
+        self._bars: deque[Bar] = deque(maxlen=long_window)
+        self._short_signal = SmaSignal(window=short_window)
+        self._long_signal = SmaSignal(window=long_window)
         self._was_short_above_long: bool | None = None
 
     def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
-        self._closes.append(bar.close)
-        if len(self._closes) < self._long_window:
+        self._bars.append(bar)
+        if len(self._bars) < self._long_window:
             return
 
-        short_sma = sum(list(self._closes)[-self._short_window :]) / self._short_window
-        long_sma = sum(self._closes) / self._long_window
+        bars = list(self._bars)
+        short_sma = self._short_signal.compute(bars).value
+        long_sma = self._long_signal.compute(bars).value
         is_short_above_long = short_sma > long_sma
 
         if self._was_short_above_long is not None:

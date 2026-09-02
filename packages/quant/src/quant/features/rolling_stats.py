@@ -1,6 +1,14 @@
 from quant.core.exceptions import InsufficientDataError
 
 
+def simple_moving_average(closes: list[float], window: int) -> float:
+    if len(closes) < window:
+        raise InsufficientDataError(
+            f"simple_moving_average needs at least {window} closes, got {len(closes)}"
+        )
+    return sum(closes[-window:]) / window
+
+
 def simple_rsi(closes: list[float], period: int) -> float:
     """Simple moving-average RSI: gains/losses averaged over a flat rolling
     window, NOT Wilder's original recursive exponential smoothing. Values
