@@ -1,6 +1,8 @@
 from collections import deque
 
 from ingest.core.models import Bar
+from quant.core.exceptions import InsufficientDataError
+from quant.signals.rsi.signal import RsiSignal
 
 from strategy.core.constants import (
     ORDER_SIDE_BUY,
@@ -24,17 +26,24 @@ class RsiMeanReversionStrategy:
         self._oversold = oversold
         self._overbought = overbought
         self._quantity = quantity
-        self._closes: deque[float] = deque(maxlen=period + 1)
+        self._bars: deque[Bar] = deque(maxlen=period + 1)
+        self._signal = RsiSignal(period=period)
 
     def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
-        self._closes.append(bar.close)
-        if len(self._closes) < self._period + 1:
+        self._bars.append(bar)
+        try:
+            raw = self._signal.compute(list(self._bars))
+        except InsufficientDataError:
             return
+        # Decision still reads the raw RSI value (0..100), not the scaled
+        # Forecast, so backtest output stays bit-identical to the pre-signal
+        # implementation. See docs/plans/quant-research-layer/03-program-design.md
+        # least-confident decision #2.
+        self._signal.scale(raw)
 
-        rsi = self._compute_rsi()
         position = portfolio.positions.get(bar.symbol, 0)
 
-        if rsi < self._oversold and position == 0:
+        if raw.value < self._oversold and position == 0:
             broker.submit_order(
                 Order(
                     symbol=bar.symbol,
@@ -44,7 +53,7 @@ class RsiMeanReversionStrategy:
                     placed_at_ts=bar.ts,
                 )
             )
-        elif rsi > self._overbought and position > 0:
+        elif raw.value > self._overbought and position > 0:
             broker.submit_order(
                 Order(
                     symbol=bar.symbol,
@@ -54,14 +63,3 @@ class RsiMeanReversionStrategy:
                     placed_at_ts=bar.ts,
                 )
             )
-
-    def _compute_rsi(self) -> float:
-        closes = list(self._closes)
-        gains = [max(closes[i] - closes[i - 1], 0.0) for i in range(1, len(closes))]
-        losses = [max(closes[i - 1] - closes[i], 0.0) for i in range(1, len(closes))]
-        avg_gain = sum(gains) / self._period
-        avg_loss = sum(losses) / self._period
-        if avg_loss == 0:
-            return 100.0
-        rs = avg_gain / avg_loss
-        return 100 - (100 / (1 + rs))

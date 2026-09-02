@@ -1715,10 +1715,14 @@ version = "0.1.0"
 source = { editable = "packages/strategy" }
 dependencies = [
     { name = "ingest" },
+    { name = "quant" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ingest", editable = "packages/ingest" }]
+requires-dist = [
+    { name = "ingest", editable = "packages/ingest" },
+    { name = "quant", editable = "packages/quant" },
+]
 
 [[package]]
 name = "twisted"

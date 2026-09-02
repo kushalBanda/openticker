@@ -5,10 +5,12 @@ description = "Bar-by-bar strategy backtest engine, pluggable strategies via reg
 requires-python = ">=3.13"
 dependencies = [
     "ingest",
+    "quant",
 ]
 
 [tool.uv.sources]
 ingest = { workspace = true }
+quant = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
