@@ -3,7 +3,6 @@ from typing import Protocol
 from ingest.core.models import Bar
 
 from strategy.core.models import Fill, Order
-
 from strategy.core.portfolio import Portfolio
 
 
