@@ -34,17 +34,23 @@ class BacktestBroker:
         # fills are consumed from match_pending_orders as they happen.
         raise NotImplementedError("BacktestBroker does not support get_fills")
 
-    async def match_pending_orders(self, next_bar: Bar) -> list[Fill]:
-        fills = [
-            Fill(
-                order=order,
-                fill_price=self._apply_slippage(next_bar.open, order.side),
-                fill_ts=next_bar.ts,
-                commission=order.quantity * self._commission_per_share,
+    async def match_pending_orders(self, next_bars: dict[str, Bar]) -> list[Fill]:
+        fills = []
+        still_pending = []
+        for order in self._pending_orders:
+            next_bar = next_bars.get(order.symbol)
+            if next_bar is None:
+                still_pending.append(order)
+                continue
+            fills.append(
+                Fill(
+                    order=order,
+                    fill_price=self._apply_slippage(next_bar.open, order.side),
+                    fill_ts=next_bar.ts,
+                    commission=order.quantity * self._commission_per_share,
+                )
             )
-            for order in self._pending_orders
-        ]
-        self._pending_orders = []
+        self._pending_orders = still_pending
         return fills
 
     async def close(self) -> list[Order]:

@@ -22,30 +22,38 @@ class SmaCrossoverStrategy:
         self._short_window = short_window
         self._long_window = long_window
         self._quantity = quantity
-        self._bars: deque[Bar] = deque(maxlen=long_window)
+        self._bars: dict[str, deque[Bar]] = {}
         self._short_signal = SmaSignal(window=short_window)
         self._long_signal = SmaSignal(window=long_window)
-        self._was_short_above_long: bool | None = None
+        self._was_short_above_long: dict[str, bool] = {}
 
-    async def on_bar(self, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
-        self._bars.append(bar)
-        if len(self._bars) < self._long_window:
+    async def on_bar(self, bars: dict[str, Bar], portfolio: Portfolio, broker: Broker) -> None:
+        for symbol, bar in bars.items():
+            await self._on_symbol_bar(symbol, bar, portfolio, broker)
+
+    async def _on_symbol_bar(
+        self, symbol: str, bar: Bar, portfolio: Portfolio, broker: Broker
+    ) -> None:
+        history = self._bars.setdefault(symbol, deque(maxlen=self._long_window))
+        history.append(bar)
+        if len(history) < self._long_window:
             return
 
-        bars = list(self._bars)
-        short_sma = self._short_signal.compute(bars).value
-        long_sma = self._long_signal.compute(bars).value
+        symbol_bars = list(history)
+        short_sma = self._short_signal.compute(symbol_bars).value
+        long_sma = self._long_signal.compute(symbol_bars).value
         is_short_above_long = short_sma > long_sma
 
-        if self._was_short_above_long is not None:
-            crossed_up = is_short_above_long and not self._was_short_above_long
-            crossed_down = not is_short_above_long and self._was_short_above_long
-            position = portfolio.positions.get(bar.symbol, 0)
+        was_short_above_long = self._was_short_above_long.get(symbol)
+        if was_short_above_long is not None:
+            crossed_up = is_short_above_long and not was_short_above_long
+            crossed_down = not is_short_above_long and was_short_above_long
+            position = portfolio.positions.get(symbol, 0)
 
             if crossed_up and position == 0:
                 await broker.submit_order(
                     Order(
-                        symbol=bar.symbol,
+                        symbol=symbol,
                         side=ORDER_SIDE_BUY,
                         quantity=self._quantity,
                         order_type=ORDER_TYPE_MARKET,
@@ -55,7 +63,7 @@ class SmaCrossoverStrategy:
             elif crossed_down and position > 0:
                 await broker.submit_order(
                     Order(
-                        symbol=bar.symbol,
+                        symbol=symbol,
                         side=ORDER_SIDE_SELL,
                         quantity=position,
                         order_type=ORDER_TYPE_MARKET,
@@ -63,4 +71,4 @@ class SmaCrossoverStrategy:
                     )
                 )
 
-        self._was_short_above_long = is_short_above_long
+        self._was_short_above_long[symbol] = is_short_above_long

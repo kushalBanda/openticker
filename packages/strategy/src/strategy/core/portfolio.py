@@ -12,6 +12,7 @@ class Portfolio:
         self._cash = starting_cash
         self._positions: dict[str, int] = defaultdict(int)
         self._equity_curve: list[tuple[datetime, float]] = []
+        self._last_known_close: dict[str, float] = {}
 
     @property
     def cash(self) -> float:
@@ -36,6 +37,15 @@ class Portfolio:
                 self._cash += notional - fill.commission
                 self._positions[order.symbol] -= order.quantity
 
-    def mark_to_market(self, bar: Bar) -> None:
-        position_value = self._positions.get(bar.symbol, 0) * bar.close
-        self._equity_curve.append((bar.ts, self._cash + position_value))
+    def mark_to_market(self, bars: dict[str, Bar]) -> None:
+        if not bars:
+            return
+        for symbol, bar in bars.items():
+            self._last_known_close[symbol] = bar.close
+        position_value = sum(
+            quantity * self._last_known_close[symbol]
+            for symbol, quantity in self._positions.items()
+            if symbol in self._last_known_close
+        )
+        ts = next(iter(bars.values())).ts
+        self._equity_curve.append((ts, self._cash + position_value))
