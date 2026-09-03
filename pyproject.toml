@@ -36,6 +36,7 @@ dev = [
     "respx>=0.21",
     "types-pyyaml>=6.0",
     "python-dotenv>=1.0",
+    "scipy-stubs>=1.14",
 ]
 
 [tool.ruff.lint.per-file-ignores]
