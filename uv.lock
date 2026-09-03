@@ -1836,12 +1836,14 @@ name = "strategy"
 version = "0.1.0"
 source = { editable = "packages/strategy" }
 dependencies = [
+    { name = "duckdb" },
     { name = "ingest" },
     { name = "quant" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "duckdb", specifier = ">=1.1" },
     { name = "ingest", editable = "packages/ingest" },
     { name = "quant", editable = "packages/quant" },
 ]
