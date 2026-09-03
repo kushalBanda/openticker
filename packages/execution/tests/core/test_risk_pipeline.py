@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from execution.core.interfaces import RiskResult
 from execution.core.risk_pipeline import RiskPipeline
 from execution.risk_checks.max_position_size import (
-    MaxPositionSizeCheck,  # noqa: F401  self-registers
+    MaxPositionSizeCheck,
 )
 from strategy.core.constants import ORDER_SIDE_BUY, ORDER_TYPE_MARKET
 from strategy.core.models import Order

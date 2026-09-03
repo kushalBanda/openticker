@@ -1,6 +1,18 @@
 import statistics
 
+from ingest.core.models import Bar
+
 from quant.core.exceptions import InsufficientDataError
+
+
+def average_range(bars: list[Bar], window: int) -> float:
+    """Mean high-low range over the last ``window`` bars."""
+    if len(bars) < window:
+        raise InsufficientDataError(
+            f"average_range needs at least {window} bars, got {len(bars)}"
+        )
+    recent = bars[-window:]
+    return sum(b.high - b.low for b in recent) / window
 
 
 def realized_volatility(closes: list[float]) -> float:

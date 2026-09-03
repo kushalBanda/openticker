@@ -1,6 +1,14 @@
 from quant.core.exceptions import InsufficientDataError
 
 
+def average_volume(volumes: list[int], window: int) -> float:
+    if len(volumes) < window:
+        raise InsufficientDataError(
+            f"average_volume needs at least {window} volumes, got {len(volumes)}"
+        )
+    return sum(volumes[-window:]) / window
+
+
 def simple_moving_average(closes: list[float], window: int) -> float:
     if len(closes) < window:
         raise InsufficientDataError(
