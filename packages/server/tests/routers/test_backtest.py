@@ -60,7 +60,14 @@ def test_get_metrics_returns_report(
     resp = client.get("/backtests/run-1/metrics")
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
-    assert set(body) == {"sharpe", "max_drawdown", "win_rate", "cagr"}
+    assert set(body) == {
+        "total_return",
+        "annualized_return",
+        "max_drawdown",
+        "sharpe_ratio",
+        "exponential_std",
+        "win_rate",
+    }
 
 
 def test_get_metrics_404_for_unknown_run(client: TestClient) -> None:

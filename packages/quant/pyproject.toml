@@ -7,6 +7,7 @@ dependencies = [
     "ingest",
     "duckdb>=1.1",
     "scipy>=1.14",
+    "pandas>=2.3",
 ]
 
 [tool.uv.sources]

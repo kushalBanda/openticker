@@ -56,7 +56,9 @@ class RunListOut(BaseModel):
 
 
 class PerformanceReportOut(BaseModel):
-    sharpe: float
+    total_return: float
+    annualized_return: float
     max_drawdown: float
+    sharpe_ratio: float
+    exponential_std: float
     win_rate: float
-    cagr: float

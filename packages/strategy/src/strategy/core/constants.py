@@ -16,7 +16,8 @@ DEFAULT_STARTING_CASH: Final = 100_000.0
 DEFAULT_SLIPPAGE_BPS: Final = 0.0
 DEFAULT_COMMISSION_PER_SHARE: Final = 0.0
 
-TRADING_DAYS_PER_YEAR: Final = 252
-DAYS_PER_YEAR: Final = 365
-
 TABLE_LEDGER_ENTRIES: Final = "ledger_entries"
+
+# statistics.py's sharpe_ratio needs at least 2 valid returns, which needs
+# at least 3 closes.
+MIN_EQUITY_POINTS_FOR_FULL_REPORT: Final = 3

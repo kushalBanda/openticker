@@ -138,8 +138,10 @@ def get_metrics(
     equity_curve = [(e.fill_ts, e.cash_after) for e in entries]
     report = compute_metrics(equity_curve)
     return PerformanceReportOut(
-        sharpe=report.sharpe,
+        total_return=report.total_return,
+        annualized_return=report.annualized_return,
         max_drawdown=report.max_drawdown,
+        sharpe_ratio=report.sharpe_ratio,
+        exponential_std=report.exponential_std,
         win_rate=report.win_rate,
-        cagr=report.cagr,
     )
