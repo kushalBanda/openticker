@@ -62,3 +62,54 @@ class ExitLongAction:
                 placed_at_ts=bar.ts,
             )
         )
+
+
+class ReverseToLongAction:
+    """Submits a market buy sized to close any open short and open a new
+    `quantity`-share long in one order (`quantity + abs(short)`). No-ops
+    if already long `quantity` shares. `Portfolio.apply_fills` already
+    handles the flip-through-zero P&L split, this only sizes the order.
+    """
+
+    def __init__(self, quantity: int) -> None:
+        self._quantity = quantity
+
+    async def execute(self, symbol: str, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+        position = portfolio.positions.get(symbol, 0)
+        if position == self._quantity:
+            return
+        buy_quantity = self._quantity - position
+        await broker.submit_order(
+            Order(
+                symbol=symbol,
+                side=ORDER_SIDE_BUY,
+                quantity=buy_quantity,
+                order_type=ORDER_TYPE_MARKET,
+                placed_at_ts=bar.ts,
+            )
+        )
+
+
+class ReverseToShortAction:
+    """Submits a market sell sized to close any open long and open a new
+    `quantity`-share short in one order (`quantity + abs(long)`). No-ops
+    if already short `quantity` shares.
+    """
+
+    def __init__(self, quantity: int) -> None:
+        self._quantity = quantity
+
+    async def execute(self, symbol: str, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+        position = portfolio.positions.get(symbol, 0)
+        if position == -self._quantity:
+            return
+        sell_quantity = position + self._quantity
+        await broker.submit_order(
+            Order(
+                symbol=symbol,
+                side=ORDER_SIDE_SELL,
+                quantity=sell_quantity,
+                order_type=ORDER_TYPE_MARKET,
+                placed_at_ts=bar.ts,
+            )
+        )

@@ -22,7 +22,7 @@ def _bar(day: int, close: float) -> Bar:
 
 def _request_body(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {
-        "strategy_name": "sma_crossover",
+        "strategy_name": "sma_cross",
         "symbols": ["NSE-RELIANCE"],
         "interval": "1d",
         "from": "2026-01-01T00:00:00Z",
@@ -36,10 +36,10 @@ def _request_body(**overrides: object) -> dict[str, object]:
     return body
 
 
-def test_get_strategies_lists_sma_crossover(client: TestClient) -> None:
+def test_get_strategies_lists_sma_cross(client: TestClient) -> None:
     resp = client.get("/strategies")
     assert resp.status_code == HTTPStatus.OK
-    assert "sma_crossover" in resp.json()["strategy_names"]
+    assert "sma_cross" in resp.json()["strategy_names"]
 
 
 def test_run_backtest_no_bars_returns_404(

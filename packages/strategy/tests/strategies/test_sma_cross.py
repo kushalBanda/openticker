@@ -4,7 +4,7 @@ from ingest.core.models import Bar
 from strategy.backtest.broker import BacktestBroker
 from strategy.core.engine import BacktestEngine
 from strategy.core.portfolio import Portfolio
-from strategy.strategies.sma_crossover.strategy import SmaCrossoverStrategy
+from strategy.strategies.sma_cross.strategy import SmaCrossStrategy
 
 
 def _bar(day: int, close: float) -> Bar:
@@ -22,13 +22,11 @@ def _bar(day: int, close: float) -> Bar:
     )
 
 
-async def test_generates_buy_signal_on_golden_cross() -> None:
-    # Flat prices establish both SMAs equal (short below/equal long), then a
-    # sharp rise pulls the short SMA above the long SMA, a golden cross.
+async def test_goes_long_on_golden_cross() -> None:
     closes = [100.0] * 20 + [110.0, 120.0, 130.0, 140.0, 150.0]
     bars = {"NSE-RELIANCE": [_bar(i, c) for i, c in enumerate(closes)]}
 
-    strategy = SmaCrossoverStrategy(short_window=5, long_window=20, quantity=10)
+    strategy = SmaCrossStrategy(short_window=5, long_window=20, quantity=10)
     broker = BacktestBroker()
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
@@ -38,12 +36,9 @@ async def test_generates_buy_signal_on_golden_cross() -> None:
     assert result.positions.get("NSE-RELIANCE", 0) == 10
 
 
-async def test_migration_produces_identical_backtest_result_to_baseline() -> None:
-    # Baseline captured from the pre-migration implementation (inline
-    # deque[float] SMA math, before SmaSignal existed) against this exact
-    # fixture: flat, then a golden cross (rise), then a death cross
-    # (decline). Proves migrating to two SmaSignal instances (short/long
-    # window) changed nothing about the strategy's actual behavior.
+async def test_flips_short_on_death_cross_never_sits_flat() -> None:
+    # Flat, then a golden cross (rise) goes long, then a death cross
+    # (decline) must flip straight to short, not merely close to flat.
     closes = (
         [100.0] * 20
         + [110.0, 120.0, 130.0, 140.0, 150.0]
@@ -51,25 +46,17 @@ async def test_migration_produces_identical_backtest_result_to_baseline() -> Non
     )
     bars = {"NSE-RELIANCE": [_bar(i, c) for i, c in enumerate(closes)]}
 
-    strategy = SmaCrossoverStrategy(short_window=5, long_window=20, quantity=10)
+    strategy = SmaCrossStrategy(short_window=5, long_window=20, quantity=10)
     broker = BacktestBroker()
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)
 
     result = await engine.run(bars, strategy)
 
-    assert result.positions == {"NSE-RELIANCE": 0}
-    assert result.cash == 99600.0
-    assert len(result.equity_curve) == 35
-    assert result.equity_curve[-1] == (
-        datetime(2026, 2, 4, tzinfo=UTC),
-        99600.0,
-    )
+    assert result.positions.get("NSE-RELIANCE", 0) == -10
 
 
 async def test_tracks_two_symbols_independently() -> None:
-    # NSE-RELIANCE crosses golden immediately; NSE-TCS stays flat throughout,
-    # so only RELIANCE should ever get an order.
     reliance_closes = [100.0] * 20 + [110.0, 120.0, 130.0, 140.0, 150.0]
     tcs_closes = [200.0] * 25
 
@@ -92,7 +79,7 @@ async def test_tracks_two_symbols_independently() -> None:
         "NSE-TCS": [_sym_bar("NSE-TCS", i, c) for i, c in enumerate(tcs_closes)],
     }
 
-    strategy = SmaCrossoverStrategy(short_window=5, long_window=20, quantity=10)
+    strategy = SmaCrossStrategy(short_window=5, long_window=20, quantity=10)
     broker = BacktestBroker()
     portfolio = Portfolio(starting_cash=100_000.0)
     engine = BacktestEngine(broker, portfolio)

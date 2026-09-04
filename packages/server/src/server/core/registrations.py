@@ -5,7 +5,7 @@ from importlib import import_module
 _MODULES = (
     "ingest.adapters.groww.adapter",
     "ingest.adapters.kite.adapter",
-    "strategy.strategies.sma_crossover.strategy",
+    "strategy.strategies.sma_cross.strategy",
 )
 
 

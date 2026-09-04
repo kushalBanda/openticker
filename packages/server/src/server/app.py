@@ -78,7 +78,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ValueError)
     async def _value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
-        # Strategy constructors (e.g. SmaCrossoverStrategy) validate their
+        # Strategy constructors (e.g. SmaCrossStrategy) validate their
         # own params with a plain ValueError, not a typed package
         # exception, map it to the same 422 as the typed errors above.
         return JSONResponse(

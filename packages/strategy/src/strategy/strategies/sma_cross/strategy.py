@@ -3,15 +3,20 @@ from collections import deque
 from ingest.core.models import Bar
 from quant.signals.sma.signal import SmaSignal
 
-from strategy.core.action import EnterLongAction, ExitLongAction
+from strategy.core.action import ReverseToLongAction, ReverseToShortAction
 from strategy.core.interfaces import Broker
 from strategy.core.portfolio import Portfolio
 from strategy.core.registry import register_strategy
 from strategy.core.trigger import CrossoverTrigger
 
 
-@register_strategy("sma_crossover")
-class SmaCrossoverStrategy:
+@register_strategy("sma_cross")
+class SmaCrossStrategy:
+    """Always-in-the-market SMA crossover.Golden cross (fast crosses above slow) flips to long `quantity` shares, 
+    death cross (fast crosses below slow) flips to short `quantity` shares, 
+    unlike `sma_crossover` (removed), this never sits flat.
+    """
+
     def __init__(self, short_window: int, long_window: int, quantity: int) -> None:
         if short_window >= long_window:
             raise ValueError("short_window must be less than long_window")
@@ -20,14 +25,14 @@ class SmaCrossoverStrategy:
 
         fast_signal = SmaSignal(window=short_window)
         slow_signal = SmaSignal(window=long_window)
-        self._entry_trigger = CrossoverTrigger(
+        self._golden_cross_trigger = CrossoverTrigger(
             fast=fast_signal, slow=slow_signal, direction="up", min_bars=long_window
         )
-        self._exit_trigger = CrossoverTrigger(
+        self._death_cross_trigger = CrossoverTrigger(
             fast=fast_signal, slow=slow_signal, direction="down", min_bars=long_window
         )
-        self._enter_action = EnterLongAction(quantity=quantity)
-        self._exit_action = ExitLongAction()
+        self._go_long = ReverseToLongAction(quantity=quantity)
+        self._go_short = ReverseToShortAction(quantity=quantity)
 
     async def on_bar(self, bars: dict[str, Bar], portfolio: Portfolio, broker: Broker) -> None:
         for symbol, bar in bars.items():
@@ -40,12 +45,12 @@ class SmaCrossoverStrategy:
         history.append(bar)
         symbol_bars = list(history)
 
-        # Both triggers must be checked every bar (not short-circuited),
-        # since each keeps its own fast-vs-slow baseline internally, an
-        # unchecked trigger would go stale and misfire on the next flip.
-        entry_fired = self._entry_trigger.check(symbol, symbol_bars)
-        exit_fired = self._exit_trigger.check(symbol, symbol_bars)
-        if entry_fired:
-            await self._enter_action.execute(symbol, bar, portfolio, broker)
-        elif exit_fired:
-            await self._exit_action.execute(symbol, bar, portfolio, broker)
+        # Both triggers checked every bar (not short-circuited), each keeps
+        # its own fast-vs-slow baseline internally, an unchecked trigger
+        # would go stale and misfire on the next flip.
+        golden_cross = self._golden_cross_trigger.check(symbol, symbol_bars)
+        death_cross = self._death_cross_trigger.check(symbol, symbol_bars)
+        if golden_cross:
+            await self._go_long.execute(symbol, bar, portfolio, broker)
+        elif death_cross:
+            await self._go_short.execute(symbol, bar, portfolio, broker)

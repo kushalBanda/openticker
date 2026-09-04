@@ -16,8 +16,8 @@ class BacktestRequestBase(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-class SmaCrossoverRequest(BacktestRequestBase):
-    strategy_name: Literal["sma_crossover"] = "sma_crossover"
+class SmaCrossRequest(BacktestRequestBase):
+    strategy_name: Literal["sma_cross"] = "sma_cross"
     short_window: int
     long_window: int
     quantity: int
@@ -26,7 +26,7 @@ class SmaCrossoverRequest(BacktestRequestBase):
 # Add each new strategy's request model here; once there are 2+, this
 # becomes a discriminated union on strategy_name (pydantic requires 2+
 # members for a discriminator).
-BacktestRequest = SmaCrossoverRequest
+BacktestRequest = SmaCrossRequest
 
 
 class BacktestRunOut(BaseModel):
