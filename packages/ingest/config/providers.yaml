@@ -1,6 +1,0 @@
-# symbol -> provider routing for DataEngine.
-# Default provider for a symbol when fetch_historical()/subscribe_live() is
-# called without an explicit provider override. See core/provider_routes.py.
-RELIANCE: kite
-TCS: kite
-INFY: kite

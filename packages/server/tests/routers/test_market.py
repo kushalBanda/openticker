@@ -23,7 +23,7 @@ def _bar(day: int) -> Bar:
 
 
 def test_get_bars_empty_when_nothing_cached_and_provider_has_nothing(
-    client: TestClient,
+    client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     resp = client.get(
         "/market/bars",
@@ -32,13 +32,17 @@ def test_get_bars_empty_when_nothing_cached_and_provider_has_nothing(
             "from": "2026-01-01T00:00:00Z",
             "to": "2026-01-31T00:00:00Z",
         },
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.OK
     assert resp.json() == {"bars": []}
 
 
 def test_get_bars_returns_already_cached_bars_without_calling_provider(
-    client: TestClient, duckdb_store: DuckDBStore, fake_adapter: FakeAdapter
+    client: TestClient,
+    duckdb_store: DuckDBStore,
+    fake_adapter: FakeAdapter,
+    auth_headers: dict[str, str],
 ) -> None:
     duckdb_store.write_bars([_bar(1), _bar(2)])
     resp = client.get(
@@ -48,6 +52,7 @@ def test_get_bars_returns_already_cached_bars_without_calling_provider(
             "from": "2026-01-01T00:00:00Z",
             "to": "2026-01-02T00:00:00Z",
         },
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
@@ -57,7 +62,7 @@ def test_get_bars_returns_already_cached_bars_without_calling_provider(
 
 
 def test_get_bars_fetches_live_when_nothing_cached(
-    client: TestClient, fake_adapter: FakeAdapter
+    client: TestClient, fake_adapter: FakeAdapter, auth_headers: dict[str, str]
 ) -> None:
     fake_adapter.bars = [_bar(1), _bar(2)]
     resp = client.get(
@@ -67,6 +72,7 @@ def test_get_bars_fetches_live_when_nothing_cached(
             "from": "2026-01-01T00:00:00Z",
             "to": "2026-01-02T00:00:00Z",
         },
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.OK
     assert len(resp.json()["bars"]) == 2
@@ -74,7 +80,10 @@ def test_get_bars_fetches_live_when_nothing_cached(
 
 
 def test_get_bars_fetches_only_the_missing_edges(
-    client: TestClient, duckdb_store: DuckDBStore, fake_adapter: FakeAdapter
+    client: TestClient,
+    duckdb_store: DuckDBStore,
+    fake_adapter: FakeAdapter,
+    auth_headers: dict[str, str],
 ) -> None:
     # Middle of the range is already cached; requested range extends a day
     # on each side. DataEngine should fetch only those two edges, not
@@ -89,6 +98,7 @@ def test_get_bars_fetches_only_the_missing_edges(
             "from": "2026-01-01T00:00:00Z",
             "to": "2026-01-03T00:00:00Z",
         },
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.OK
     assert len(resp.json()["bars"]) == 3

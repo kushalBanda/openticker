@@ -42,13 +42,15 @@ def test_get_strategies_lists_sma_crossover(client: TestClient) -> None:
     assert "sma_crossover" in resp.json()["strategy_names"]
 
 
-def test_run_backtest_no_bars_returns_404(client: TestClient) -> None:
-    resp = client.post("/backtest", json=_request_body())
+def test_run_backtest_no_bars_returns_404(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    resp = client.post("/backtest", json=_request_body(), headers=auth_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_run_backtest_returns_generated_run_id(
-    client: TestClient, duckdb_store: DuckDBStore
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
 ) -> None:
     # Dip then recovery forces a short-SMA-crosses-above-long-SMA signal,
     # guaranteeing at least one trade so the run is actually persisted.
@@ -57,7 +59,7 @@ def test_run_backtest_returns_generated_run_id(
         [_bar(day, close) for day, close in enumerate(closes, start=1)]
     )
 
-    resp = client.post("/backtest", json=_request_body())
+    resp = client.post("/backtest", json=_request_body(), headers=auth_headers)
 
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
@@ -70,20 +72,24 @@ def test_run_backtest_returns_generated_run_id(
 
 
 def test_run_backtest_bad_strategy_params_returns_422(
-    client: TestClient, duckdb_store: DuckDBStore
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
 ) -> None:
     duckdb_store.write_bars([_bar(day, 100.0 + day) for day in range(1, 10)])
 
     resp = client.post(
         "/backtest",
         json=_request_body(short_window=5, long_window=2),
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
-def test_run_backtest_unknown_strategy_returns_422(client: TestClient) -> None:
+def test_run_backtest_unknown_strategy_returns_422(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     resp = client.post(
         "/backtest",
         json=_request_body(strategy_name="does_not_exist"),
+        headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

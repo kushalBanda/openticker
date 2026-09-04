@@ -12,7 +12,8 @@ from strategy.metrics.performance import compute_metrics
 from strategy.storage.ledger_store import LedgerStore
 
 from server.core.constants import API_PREFIX_BACKTEST
-from server.core.deps import get_data_engine, get_ledger_store
+from server.core.deps import get_data_engine, get_ledger_store, get_session
+from server.core.security import Session
 from server.schemas.backtest import (
     BacktestRequest,
     BacktestRequestBase,
@@ -38,12 +39,12 @@ def _strategy_params(request: BacktestRequest) -> dict[str, object]:
 
 
 async def _fetch_bars(
-    request: BacktestRequest, engine: DataEngine
+    request: BacktestRequest, engine: DataEngine, provider: str
 ) -> dict[str, list[Bar]]:
     bars: dict[str, list[Bar]] = {}
     for symbol in request.symbols:
         symbol_bars = await engine.fetch_historical(
-            symbol, request.interval, request.from_, request.to
+            symbol, request.interval, request.from_, request.to, provider=provider
         )
         if not symbol_bars:
             raise HTTPException(
@@ -60,10 +61,11 @@ async def _fetch_bars(
 @action_router.post("/backtest", response_model=BacktestRunOut)
 async def run_backtest(
     request: BacktestRequest,
+    session: Session = Depends(get_session),
     data_engine: DataEngine = Depends(get_data_engine),
     ledger_store: LedgerStore = Depends(get_ledger_store),
 ) -> BacktestRunOut:
-    bars = await _fetch_bars(request, data_engine)
+    bars = await _fetch_bars(request, data_engine, session["provider"])
     strategy = StrategyFactory.create(
         request.strategy_name, _strategy_params(request)
     )

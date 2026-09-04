@@ -4,12 +4,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from ingest.core.engine import DataEngine
 from ingest.core.models import Bar, Tick
 from ingest.storage.duckdb_store import DuckDBStore
 from server.app import create_app
-from server.core.deps import get_adapters, get_data_engine, get_ledger_store
+from server.core.deps import get_adapter, get_duckdb_store, get_ledger_store
+from server.core.security import create_session_token
 from strategy.storage.ledger_store import LedgerStore
+
+_TEST_JWT_SECRET = "test-secret-at-least-32-bytes-long"
 
 
 class FakeAdapter:
@@ -53,24 +55,29 @@ def fake_adapter() -> FakeAdapter:
 
 
 @pytest.fixture
-def data_engine(
-    duckdb_store: DuckDBStore, fake_adapter: FakeAdapter
-) -> DataEngine:
-    return DataEngine(
-        adapters={"kite": fake_adapter},
-        store=duckdb_store,
-        provider_routes={"NSE-RELIANCE": "kite", "RELIANCE": "kite"},
+def session_token() -> str:
+    return create_session_token(
+        "kite", {"api_key": "test-key", "access_token": "test-token"}, _TEST_JWT_SECRET
     )
 
 
 @pytest.fixture
+def auth_headers(session_token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {session_token}"}
+
+
+@pytest.fixture
 def client(
-    ledger_store: LedgerStore, data_engine: DataEngine, fake_adapter: FakeAdapter
+    monkeypatch: pytest.MonkeyPatch,
+    ledger_store: LedgerStore,
+    duckdb_store: DuckDBStore,
+    fake_adapter: FakeAdapter,
 ) -> Iterator[TestClient]:
+    monkeypatch.setenv("JWT_SECRET_KEY", _TEST_JWT_SECRET)
     app = create_app()
     app.dependency_overrides[get_ledger_store] = lambda: ledger_store
-    app.dependency_overrides[get_data_engine] = lambda: data_engine
-    app.dependency_overrides[get_adapters] = lambda: {"kite": fake_adapter}
+    app.dependency_overrides[get_duckdb_store] = lambda: duckdb_store
+    app.dependency_overrides[get_adapter] = lambda: fake_adapter
     with TestClient(app) as test_client:
         yield test_client
 
