@@ -73,6 +73,28 @@ def test_list_run_ids_empty_store(tmp_path: Path) -> None:
     assert store.list_run_ids() == []
 
 
+def test_list_run_ids_supports_limit_offset(tmp_path: Path) -> None:
+    store = LedgerStore(db_path=tmp_path / "test.duckdb")
+    for i in range(3):
+        store.write_entries(f"run-{i}", [_entry(0)])
+
+    assert store.list_run_ids(limit=2, offset=0) == ["run-0", "run-1"]
+    assert store.list_run_ids(limit=2, offset=2) == ["run-2"]
+    assert store.count_run_ids() == 3
+
+
+def test_query_entries_supports_limit_offset(tmp_path: Path) -> None:
+    store = LedgerStore(db_path=tmp_path / "test.duckdb")
+    store.write_entries("run-1", [_entry(0), _entry(1), _entry(2)])
+
+    page1 = store.query_entries("run-1", limit=2, offset=0)
+    page2 = store.query_entries("run-1", limit=2, offset=2)
+
+    assert [e.fill_price for e in page1] == [100.0, 101.0]
+    assert [e.fill_price for e in page2] == [102.0]
+    assert store.count_entries("run-1") == 3
+
+
 def test_write_entries_is_idempotent_on_rerun(tmp_path: Path) -> None:
     store = LedgerStore(db_path=tmp_path / "test.duckdb")
     entries = [_entry(0), _entry(1)]

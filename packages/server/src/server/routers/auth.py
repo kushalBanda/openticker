@@ -38,7 +38,7 @@ def kite_login_url() -> KiteLoginUrlOut:
     )
 
 
-@router.get("/kite/callback", response_model=TokenOut)
+@router.post("/kite/callback", response_model=TokenOut)
 async def kite_callback(request_token: str) -> TokenOut:
     api_key, api_secret = _kite_app_credentials()
     checksum = sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()

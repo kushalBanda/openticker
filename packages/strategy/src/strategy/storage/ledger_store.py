@@ -62,23 +62,45 @@ class LedgerStore:
             rows,
         )
 
-    def list_run_ids(self) -> list[str]:
-        rows = self._conn.execute(
-            f"SELECT DISTINCT run_id FROM {TABLE_LEDGER_ENTRIES} ORDER BY run_id"
-        ).fetchall()
+    def list_run_ids(
+        self, limit: int | None = None, offset: int = 0
+    ) -> list[str]:
+        query = f"SELECT DISTINCT run_id FROM {TABLE_LEDGER_ENTRIES} ORDER BY run_id"
+        params: list[object] = []
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params = [limit, offset]
+        rows = self._conn.execute(query, params).fetchall()
         return [r[0] for r in rows]
 
-    def query_entries(self, run_id: str) -> list[LedgerEntry]:
-        rows = self._conn.execute(
-            f"""
+    def count_run_ids(self) -> int:
+        row = self._conn.execute(
+            f"SELECT COUNT(DISTINCT run_id) FROM {TABLE_LEDGER_ENTRIES}"
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_entries(self, run_id: str) -> int:
+        row = self._conn.execute(
+            f"SELECT COUNT(*) FROM {TABLE_LEDGER_ENTRIES} WHERE run_id = ?",
+            [run_id],
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def query_entries(
+        self, run_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[LedgerEntry]:
+        query = f"""
             SELECT symbol, side, quantity, fill_price, fill_ts, commission,
                    cost_basis_before, realized_pnl, cash_after, position_after
             FROM {TABLE_LEDGER_ENTRIES}
             WHERE run_id = ?
             ORDER BY sequence
-            """,
-            [run_id],
-        ).fetchall()
+        """
+        params: list[object] = [run_id]
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        rows = self._conn.execute(query, params).fetchall()
         return [
             LedgerEntry(
                 symbol=r[0],

@@ -10,6 +10,7 @@ from ingest.core.engine import DataEngine
 from ingest.core.interfaces import MarketDataAdapter
 from ingest.core.registry import AdapterFactory
 from ingest.storage.duckdb_store import DuckDBStore
+from strategy.storage.equity_curve_store import EquityCurveStore
 from strategy.storage.ledger_store import LedgerStore
 
 from server.core.security import Session, decode_session_token
@@ -29,6 +30,11 @@ def get_jwt_secret() -> str:
 @lru_cache
 def get_ledger_store() -> LedgerStore:
     return LedgerStore()
+
+
+@lru_cache
+def get_equity_curve_store() -> EquityCurveStore:
+    return EquityCurveStore()
 
 
 @lru_cache

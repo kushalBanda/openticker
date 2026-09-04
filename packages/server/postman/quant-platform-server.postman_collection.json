@@ -42,7 +42,7 @@
             }
           ],
           "request": {
-            "method": "GET",
+            "method": "POST",
             "url": {
               "raw": "{{baseUrl}}/auth/kite/callback?request_token={{kiteRequestToken}}",
               "host": ["{{baseUrl}}"],
@@ -99,14 +99,22 @@
               "mode": "raw",
               "raw": "{\n  \"strategy_name\": \"sma_crossover\",\n  \"symbols\": [\"{{symbol}}\"],\n  \"interval\": \"{{interval}}\",\n  \"from\": \"{{fromTs}}\",\n  \"to\": \"{{toTs}}\",\n  \"starting_cash\": 100000.0,\n  \"short_window\": 5,\n  \"long_window\": 20,\n  \"quantity\": 10\n}"
             },
-            "url": { "raw": "{{baseUrl}}/backtest", "host": ["{{baseUrl}}"], "path": ["backtest"] }
+            "url": { "raw": "{{baseUrl}}/backtests", "host": ["{{baseUrl}}"], "path": ["backtests"] }
           }
         },
         {
           "name": "List runs",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/backtests", "host": ["{{baseUrl}}"], "path": ["backtests"] }
+            "url": {
+              "raw": "{{baseUrl}}/backtests?page=1&page_size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["backtests"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
+            }
           }
         },
         {
@@ -114,9 +122,13 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/backtests/{{runId}}/trades",
+              "raw": "{{baseUrl}}/backtests/{{runId}}/trades?page=1&page_size=20",
               "host": ["{{baseUrl}}"],
-              "path": ["backtests", "{{runId}}", "trades"]
+              "path": ["backtests", "{{runId}}", "trades"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
             }
           }
         },

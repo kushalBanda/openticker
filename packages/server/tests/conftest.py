@@ -7,8 +7,14 @@ from fastapi.testclient import TestClient
 from ingest.core.models import Bar, Tick
 from ingest.storage.duckdb_store import DuckDBStore
 from server.app import create_app
-from server.core.deps import get_adapter, get_duckdb_store, get_ledger_store
+from server.core.deps import (
+    get_adapter,
+    get_duckdb_store,
+    get_equity_curve_store,
+    get_ledger_store,
+)
 from server.core.security import create_session_token
+from strategy.storage.equity_curve_store import EquityCurveStore
 from strategy.storage.ledger_store import LedgerStore
 
 _TEST_JWT_SECRET = "test-secret-at-least-32-bytes-long"
@@ -45,6 +51,11 @@ def ledger_store(tmp_path: Path) -> LedgerStore:
 
 
 @pytest.fixture
+def equity_curve_store(tmp_path: Path) -> EquityCurveStore:
+    return EquityCurveStore(db_path=tmp_path / "ledger.duckdb")
+
+
+@pytest.fixture
 def duckdb_store(tmp_path: Path) -> DuckDBStore:
     return DuckDBStore(db_path=tmp_path / "market.duckdb")
 
@@ -70,12 +81,14 @@ def auth_headers(session_token: str) -> dict[str, str]:
 def client(
     monkeypatch: pytest.MonkeyPatch,
     ledger_store: LedgerStore,
+    equity_curve_store: EquityCurveStore,
     duckdb_store: DuckDBStore,
     fake_adapter: FakeAdapter,
 ) -> Iterator[TestClient]:
     monkeypatch.setenv("JWT_SECRET_KEY", _TEST_JWT_SECRET)
     app = create_app()
     app.dependency_overrides[get_ledger_store] = lambda: ledger_store
+    app.dependency_overrides[get_equity_curve_store] = lambda: equity_curve_store
     app.dependency_overrides[get_duckdb_store] = lambda: duckdb_store
     app.dependency_overrides[get_adapter] = lambda: fake_adapter
     with TestClient(app) as test_client:

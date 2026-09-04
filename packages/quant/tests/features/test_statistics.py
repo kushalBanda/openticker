@@ -105,6 +105,15 @@ def test_sharpe_ratio_raises_when_insufficient_closes() -> None:
         sharpe_ratio([100.0, 101.0], _days(2))
 
 
+def test_sharpe_ratio_raises_when_spacing_falls_between_buckets() -> None:
+    # Average spacing of 10.5 days falls between the weekly (6-8) and
+    # semi-monthly (14-17) buckets, no annualization factor applies.
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    timestamps = [start, start + timedelta(days=8), start + timedelta(days=21)]
+    with pytest.raises(InsufficientDataError, match="annualization factor"):
+        sharpe_ratio([100.0, 101.0, 102.0], timestamps)
+
+
 def test_sharpe_ratio_raises_on_mismatched_lengths() -> None:
     with pytest.raises(ValueError, match="sharpe_ratio"):
         sharpe_ratio([100.0, 101.0, 102.0], _days(2))

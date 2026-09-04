@@ -53,6 +53,18 @@ class LedgerEntryOut(BaseModel):
 
 class RunListOut(BaseModel):
     run_ids: list[str]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class TradeListOut(BaseModel):
+    trades: list[LedgerEntryOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class PerformanceReportOut(BaseModel):

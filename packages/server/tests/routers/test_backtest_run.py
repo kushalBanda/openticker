@@ -45,7 +45,7 @@ def test_get_strategies_lists_sma_crossover(client: TestClient) -> None:
 def test_run_backtest_no_bars_returns_404(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    resp = client.post("/backtest", json=_request_body(), headers=auth_headers)
+    resp = client.post("/backtests", json=_request_body(), headers=auth_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
@@ -59,7 +59,7 @@ def test_run_backtest_returns_generated_run_id(
         [_bar(day, close) for day, close in enumerate(closes, start=1)]
     )
 
-    resp = client.post("/backtest", json=_request_body(), headers=auth_headers)
+    resp = client.post("/backtests", json=_request_body(), headers=auth_headers)
 
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
@@ -67,7 +67,7 @@ def test_run_backtest_returns_generated_run_id(
     assert body["trade_count"] >= 1
 
     # run_id is server-generated and persisted, listable afterward
-    runs = client.get("/backtests").json()["run_ids"]
+    runs = client.get("/backtests", params={"page_size": 100}).json()["run_ids"]
     assert body["run_id"] in runs
 
 
@@ -77,7 +77,7 @@ def test_run_backtest_bad_strategy_params_returns_422(
     duckdb_store.write_bars([_bar(day, 100.0 + day) for day in range(1, 10)])
 
     resp = client.post(
-        "/backtest",
+        "/backtests",
         json=_request_body(short_window=5, long_window=2),
         headers=auth_headers,
     )
@@ -88,7 +88,7 @@ def test_run_backtest_unknown_strategy_returns_422(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     resp = client.post(
-        "/backtest",
+        "/backtests",
         json=_request_body(strategy_name="does_not_exist"),
         headers=auth_headers,
     )
