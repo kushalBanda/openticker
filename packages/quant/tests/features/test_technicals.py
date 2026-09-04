@@ -36,6 +36,7 @@ def test_bollinger_bands_centered_on_moving_average() -> None:
     bands = bollinger_bands(series, window=5, k=2.0)
     avg = moving_average(series, window=5).iloc[-1]
     assert bands["upper"].iloc[-1] > avg > bands["lower"].iloc[-1]
+    assert bands["middle"].iloc[-1] == pytest.approx(avg)
 
 
 def test_smoothed_moving_average_seed_is_flat_mean() -> None:

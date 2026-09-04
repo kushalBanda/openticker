@@ -6,6 +6,8 @@ _MODULES = (
     "ingest.adapters.groww.adapter",
     "ingest.adapters.kite.adapter",
     "strategy.strategies.sma_cross.strategy",
+    "strategy.strategies.buy_and_hold.strategy",
+    "strategy.strategies.mean_reversion.strategy",
 )
 
 

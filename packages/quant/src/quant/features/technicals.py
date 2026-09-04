@@ -25,13 +25,17 @@ def moving_average(x: pd.Series, window: int | None = None) -> pd.Series:
 
 def bollinger_bands(x: pd.Series, window: int | None = None, k: float = 2.0) -> pd.DataFrame:
     """Standard-deviation bands around the moving average of price level:
-    upper = MA + k*sigma, lower = MA - k*sigma.
+    upper = MA + k*sigma, middle = MA, lower = MA - k*sigma.
     """
     if x.empty:
-        return pd.DataFrame({"lower": pd.Series(dtype=float), "upper": pd.Series(dtype=float)})
+        return pd.DataFrame({
+            "lower": pd.Series(dtype=float),
+            "middle": pd.Series(dtype=float),
+            "upper": pd.Series(dtype=float),
+        })
     avg = moving_average(x, window)
     sigma = x.expanding().std() if window is None else x.rolling(window).std()
-    return pd.DataFrame({"lower": avg - k * sigma, "upper": avg + k * sigma})
+    return pd.DataFrame({"lower": avg - k * sigma, "middle": avg, "upper": avg + k * sigma})
 
 
 def smoothed_moving_average(x: pd.Series, window: int) -> pd.Series:

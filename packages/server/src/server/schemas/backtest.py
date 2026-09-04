@@ -23,10 +23,27 @@ class SmaCrossRequest(BacktestRequestBase):
     quantity: int
 
 
-# Add each new strategy's request model here; once there are 2+, this
-# becomes a discriminated union on strategy_name (pydantic requires 2+
-# members for a discriminator).
-BacktestRequest = SmaCrossRequest
+class BuyAndHoldRequest(BacktestRequestBase):
+    strategy_name: Literal["buy_and_hold"] = "buy_and_hold"
+    quantity: int
+
+
+class MeanReversionRequest(BacktestRequestBase):
+    strategy_name: Literal["mean_reversion"] = "mean_reversion"
+    bb_window: int
+    bb_std: float
+    rsi_period: int
+    rsi_buy_threshold: float
+    rsi_sell_threshold: float
+    quantity: int
+
+
+# Add each new strategy's request model here as another Annotated union
+# member, pydantic/FastAPI dispatches on strategy_name (the discriminator).
+BacktestRequest = Annotated[
+    SmaCrossRequest | BuyAndHoldRequest | MeanReversionRequest,
+    Field(discriminator="strategy_name"),
+]
 
 
 class BacktestRunOut(BaseModel):

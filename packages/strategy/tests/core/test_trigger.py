@@ -2,7 +2,11 @@ from datetime import UTC, datetime, timedelta
 
 from ingest.core.models import Bar
 from quant.signals.sma.signal import SmaSignal
-from strategy.core.trigger import CrossoverTrigger, ThresholdTrigger
+from strategy.core.trigger import (
+    BollingerRsiEntryTrigger,
+    CrossoverTrigger,
+    ThresholdTrigger,
+)
 
 
 def _bar(day: int, close: float) -> Bar:
@@ -90,5 +94,43 @@ def test_threshold_trigger_fires_below_level() -> None:
 def test_threshold_trigger_does_not_fire_when_condition_false() -> None:
     trigger = ThresholdTrigger(signal=SmaSignal(window=2), level=105.0, direction="above")
     bars = [_bar(0, 90.0), _bar(1, 80.0)]
+
+    assert trigger.check("NSE-RELIANCE", bars) is False
+
+
+def test_bollinger_rsi_entry_trigger_fires_long_on_oversold_break() -> None:
+    trigger = BollingerRsiEntryTrigger(
+        bb_window=10, bb_std=2.0, rsi_period=10, rsi_threshold=30.0, direction="long"
+    )
+    closes = [100.0] * 10 + [80.0]
+    bars = [_bar(i, c) for i, c in enumerate(closes)]
+
+    assert trigger.check("NSE-RELIANCE", bars) is True
+
+
+def test_bollinger_rsi_entry_trigger_fires_short_on_overbought_break() -> None:
+    trigger = BollingerRsiEntryTrigger(
+        bb_window=10, bb_std=2.0, rsi_period=10, rsi_threshold=70.0, direction="short"
+    )
+    closes = [100.0] * 10 + [120.0]
+    bars = [_bar(i, c) for i, c in enumerate(closes)]
+
+    assert trigger.check("NSE-RELIANCE", bars) is True
+
+
+def test_bollinger_rsi_entry_trigger_does_not_fire_before_min_bars() -> None:
+    trigger = BollingerRsiEntryTrigger(
+        bb_window=10, bb_std=2.0, rsi_period=10, rsi_threshold=30.0, direction="long"
+    )
+    bars = [_bar(i, c) for i, c in enumerate([100.0] * 5)]
+
+    assert trigger.check("NSE-RELIANCE", bars) is False
+
+
+def test_bollinger_rsi_entry_trigger_does_not_fire_inside_bands() -> None:
+    trigger = BollingerRsiEntryTrigger(
+        bb_window=10, bb_std=2.0, rsi_period=10, rsi_threshold=30.0, direction="long"
+    )
+    bars = [_bar(i, c) for i, c in enumerate([100.0, 101.0, 99.0, 100.5, 99.5] * 2 + [100.0])]
 
     assert trigger.check("NSE-RELIANCE", bars) is False

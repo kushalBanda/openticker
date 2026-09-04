@@ -64,6 +64,26 @@ class ExitLongAction:
         )
 
 
+class ExitShortAction:
+    """Submits a market buy to close the symbol's full open short position,
+    unless there is no short position to close, in which case it no-ops.
+    """
+
+    async def execute(self, symbol: str, bar: Bar, portfolio: Portfolio, broker: Broker) -> None:
+        position = portfolio.positions.get(symbol, 0)
+        if position >= 0:
+            return
+        await broker.submit_order(
+            Order(
+                symbol=symbol,
+                side=ORDER_SIDE_BUY,
+                quantity=abs(position),
+                order_type=ORDER_TYPE_MARKET,
+                placed_at_ts=bar.ts,
+            )
+        )
+
+
 class ReverseToLongAction:
     """Submits a market buy sized to close any open short and open a new
     `quantity`-share long in one order (`quantity + abs(short)`). No-ops

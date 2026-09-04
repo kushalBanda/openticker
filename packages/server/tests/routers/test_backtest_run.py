@@ -93,3 +93,52 @@ def test_run_backtest_unknown_strategy_returns_422(
         headers=auth_headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+def test_run_backtest_buy_and_hold_routes_through_discriminated_union(
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
+) -> None:
+    duckdb_store.write_bars([_bar(day, 100.0 + day) for day in range(1, 5)])
+
+    body = {
+        "strategy_name": "buy_and_hold",
+        "symbols": ["NSE-RELIANCE"],
+        "interval": "1d",
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-01-31T00:00:00Z",
+        "starting_cash": 100_000.0,
+        "quantity": 10,
+    }
+    resp = client.post("/backtests", json=body, headers=auth_headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["trade_count"] == 1
+
+
+def test_run_backtest_mean_reversion_routes_through_discriminated_union(
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
+) -> None:
+    # Flat, then a sharp drop forces an oversold Bollinger/RSI entry.
+    closes = [100.0] * 10 + [80.0, 82.0]
+    duckdb_store.write_bars(
+        [_bar(day, close) for day, close in enumerate(closes, start=1)]
+    )
+
+    body = {
+        "strategy_name": "mean_reversion",
+        "symbols": ["NSE-RELIANCE"],
+        "interval": "1d",
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-01-31T00:00:00Z",
+        "starting_cash": 100_000.0,
+        "bb_window": 10,
+        "bb_std": 2.0,
+        "rsi_period": 10,
+        "rsi_buy_threshold": 30.0,
+        "rsi_sell_threshold": 70.0,
+        "quantity": 10,
+    }
+    resp = client.post("/backtests", json=body, headers=auth_headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["trade_count"] >= 1
