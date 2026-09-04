@@ -8,6 +8,7 @@ dependencies = [
     "strategy",
     "quant",
     "execution",
+    "server",
 ]
 
 [tool.uv.sources]
@@ -15,6 +16,7 @@ ingest = { workspace = true }
 strategy = { workspace = true }
 quant = { workspace = true }
 execution = { workspace = true }
+server = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -51,13 +53,20 @@ dev = [
 # so a blind except converting to a typed error is the correct boundary.
 "packages/ingest/src/ingest/adapters/groww/adapter.py" = ["BLE001"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection pattern (Depends(...)/Query(...) as an
+# argument default) is idiomatic, not the mutable-default-argument bug
+# B008 exists to catch. Applies repo-wide since only packages/server uses
+# FastAPI.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
 [tool.mypy]
 python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src"
+mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src:packages/server/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]

@@ -51,6 +51,28 @@ def test_isolates_by_run_id(tmp_path: Path) -> None:
     assert len(store.query_entries("run-2")) == 2
 
 
+def test_write_entries_empty_list_is_a_noop(tmp_path: Path) -> None:
+    store = LedgerStore(db_path=tmp_path / "test.duckdb")
+
+    store.write_entries("run-1", [])
+
+    assert store.query_entries("run-1") == []
+
+
+def test_list_run_ids_returns_distinct_sorted(tmp_path: Path) -> None:
+    store = LedgerStore(db_path=tmp_path / "test.duckdb")
+    store.write_entries("run-2", [_entry(0)])
+    store.write_entries("run-1", [_entry(0)])
+
+    assert store.list_run_ids() == ["run-1", "run-2"]
+
+
+def test_list_run_ids_empty_store(tmp_path: Path) -> None:
+    store = LedgerStore(db_path=tmp_path / "test.duckdb")
+
+    assert store.list_run_ids() == []
+
+
 def test_write_entries_is_idempotent_on_rerun(tmp_path: Path) -> None:
     store = LedgerStore(db_path=tmp_path / "test.duckdb")
     entries = [_entry(0), _entry(1)]

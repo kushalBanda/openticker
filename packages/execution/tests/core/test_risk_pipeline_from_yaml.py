@@ -3,12 +3,12 @@ from pathlib import Path
 
 import yaml
 from execution.core.risk_pipeline import RiskPipeline
-from execution.risk_checks.duplicate_order import DuplicateOrderCheck  # noqa: F401
-from execution.risk_checks.max_daily_loss import MaxDailyLossCheck  # noqa: F401
-from execution.risk_checks.max_order_notional import MaxOrderNotionalCheck  # noqa: F401
-from execution.risk_checks.max_position_size import MaxPositionSizeCheck  # noqa: F401
-from execution.risk_checks.order_rate_limiter import OrderRateLimiterCheck  # noqa: F401
-from execution.risk_checks.price_collar import PriceCollarCheck  # noqa: F401
+from execution.risk_checks.duplicate_order import DuplicateOrderCheck
+from execution.risk_checks.max_daily_loss import MaxDailyLossCheck
+from execution.risk_checks.max_order_notional import MaxOrderNotionalCheck
+from execution.risk_checks.max_position_size import MaxPositionSizeCheck
+from execution.risk_checks.order_rate_limiter import OrderRateLimiterCheck
+from execution.risk_checks.price_collar import PriceCollarCheck
 from strategy.core.constants import ORDER_SIDE_BUY, ORDER_TYPE_MARKET
 from strategy.core.models import Order
 from strategy.core.portfolio import Portfolio

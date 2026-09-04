@@ -33,6 +33,8 @@ class LedgerStore:
         """)
 
     def write_entries(self, run_id: str, entries: list[LedgerEntry]) -> None:
+        if not entries:
+            return
         rows = [
             (
                 run_id,
@@ -59,6 +61,12 @@ class LedgerStore:
             """,
             rows,
         )
+
+    def list_run_ids(self) -> list[str]:
+        rows = self._conn.execute(
+            f"SELECT DISTINCT run_id FROM {TABLE_LEDGER_ENTRIES} ORDER BY run_id"
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def query_entries(self, run_id: str) -> list[LedgerEntry]:
         rows = self._conn.execute(

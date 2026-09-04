@@ -1,0 +1,127 @@
+{
+  "info": {
+    "name": "Quant Platform",
+    "description": "Unified REST API over ingest, quant, strategy, and execution. Set {{baseUrl}} to your running server (default http://localhost:8000).\n\nMarket bars and backtest bars are fetched on demand via DataEngine: a date range never seen before is fetched live from Kite and cached in DuckDB, a range already cached returns instantly with no provider call. `symbol` must be Kite's bare tradingsymbol (e.g. `RELIANCE`, not `NSE-RELIANCE`); `interval` must be a canonical string (`1d`, `1m`, `5m`, ... — not Kite's own `day`/`minute`). Only symbols listed in packages/ingest/config/providers.yaml are resolvable.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "runId", "value": "run-1" },
+    { "key": "symbol", "value": "RELIANCE" },
+    { "key": "fromTs", "value": "2026-06-08T00:00:00Z" },
+    { "key": "toTs", "value": "2026-09-03T00:00:00Z" },
+    { "key": "interval", "value": "1d" }
+  ],
+  "item": [
+    {
+      "name": "Backtests",
+      "item": [
+        {
+          "name": "List strategies",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/strategies", "host": ["{{baseUrl}}"], "path": ["strategies"] }
+          }
+        },
+        {
+          "name": "Run backtest",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy_name\": \"sma_crossover\",\n  \"symbols\": [\"{{symbol}}\"],\n  \"interval\": \"{{interval}}\",\n  \"from\": \"{{fromTs}}\",\n  \"to\": \"{{toTs}}\",\n  \"starting_cash\": 100000.0,\n  \"short_window\": 5,\n  \"long_window\": 20,\n  \"quantity\": 10\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/backtest", "host": ["{{baseUrl}}"], "path": ["backtest"] }
+          }
+        },
+        {
+          "name": "List runs",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/backtests", "host": ["{{baseUrl}}"], "path": ["backtests"] }
+          }
+        },
+        {
+          "name": "Get trades for run",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/backtests/{{runId}}/trades",
+              "host": ["{{baseUrl}}"],
+              "path": ["backtests", "{{runId}}", "trades"]
+            }
+          }
+        },
+        {
+          "name": "Get metrics for run",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/backtests/{{runId}}/metrics",
+              "host": ["{{baseUrl}}"],
+              "path": ["backtests", "{{runId}}", "metrics"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Portfolio",
+      "item": [
+        {
+          "name": "Get positions for run",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/{{runId}}/positions",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "{{runId}}", "positions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Market",
+      "item": [
+        {
+          "name": "Get bars",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/market/bars?symbol={{symbol}}&from={{fromTs}}&to={{toTs}}&interval={{interval}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["market", "bars"],
+              "query": [
+                { "key": "symbol", "value": "{{symbol}}" },
+                { "key": "from", "value": "{{fromTs}}" },
+                { "key": "to", "value": "{{toTs}}" },
+                { "key": "interval", "value": "{{interval}}" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Docs",
+      "item": [
+        {
+          "name": "OpenAPI schema",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/openapi.json", "host": ["{{baseUrl}}"], "path": ["openapi.json"] }
+          }
+        },
+        {
+          "name": "Swagger UI",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/docs", "host": ["{{baseUrl}}"], "path": ["docs"] }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,10 @@ def register_strategy(name: str) -> Callable[[type], type]:
     return decorator
 
 
+def list_strategy_names() -> list[str]:
+    return sorted(_REGISTRY)
+
+
 def get_strategy_class(name: str) -> type[Strategy]:
     try:
         return _REGISTRY[name]

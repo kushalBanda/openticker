@@ -3,7 +3,11 @@ from ingest.core.models import Bar
 from strategy.core.exceptions import UnknownStrategyError
 from strategy.core.interfaces import Broker
 from strategy.core.portfolio import Portfolio
-from strategy.core.registry import StrategyFactory, register_strategy
+from strategy.core.registry import (
+    StrategyFactory,
+    list_strategy_names,
+    register_strategy,
+)
 
 
 @register_strategy("fake_for_registry_test")
@@ -25,3 +29,7 @@ def test_register_and_create_strategy() -> None:
 def test_create_unknown_strategy_raises() -> None:
     with pytest.raises(UnknownStrategyError):
         StrategyFactory.create("does_not_exist", {})
+
+
+def test_list_strategy_names_includes_registered() -> None:
+    assert "fake_for_registry_test" in list_strategy_names()
