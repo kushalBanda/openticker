@@ -152,6 +152,7 @@ __pycache__/
 
 # DataEngine local storage (fetched market data, not source)
 data/
+packages/server/postman/
 
 # Docs
 docs/
