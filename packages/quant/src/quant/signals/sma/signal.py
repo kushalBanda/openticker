@@ -2,7 +2,8 @@ from ingest.core.models import Bar
 
 from quant.core.interfaces import Forecast, RawSignal
 from quant.core.registry import register_signal
-from quant.features.rolling_stats import simple_moving_average
+from quant.core.series import bar_closes_to_series
+from quant.features.technicals import moving_average
 
 
 @register_signal("sma")
@@ -15,8 +16,8 @@ class SmaSignal:
         self._window = window
 
     def compute(self, bars: list[Bar]) -> RawSignal:
-        closes = [b.close for b in bars]
-        value = simple_moving_average(closes, self._window)
+        closes = bar_closes_to_series(bars)
+        value = float(moving_average(closes, self._window).iloc[-1])
         last = bars[-1]
         return RawSignal(
             symbol=last.symbol,

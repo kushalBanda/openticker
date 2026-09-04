@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+import pandas as pd
 from quant.features import statistics
 
 from strategy.core.constants import MIN_EQUITY_POINTS_FOR_FULL_REPORT
@@ -29,13 +30,14 @@ def compute_metrics(equity_curve: list[tuple[datetime, float]]) -> PerformanceRe
 
     timestamps = [ts for ts, _ in equity_curve]
     values = [v for _, v in equity_curve]
+    series = pd.Series(values, index=pd.DatetimeIndex(timestamps), dtype=float)
 
     return PerformanceReport(
-        total_return=statistics.total_return(values),
-        annualized_return=statistics.annualized_return(values, timestamps),
-        max_drawdown=statistics.max_drawdown(values),
-        sharpe_ratio=statistics.sharpe_ratio(values, timestamps),
-        exponential_std=statistics.exponential_std(values),
+        total_return=statistics.total_return(series),
+        annualized_return=statistics.annualized_return(series),
+        max_drawdown=statistics.max_drawdown(series),
+        sharpe_ratio=statistics.sharpe_ratio(series),
+        exponential_std=statistics.exponential_std(series),
         win_rate=_win_rate(values),
     )
 

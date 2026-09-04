@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 import pytest
 from ingest.core.models import Bar
 from quant.core.exceptions import InsufficientDataError
-from quant.features.rolling_stats import simple_rsi
 from quant.signals.rsi.signal import RsiSignal
 
 
@@ -24,11 +23,17 @@ def _bars(closes: list[float]) -> list[Bar]:
     ]
 
 
-def test_compute_returns_raw_signal_matching_simple_rsi() -> None:
+def test_compute_returns_raw_signal_matching_wilder_rsi() -> None:
+    # 5-period example, period+1 == number of closes (seed-only case):
+    # closes: 44, 44.5, 45, 44.75, 45.5, 46
+    # diffs:  +0.5, +0.5, -0.25, +0.75, +0.5
+    # gains:  0.5, 0.5, 0, 0.75, 0.5 -> avg_gain = 2.25 / 5 = 0.45
+    # losses: 0, 0, 0.25, 0, 0      -> avg_loss = 0.25 / 5 = 0.05
+    # rs = 0.45 / 0.05 = 9.0 -> rsi = 100 - (100 / 10) = 90.0
     closes = [44, 44.5, 45, 44.75, 45.5, 46]
     signal = RsiSignal(period=5)
     raw = signal.compute(_bars(closes))
-    assert raw.value == pytest.approx(simple_rsi(closes, period=5))
+    assert raw.value == pytest.approx(90.0)
     assert raw.symbol == "RELIANCE"
     assert raw.interval == "1d"
     assert raw.name == "rsi"

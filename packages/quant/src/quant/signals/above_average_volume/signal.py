@@ -2,7 +2,8 @@ from ingest.core.models import Bar
 
 from quant.core.interfaces import Forecast, RawSignal
 from quant.core.registry import register_signal
-from quant.features.rolling_stats import average_volume
+from quant.core.series import bar_volumes_to_series
+from quant.features.technicals import moving_average
 
 
 @register_signal("above_average_volume")
@@ -20,8 +21,8 @@ class AboveAverageVolumeSignal:
         self._window = window
 
     def compute(self, bars: list[Bar]) -> RawSignal:
-        volumes = [b.volume for b in bars[:-1]]
-        baseline = average_volume(volumes, self._window)
+        volumes = bar_volumes_to_series(bars[:-1])
+        baseline = float(moving_average(volumes, self._window).iloc[-1])
         last = bars[-1]
         value = (last.volume / baseline) - 1 if baseline != 0 else 0.0
         return RawSignal(

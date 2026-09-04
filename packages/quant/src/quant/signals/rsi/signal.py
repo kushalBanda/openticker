@@ -3,7 +3,8 @@ from ingest.core.models import Bar
 from quant.core.constants import FORECAST_SCALE_MAX, RSI_MIDPOINT
 from quant.core.interfaces import Forecast, RawSignal
 from quant.core.registry import register_signal
-from quant.features.rolling_stats import simple_rsi
+from quant.core.series import bar_closes_to_series
+from quant.features.technicals import relative_strength_index
 
 
 @register_signal("rsi")
@@ -16,8 +17,8 @@ class RsiSignal:
         self._period = period
 
     def compute(self, bars: list[Bar]) -> RawSignal:
-        closes = [b.close for b in bars]
-        value = simple_rsi(closes, self._period)
+        closes = bar_closes_to_series(bars)
+        value = float(relative_strength_index(closes, self._period).iloc[-1])
         last = bars[-1]
         return RawSignal(
             symbol=last.symbol,
