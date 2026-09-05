@@ -23,7 +23,15 @@ from server.core.deps import get_duckdb_store
 from server.core.registrations import register_all
 from server.routers import auth, backtest, market, portfolio
 
+# Uvicorn's default log config only attaches handlers to its own
+# "uvicorn.*" loggers, not to root, so this module's own logger needs an
+# explicit handler or its INFO/WARNING lines go nowhere.
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    logger.addHandler(_handler)
 
 
 async def _load_index_constituents(app: FastAPI) -> None:
@@ -55,6 +63,9 @@ async def _load_index_constituents(app: FastAPI) -> None:
                 )
                 for symbol in symbols
             ]
+        )
+        logger.info(
+            "loaded %d constituents for %s (%d)", len(symbols), index_name, year
         )
 
 
