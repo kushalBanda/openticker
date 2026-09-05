@@ -28,7 +28,6 @@ def _request_body(**overrides: object) -> dict[str, object]:
         "from": "2026-01-01T00:00:00Z",
         "to": "2026-01-31T00:00:00Z",
         "starting_cash": 100_000.0,
-        "short_window": 2,
         "long_window": 3,
         "quantity": 10,
     }
@@ -52,7 +51,7 @@ def test_run_backtest_no_bars_returns_404(
 def test_run_backtest_returns_generated_run_id(
     client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
 ) -> None:
-    # Dip then recovery forces a short-SMA-crosses-above-long-SMA signal,
+    # Dip then recovery forces a price-crosses-above-trend-SMA signal,
     # guaranteeing at least one trade so the run is actually persisted.
     closes = [105.0, 104.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0]
     duckdb_store.write_bars(
@@ -76,11 +75,9 @@ def test_run_backtest_bad_strategy_params_returns_422(
 ) -> None:
     duckdb_store.write_bars([_bar(day, 100.0 + day) for day in range(1, 10)])
 
-    resp = client.post(
-        "/backtests",
-        json=_request_body(short_window=5, long_window=2),
-        headers=auth_headers,
-    )
+    body = _request_body()
+    del body["long_window"]
+    resp = client.post("/backtests", json=body, headers=auth_headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
@@ -113,6 +110,33 @@ def test_run_backtest_buy_and_hold_routes_through_discriminated_union(
 
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["trade_count"] == 1
+
+
+def test_run_backtest_time_series_momentum_routes_through_discriminated_union(
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
+) -> None:
+    # Flat then a sharp rise forces a positive trailing-return signal on
+    # the last-but-one bar, filling on the final bar.
+    closes = [100.0] * 5 + [150.0, 150.0]
+    duckdb_store.write_bars(
+        [_bar(day, close) for day, close in enumerate(closes, start=1)]
+    )
+
+    body = {
+        "strategy_name": "time_series_momentum",
+        "symbols": ["NSE-RELIANCE"],
+        "interval": "1d",
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-01-31T00:00:00Z",
+        "starting_cash": 100_000.0,
+        "window": 5,
+        "target_risk_pct": 0.02,
+        "vol_window": 3,
+    }
+    resp = client.post("/backtests", json=body, headers=auth_headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["trade_count"] >= 1
 
 
 def test_run_backtest_mean_reversion_routes_through_discriminated_union(

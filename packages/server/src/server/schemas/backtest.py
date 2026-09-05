@@ -18,7 +18,6 @@ class BacktestRequestBase(BaseModel):
 
 class SmaCrossRequest(BacktestRequestBase):
     strategy_name: Literal["sma_cross"] = "sma_cross"
-    short_window: int
     long_window: int
     quantity: int
 
@@ -38,10 +37,17 @@ class MeanReversionRequest(BacktestRequestBase):
     quantity: int
 
 
+class TimeSeriesMomentumRequest(BacktestRequestBase):
+    strategy_name: Literal["time_series_momentum"] = "time_series_momentum"
+    window: int
+    target_risk_pct: float
+    vol_window: int
+
+
 # Add each new strategy's request model here as another Annotated union
 # member, pydantic/FastAPI dispatches on strategy_name (the discriminator).
 BacktestRequest = Annotated[
-    SmaCrossRequest | BuyAndHoldRequest | MeanReversionRequest,
+    SmaCrossRequest | BuyAndHoldRequest | MeanReversionRequest | TimeSeriesMomentumRequest,
     Field(discriminator="strategy_name"),
 ]
 

@@ -149,6 +149,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.playwright-mcp/
 
 # DataEngine local storage (fetched market data, not source)
 data/

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ingest.core.models import Bar
+from ingest.core.models import Bar, IndexConstituent
 from ingest.storage.duckdb_store import DuckDBStore
 
 
@@ -109,3 +109,50 @@ def test_find_missing_range_leading_and_trailing_gap(tmp_path: Path) -> None:
         datetime(2026, 1, 3, tzinfo=UTC) + timedelta(microseconds=1),
         datetime(2026, 1, 5, tzinfo=UTC),
     )
+
+
+def test_write_and_query_index_constituents(tmp_path: Path) -> None:
+    store = DuckDBStore(db_path=tmp_path / "test.duckdb")
+    store.write_index_constituents(
+        [
+            IndexConstituent(
+                index_name="NIFTY50", symbol="RELIANCE", year=2026, source="manual"
+            ),
+            IndexConstituent(
+                index_name="NIFTY50", symbol="TCS", year=2026, source="manual"
+            ),
+        ]
+    )
+    symbols = store.query_index_constituents("NIFTY50", 2026)
+    assert symbols == ["RELIANCE", "TCS"]
+
+
+def test_query_index_constituents_empty_for_unknown_year(tmp_path: Path) -> None:
+    store = DuckDBStore(db_path=tmp_path / "test.duckdb")
+    store.write_index_constituents(
+        [
+            IndexConstituent(
+                index_name="NIFTY50", symbol="RELIANCE", year=2026, source="manual"
+            )
+        ]
+    )
+    assert store.query_index_constituents("NIFTY50", 2020) == []
+
+
+def test_write_index_constituents_upserts_same_year(tmp_path: Path) -> None:
+    store = DuckDBStore(db_path=tmp_path / "test.duckdb")
+    store.write_index_constituents(
+        [
+            IndexConstituent(
+                index_name="NIFTY50", symbol="RELIANCE", year=2026, source="manual"
+            )
+        ]
+    )
+    store.write_index_constituents(
+        [
+            IndexConstituent(
+                index_name="NIFTY50", symbol="RELIANCE", year=2026, source="nse_csv"
+            )
+        ]
+    )
+    assert store.query_index_constituents("NIFTY50", 2026) == ["RELIANCE"]

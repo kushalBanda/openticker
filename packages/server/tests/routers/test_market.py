@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from http import HTTPStatus
 
+import pytest
 from fastapi.testclient import TestClient
 from ingest.core.models import Bar
 from ingest.storage.duckdb_store import DuckDBStore
@@ -103,3 +104,51 @@ def test_get_bars_fetches_only_the_missing_edges(
     assert resp.status_code == HTTPStatus.OK
     assert len(resp.json()["bars"]) == 3
     assert fake_adapter.fetch_historical_calls == 2
+
+
+def test_fetch_index_constituents_then_get_returns_them(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_fetch(index_name: str) -> list[str]:
+        return ["RELIANCE", "TCS"]
+
+    monkeypatch.setattr(
+        "server.routers.market.fetch_index_constituents", fake_fetch
+    )
+    resp = client.post(
+        "/market/index-constituents/NIFTY50/fetch", headers=auth_headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["index_name"] == "NIFTY50"
+    assert body["symbols"] == ["RELIANCE", "TCS"]
+    year = body["year"]
+
+    resp = client.get(
+        "/market/index-constituents",
+        params={"index_name": "NIFTY50", "year": year},
+        headers=auth_headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["symbols"] == ["RELIANCE", "TCS"]
+
+
+def test_get_index_constituents_empty_when_nothing_stored(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    resp = client.get(
+        "/market/index-constituents",
+        params={"index_name": "NIFTY500", "year": 2026},
+        headers=auth_headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["symbols"] == []
+
+
+def test_fetch_index_constituents_rejects_unknown_index(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    resp = client.post(
+        "/market/index-constituents/BOGUS/fetch", headers=auth_headers
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

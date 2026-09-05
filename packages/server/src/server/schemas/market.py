@@ -17,3 +17,9 @@ class BarOut(BaseModel):
 
 class BarListOut(BaseModel):
     bars: list[BarOut]
+
+
+class IndexConstituentsOut(BaseModel):
+    index_name: str
+    year: int
+    symbols: list[str]

@@ -22,3 +22,11 @@ class Tick:
     price: float
     volume: int
     provider: str
+
+
+@dataclass(frozen=True)
+class IndexConstituent:
+    index_name: str
+    symbol: str
+    year: int
+    source: str

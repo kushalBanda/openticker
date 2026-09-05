@@ -1,23 +1,72 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from http import HTTPStatus
 
+import httpx
 from execution.core.exceptions import ExecutionError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from ingest.core.constants import KNOWN_INDICES, SOURCE_NSE_CSV
 from ingest.core.exceptions import (
     AuthExpiredError,
     DataUnavailableError,
     RateLimitError,
 )
+from ingest.core.index_constituents import fetch_index_constituents
+from ingest.core.models import IndexConstituent
 from strategy.core.exceptions import StrategyEngineError
 
+from server.core.deps import get_duckdb_store
 from server.core.registrations import register_all
 from server.routers import auth, backtest, market, portfolio
+
+logger = logging.getLogger(__name__)
+
+
+async def _load_index_constituents(app: FastAPI) -> None:
+    # Best-effort warm cache: fetches NSE's live constituent CSVs on boot
+    # so the strategy universe is populated without a manual POST first.
+    # NSE being unreachable must never block server startup, so failures
+    # are logged and skipped per index.
+    # Resolves the store through dependency_overrides (if any) rather than
+    # calling get_duckdb_store() directly, so tests that override it with
+    # a tmp_path-backed store aren't bypassed by this startup hook.
+    store_provider = app.dependency_overrides.get(get_duckdb_store, get_duckdb_store)
+    store = store_provider()
+    year = datetime.now(UTC).year
+    for index_name in KNOWN_INDICES:
+        try:
+            symbols = await fetch_index_constituents(index_name)
+        except (httpx.HTTPError, ValueError):
+            logger.warning(
+                "startup index-constituents fetch failed for %s", index_name
+            )
+            continue
+        store.write_index_constituents(
+            [
+                IndexConstituent(
+                    index_name=index_name,
+                    symbol=symbol,
+                    year=year,
+                    source=SOURCE_NSE_CSV,
+                )
+                for symbol in symbols
+            ]
+        )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    await _load_index_constituents(app)
+    yield
 
 
 def create_app() -> FastAPI:
     register_all()
-    app = FastAPI(title="Quant Platform API")
+    app = FastAPI(title="Quant Platform API", lifespan=_lifespan)
 
     app.add_middleware(
         CORSMiddleware,

@@ -3,8 +3,13 @@ from pathlib import Path
 
 import duckdb
 
-from ingest.core.constants import DEFAULT_DB_PATH, TABLE_BARS, TABLE_TICKS
-from ingest.core.models import Bar, Tick
+from ingest.core.constants import (
+    DEFAULT_DB_PATH,
+    TABLE_BARS,
+    TABLE_INDEX_CONSTITUENTS,
+    TABLE_TICKS,
+)
+from ingest.core.models import Bar, IndexConstituent, Tick
 
 
 class DuckDBStore:
@@ -35,6 +40,15 @@ class DuckDBStore:
                 price DOUBLE NOT NULL,
                 volume BIGINT NOT NULL,
                 provider TEXT NOT NULL
+            )
+        """)
+        self._conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_INDEX_CONSTITUENTS} (
+                index_name TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                PRIMARY KEY (index_name, symbol, year)
             )
         """)
 
@@ -121,3 +135,27 @@ class DuckDBStore:
             """,
             [tick.symbol, tick.ts, tick.price, tick.volume, tick.provider],
         )
+
+    def write_index_constituents(self, rows: list[IndexConstituent]) -> None:
+        if not rows:
+            return
+        self._conn.executemany(
+            f"""
+            INSERT OR REPLACE INTO {TABLE_INDEX_CONSTITUENTS}
+                (index_name, symbol, year, source)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(r.index_name, r.symbol, r.year, r.source) for r in rows],
+        )
+
+    def query_index_constituents(self, index_name: str, year: int) -> list[str]:
+        rows = self._conn.execute(
+            f"""
+            SELECT symbol
+            FROM {TABLE_INDEX_CONSTITUENTS}
+            WHERE index_name = ? AND year = ?
+            ORDER BY symbol
+            """,
+            [index_name, year],
+        ).fetchall()
+        return [r[0] for r in rows]

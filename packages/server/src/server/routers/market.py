@@ -1,12 +1,16 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
+from ingest.core.constants import KNOWN_INDICES, SOURCE_NSE_CSV
 from ingest.core.engine import DataEngine
+from ingest.core.index_constituents import fetch_index_constituents
+from ingest.core.models import IndexConstituent
+from ingest.storage.duckdb_store import DuckDBStore
 
 from server.core.constants import API_PREFIX_MARKET, DEFAULT_INTERVAL
-from server.core.deps import get_data_engine, get_session
+from server.core.deps import get_data_engine, get_duckdb_store, get_session
 from server.core.security import Session
-from server.schemas.market import BarListOut, BarOut
+from server.schemas.market import BarListOut, BarOut, IndexConstituentsOut
 
 router = APIRouter(prefix=API_PREFIX_MARKET, tags=["market"])
 
@@ -41,3 +45,38 @@ async def get_bars(
             for b in bars
         ]
     )
+
+
+@router.post("/index-constituents/{index_name}/fetch", response_model=IndexConstituentsOut)
+async def refresh_index_constituents(
+    index_name: str,
+    _session: Session = Depends(get_session),
+    store: DuckDBStore = Depends(get_duckdb_store),
+) -> IndexConstituentsOut:
+    # Pulls NSE's live constituent CSV for this index and stores it as this
+    # year's snapshot. NSE has no historical-by-year endpoint, so every
+    # fetch is always tagged with the current year, never a past one.
+    if index_name not in KNOWN_INDICES:
+        raise ValueError(f"unknown index_name: {index_name!r}")
+    symbols = await fetch_index_constituents(index_name)
+    year = datetime.now(UTC).year
+    store.write_index_constituents(
+        [
+            IndexConstituent(
+                index_name=index_name, symbol=symbol, year=year, source=SOURCE_NSE_CSV
+            )
+            for symbol in symbols
+        ]
+    )
+    return IndexConstituentsOut(index_name=index_name, year=year, symbols=symbols)
+
+
+@router.get("/index-constituents", response_model=IndexConstituentsOut)
+async def get_index_constituents(
+    index_name: str,
+    year: int,
+    _session: Session = Depends(get_session),
+    store: DuckDBStore = Depends(get_duckdb_store),
+) -> IndexConstituentsOut:
+    symbols = store.query_index_constituents(index_name, year)
+    return IndexConstituentsOut(index_name=index_name, year=year, symbols=symbols)

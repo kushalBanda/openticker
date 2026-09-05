@@ -86,6 +86,16 @@ def client(
     fake_adapter: FakeAdapter,
 ) -> Iterator[TestClient]:
     monkeypatch.setenv("JWT_SECRET_KEY", _TEST_JWT_SECRET)
+
+    # The app's startup lifespan fetches NSE's live index CSVs; tests must
+    # not depend on real network access, so stub it out here.
+    async def _fake_fetch_index_constituents(index_name: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(
+        "server.app.fetch_index_constituents", _fake_fetch_index_constituents
+    )
+
     app = create_app()
     app.dependency_overrides[get_ledger_store] = lambda: ledger_store
     app.dependency_overrides[get_equity_curve_store] = lambda: equity_curve_store
