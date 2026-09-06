@@ -44,10 +44,22 @@ class TimeSeriesMomentumRequest(BacktestRequestBase):
     vol_window: int
 
 
+class PairsTradingRequest(BacktestRequestBase):
+    strategy_name: Literal["pairs_trading"] = "pairs_trading"
+    formation_months: int
+    trading_months: int
+    top_n_pairs: int
+    entry_z: float
+
+
 # Add each new strategy's request model here as another Annotated union
 # member, pydantic/FastAPI dispatches on strategy_name (the discriminator).
 BacktestRequest = Annotated[
-    SmaCrossRequest | BuyAndHoldRequest | MeanReversionRequest | TimeSeriesMomentumRequest,
+    SmaCrossRequest
+    | BuyAndHoldRequest
+    | MeanReversionRequest
+    | TimeSeriesMomentumRequest
+    | PairsTradingRequest,
     Field(discriminator="strategy_name"),
 ]
 

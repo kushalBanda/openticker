@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 from fastapi.testclient import TestClient
@@ -132,6 +132,59 @@ def test_run_backtest_time_series_momentum_routes_through_discriminated_union(
         "window": 5,
         "target_risk_pct": 0.02,
         "vol_window": 3,
+    }
+    resp = client.post("/backtests", json=body, headers=auth_headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["trade_count"] >= 1
+
+
+def _pair_bar(symbol: str, day: int, close: float) -> Bar:
+    ts = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=day)
+    return Bar(
+        symbol=symbol,
+        interval="1d",
+        ts=ts,
+        open=close,
+        high=close,
+        low=close,
+        close=close,
+        volume=1000,
+        provider="kite",
+    )
+
+
+def test_run_backtest_pairs_trading_routes_through_discriminated_union(
+    client: TestClient, duckdb_store: DuckDBStore, auth_headers: dict[str, str]
+) -> None:
+    # Tight lockstep for a month (formation), then one leg crashes — enough
+    # to force a reformation and a real entry, proving the request actually
+    # reaches PairsTradingStrategy end to end, not just that the schema
+    # validates.
+    def a_close(day: int) -> float:
+        return 100.0 if day % 2 == 0 else 101.0
+
+    def b_close(day: int) -> float:
+        return 100.0 if day % 2 == 0 else 100.9
+
+    formation_days = range(32)
+    bars = [_pair_bar("NSE-RELIANCE", d, a_close(d)) for d in formation_days]
+    bars += [_pair_bar("NSE-TCS", d, b_close(d)) for d in formation_days]
+    bars += [_pair_bar("NSE-RELIANCE", d, 100.0) for d in (32, 33)]
+    bars += [_pair_bar("NSE-TCS", d, 1.0) for d in (32, 33)]
+    duckdb_store.write_bars(bars)
+
+    body = {
+        "strategy_name": "pairs_trading",
+        "symbols": ["NSE-RELIANCE", "NSE-TCS"],
+        "interval": "1d",
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-03-01T00:00:00Z",
+        "starting_cash": 100_000.0,
+        "formation_months": 1,
+        "trading_months": 1,
+        "top_n_pairs": 1,
+        "entry_z": 2.0,
     }
     resp = client.post("/backtests", json=body, headers=auth_headers)
 

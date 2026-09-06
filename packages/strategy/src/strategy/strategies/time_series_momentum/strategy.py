@@ -78,7 +78,8 @@ class TimeSeriesMomentumStrategy:
             return
         self._last_rebalanced_month[symbol] = month_key
 
-        target_quantity = self._resolve_target_quantity(symbol, bar, symbol_bars, portfolio)
+        num_symbols = len(self._bars)
+        target_quantity = self._resolve_target_quantity(symbol, bar, symbol_bars, portfolio, num_symbols)
         if target_quantity > 0:
             await ReverseToLongAction(quantity=target_quantity).execute(symbol, bar, portfolio, broker)
         elif target_quantity < 0:
@@ -90,7 +91,7 @@ class TimeSeriesMomentumStrategy:
             await self._exit_short.execute(symbol, bar, portfolio, broker)
 
     def _resolve_target_quantity(
-        self, symbol: str, bar: Bar, symbol_bars: list[Bar], portfolio: Portfolio
+        self, symbol: str, bar: Bar, symbol_bars: list[Bar], portfolio: Portfolio, num_symbols: int
     ) -> int:
         raw = self._signal.compute(symbol_bars)
         if raw.value == 0:
@@ -113,4 +114,17 @@ class TimeSeriesMomentumStrategy:
         sized = self._sizer.size(
             forecast, volatility=vol_fraction, account_equity=account_equity, price=bar.close
         )
-        return int(sized.size)
+
+        # PositionSizer only caps risk in one stdev move (target_risk_pct),
+        # it does not cap notional — on a near-zero-volatility instrument
+        # that risk-based formula divides by a tiny vol_fraction and blows
+        # up into unbounded leverage. Multi-symbol universes also need each
+        # instrument's budget bounded to its equal share of the book, since
+        # the sizer only ever sees one instrument's risk in isolation (no
+        # cross-position correlation/notional accounting, see PositionSizer's
+        # own docstring). Hard-cap notional here at one no-leverage share of
+        # account equity across the live universe.
+        budget = account_equity / num_symbols
+        max_shares = int(budget // bar.close)
+        capped = max(-max_shares, min(max_shares, int(sized.size)))
+        return capped

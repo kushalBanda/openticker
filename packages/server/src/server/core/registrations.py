@@ -8,6 +8,8 @@ _MODULES = (
     "strategy.strategies.sma_cross.strategy",
     "strategy.strategies.buy_and_hold.strategy",
     "strategy.strategies.mean_reversion.strategy",
+    "strategy.strategies.time_series_momentum.strategy",
+    "strategy.strategies.pairs_trading.strategy",
 )
 
 

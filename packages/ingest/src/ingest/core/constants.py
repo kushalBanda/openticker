@@ -25,11 +25,47 @@ INDEX_NIFTY500: Final = "NIFTY500"
 INDEX_NIFTY_MIDCAP150: Final = "NIFTY_MIDCAP150"
 INDEX_NIFTY_SMALLCAP250: Final = "NIFTY_SMALLCAP250"
 
+INDEX_NIFTY_AUTO: Final = "NIFTY_AUTO"
+INDEX_NIFTY_BANK: Final = "NIFTY_BANK"
+INDEX_NIFTY_FINANCIAL_SERVICES_25_50: Final = "NIFTY_FINANCIAL_SERVICES_25_50"
+INDEX_NIFTY_FMCG: Final = "NIFTY_FMCG"
+INDEX_NIFTY_IT: Final = "NIFTY_IT"
+INDEX_NIFTY_MEDIA: Final = "NIFTY_MEDIA"
+INDEX_NIFTY_METAL: Final = "NIFTY_METAL"
+INDEX_NIFTY_PHARMA: Final = "NIFTY_PHARMA"
+INDEX_NIFTY_PSU_BANK: Final = "NIFTY_PSU_BANK"
+INDEX_NIFTY_REALTY: Final = "NIFTY_REALTY"
+INDEX_NIFTY_CONSUMER_DURABLES: Final = "NIFTY_CONSUMER_DURABLES"
+INDEX_NIFTY_OIL_GAS: Final = "NIFTY_OIL_GAS"
+INDEX_NIFTY_HEALTHCARE: Final = "NIFTY_HEALTHCARE"
+
+# Sector indices confirmed to have a working NSE CSV at
+# NSE_INDEX_CSV_URLS below. Several other Nifty sectoral indices
+# (Private Bank, Capital Goods, Cement, Insurance, NBFC, ...) do not
+# follow the same predictable ind_nifty<sector>list.csv filename and
+# were left out rather than guessed at.
+SECTOR_INDICES: Final[tuple[str, ...]] = (
+    INDEX_NIFTY_AUTO,
+    INDEX_NIFTY_BANK,
+    INDEX_NIFTY_FINANCIAL_SERVICES_25_50,
+    INDEX_NIFTY_FMCG,
+    INDEX_NIFTY_IT,
+    INDEX_NIFTY_MEDIA,
+    INDEX_NIFTY_METAL,
+    INDEX_NIFTY_PHARMA,
+    INDEX_NIFTY_PSU_BANK,
+    INDEX_NIFTY_REALTY,
+    INDEX_NIFTY_CONSUMER_DURABLES,
+    INDEX_NIFTY_OIL_GAS,
+    INDEX_NIFTY_HEALTHCARE,
+)
+
 KNOWN_INDICES: Final[tuple[str, ...]] = (
     INDEX_NIFTY50,
     INDEX_NIFTY500,
     INDEX_NIFTY_MIDCAP150,
     INDEX_NIFTY_SMALLCAP250,
+    *SECTOR_INDICES,
 )
 
 # NSE only publishes current constituents, no historical-by-year snapshots,
@@ -42,6 +78,34 @@ NSE_INDEX_CSV_URLS: Final[dict[str, str]] = {
     ),
     INDEX_NIFTY_SMALLCAP250: (
         "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap250list.csv"
+    ),
+    INDEX_NIFTY_AUTO: "https://nsearchives.nseindia.com/content/indices/ind_niftyautolist.csv",
+    INDEX_NIFTY_BANK: "https://nsearchives.nseindia.com/content/indices/ind_niftybanklist.csv",
+    INDEX_NIFTY_FINANCIAL_SERVICES_25_50: (
+        "https://nsearchives.nseindia.com/content/indices/"
+        "ind_niftyfinancialservices25-50list.csv"
+    ),
+    INDEX_NIFTY_FMCG: "https://nsearchives.nseindia.com/content/indices/ind_niftyfmcglist.csv",
+    INDEX_NIFTY_IT: "https://nsearchives.nseindia.com/content/indices/ind_niftyitlist.csv",
+    INDEX_NIFTY_MEDIA: "https://nsearchives.nseindia.com/content/indices/ind_niftymedialist.csv",
+    INDEX_NIFTY_METAL: "https://nsearchives.nseindia.com/content/indices/ind_niftymetallist.csv",
+    INDEX_NIFTY_PHARMA: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftypharmalist.csv"
+    ),
+    INDEX_NIFTY_PSU_BANK: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftypsubanklist.csv"
+    ),
+    INDEX_NIFTY_REALTY: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftyrealtylist.csv"
+    ),
+    INDEX_NIFTY_CONSUMER_DURABLES: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftyconsumerdurableslist.csv"
+    ),
+    INDEX_NIFTY_OIL_GAS: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftyoilgaslist.csv"
+    ),
+    INDEX_NIFTY_HEALTHCARE: (
+        "https://nsearchives.nseindia.com/content/indices/ind_niftyhealthcarelist.csv"
     ),
 }
 
