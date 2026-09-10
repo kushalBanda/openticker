@@ -8,15 +8,35 @@ factored out here once both needed it, instead of duplicated per script.
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
+# Sibling scripts (state.py, adapters.py) are not an installed package,
+# so importing them by name requires this directory on sys.path first -
+# this must run before the sibling imports below, unlike every other
+# import in this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ingest.core.exceptions as ingest_exc
 from adapters import ensure_adapters_registered
+from ingest.core.engine import DataEngine
 from ingest.core.models import Bar
+from ingest.core.registry import AdapterFactory
+from ingest.storage.duckdb_store import DuckDBStore
 from state import load_credentials, load_most_recent
 
 
 def resolve_provider(explicit_provider: str | None) -> tuple[str, dict[str, object]]:
+    """Resolve which provider's stored credentials to use.
+
+    Args:
+        explicit_provider: A provider name the caller asked for, or None
+            to fall back to whichever provider connected most recently.
+
+    Returns:
+        The resolved provider name and its stored credentials.
+
+    Raises:
+        SystemExit: No adapter is connected yet, or the requested
+            provider has no stored session.
+    """
     if explicit_provider:
         creds = load_credentials(explicit_provider)
         if creds is None:
@@ -31,16 +51,22 @@ def resolve_provider(explicit_provider: str | None) -> tuple[str, dict[str, obje
     return most_recent
 
 
-async def connect_engine(provider: str | None) -> tuple[str, Any]:
-    """Resolves the provider, builds its adapter, connects once, and wraps
-    it in a DataEngine. Call once per script run, then fetch as many
-    symbols as needed through the returned engine.
-    """
-    import ingest.core.exceptions as ingest_exc
-    from ingest.core.engine import DataEngine
-    from ingest.core.registry import AdapterFactory
-    from ingest.storage.duckdb_store import DuckDBStore
+async def connect_engine(provider: str | None) -> tuple[str, DataEngine]:
+    """Resolve the provider, build its adapter, connect once, wrap in a DataEngine.
 
+    Call once per script run, then fetch as many symbols as needed
+    through the returned engine.
+
+    Args:
+        provider: A provider name to use, or None for the most recently
+            connected one.
+
+    Returns:
+        The resolved provider name and a connected DataEngine.
+
+    Raises:
+        SystemExit: No stored session, or the stored session has expired.
+    """
     ensure_adapters_registered()
     resolved_provider, creds = resolve_provider(provider)
 
@@ -58,19 +84,30 @@ async def connect_engine(provider: str | None) -> tuple[str, Any]:
 
 
 async def fetch_symbol_bars(
-    engine: Any,
+    engine: DataEngine,
     resolved_provider: str,
     symbol: str,
     interval: str,
     frm: datetime,
     to: datetime,
 ) -> list[Bar]:
-    """Fetches bars for one symbol through an already-connected engine.
-    Raises SystemExit with a plain message on an expired session or no
-    data, same wording fetch_bars.py has always used.
-    """
-    import ingest.core.exceptions as ingest_exc
+    """Fetch bars for one symbol through an already-connected engine.
 
+    Args:
+        engine: A DataEngine returned by connect_engine.
+        resolved_provider: The provider name connect_engine resolved.
+        symbol: Tradingsymbol to fetch, e.g. "RELIANCE".
+        interval: Canonical bar interval, e.g. "1d".
+        frm: Range start (inclusive).
+        to: Range end (exclusive).
+
+    Returns:
+        Bars sorted ascending by timestamp.
+
+    Raises:
+        SystemExit: The session expired mid-fetch, or no bars exist for
+            the requested symbol/range.
+    """
     try:
         bars = await engine.fetch_historical(symbol, interval, frm, to, provider=resolved_provider)
     except ingest_exc.AuthExpiredError:

@@ -18,6 +18,11 @@ _registered = False
 
 
 def ensure_adapters_registered() -> None:
+    """Import every adapter module once, triggering its @register_adapter.
+
+    Idempotent - safe to call at the top of every script that needs
+    AdapterFactory.create(...) to know about all providers.
+    """
     global _registered
     if _registered:
         return

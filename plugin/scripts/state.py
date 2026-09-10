@@ -15,6 +15,7 @@ import os
 import sqlite3
 import stat
 from collections.abc import Mapping
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,8 +32,8 @@ def _ensure_state_dir() -> None:
 
 
 def _connect() -> sqlite3.Connection:
+    """Open (creating if needed) the state database with 0600 permissions."""
     _ensure_state_dir()
-    is_new = not STATE_DB.exists()
     conn = sqlite3.connect(STATE_DB)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
@@ -45,20 +46,16 @@ def _connect() -> sqlite3.Connection:
         """
     )
     conn.commit()
-    if is_new:
-        os.chmod(STATE_DB, _FILE_MODE)
-    else:
-        # Re-assert on every connect in case something (an editor, a
-        # backup tool) loosened it after creation.
-        os.chmod(STATE_DB, _FILE_MODE)
+    # Re-assert on every connect (not just on creation) in case something
+    # (an editor, a backup tool) loosened it after creation.
+    os.chmod(STATE_DB, _FILE_MODE)
     return conn
 
 
 def save_credentials(provider: str, credentials: Mapping[str, Any]) -> None:
     """Write (or overwrite) one provider's credentials, stamped with now."""
     connected_at = datetime.now(UTC).isoformat()
-    conn = _connect()
-    try:
+    with closing(_connect()) as conn:
         conn.execute(
             """
             INSERT INTO credentials (provider, credentials_json, connected_at)
@@ -70,20 +67,15 @@ def save_credentials(provider: str, credentials: Mapping[str, Any]) -> None:
             (provider, json.dumps(dict(credentials)), connected_at),
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def load_credentials(provider: str) -> dict[str, Any] | None:
     """Return one provider's stored credentials, or None if never connected."""
-    conn = _connect()
-    try:
+    with closing(_connect()) as conn:
         row = conn.execute(
             "SELECT credentials_json FROM credentials WHERE provider = ?",
             (provider,),
         ).fetchone()
-    finally:
-        conn.close()
     if row is None:
         return None
     result: dict[str, Any] = json.loads(row[0])
@@ -93,19 +85,16 @@ def load_credentials(provider: str) -> dict[str, Any] | None:
 def load_most_recent() -> tuple[str, dict[str, Any]] | None:
     """Return (provider, credentials) for whichever provider connected last.
 
-    Used by the research skill (ticket 05) when more than one provider is
-    connected, so it doesn't have to guess which one to use.
+    Used by the research and run-backtest skills when more than one
+    provider is connected, so they don't have to guess which one to use.
     """
-    conn = _connect()
-    try:
+    with closing(_connect()) as conn:
         row = conn.execute(
             """
             SELECT provider, credentials_json FROM credentials
             ORDER BY connected_at DESC LIMIT 1
             """
         ).fetchone()
-    finally:
-        conn.close()
     if row is None:
         return None
     provider, credentials_json = row
@@ -113,11 +102,9 @@ def load_most_recent() -> tuple[str, dict[str, Any]] | None:
 
 
 def list_providers() -> list[str]:
-    conn = _connect()
-    try:
+    """Return every provider name with a stored session, in no particular order."""
+    with closing(_connect()) as conn:
         rows = conn.execute("SELECT provider FROM credentials").fetchall()
-    finally:
-        conn.close()
     return [r[0] for r in rows]
 
 

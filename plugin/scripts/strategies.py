@@ -19,6 +19,11 @@ _registered = False
 
 
 def ensure_strategies_registered() -> None:
+    """Import every strategy module once, triggering its @register_strategy.
+
+    Idempotent - safe to call at the top of every script that needs
+    StrategyFactory.create(...) to know about all 5 strategies.
+    """
     global _registered
     if _registered:
         return

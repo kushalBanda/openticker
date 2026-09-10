@@ -6,7 +6,8 @@ No server is involved. This script:
 2. Runs a short-lived local HTTP listener - only for this one exchange -
    to catch Zerodha's redirect, which carries `request_token`.
 3. Exchanges `request_token` for an `access_token` directly against
-   Kite's own API (same checksum + POST logic packages/server uses).
+   Kite's own API (same checksum + POST logic packages/server used to
+   use, before it was deprecated and removed).
 4. Stores the resulting `api_key` + `access_token` via state.py.
 
 Run with: uv run python plugin/scripts/auth_kite.py
@@ -22,11 +23,12 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from dotenv import load_dotenv
+from ingest.core.constants import KITE_BASE_URL
 
+# state.py is a sibling script, not an installed package, so importing it
+# by name requires this directory on sys.path first.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from state import save_credentials 
-
-from ingest.core.constants import KITE_BASE_URL 
+from state import save_credentials
 
 PROVIDER = "kite"
 CALLBACK_HOST = "127.0.0.1"
@@ -36,6 +38,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _kite_app_credentials() -> tuple[str, str]:
+    """Load KITE_API_KEY/KITE_API_SECRET from the repo-root .env file.
+
+    Returns:
+        The (api_key, api_secret) pair.
+
+    Raises:
+        SystemExit: Either env var is unset.
+    """
     load_dotenv(REPO_ROOT / ".env")
     api_key = os.environ.get("KITE_API_KEY")
     api_secret = os.environ.get("KITE_API_SECRET")
@@ -50,9 +60,11 @@ def _kite_app_credentials() -> tuple[str, str]:
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
+    """Catches exactly one Kite OAuth redirect and stashes its request_token."""
+
     request_token: str | None = None
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib-mandated method name
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path != CALLBACK_PATH:
             self.send_response(404)
@@ -76,12 +88,18 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
 
 def _await_request_token() -> str:
-    server = HTTPServer((CALLBACK_HOST, CALLBACK_PORT), _CallbackHandler)
-    try:
+    """Run the callback listener for one request, then return its request_token.
+
+    Returns:
+        The request_token Zerodha's redirect carried.
+
+    Raises:
+        SystemExit: No request within 120 seconds, or the redirect
+            carried no request_token.
+    """
+    with HTTPServer((CALLBACK_HOST, CALLBACK_PORT), _CallbackHandler) as server:
         server.timeout = 120
         server.handle_request()  # blocks for exactly one request, then returns
-    finally:
-        server.server_close()
     if not _CallbackHandler.request_token:
         raise SystemExit(
             "Kite login did not complete - no request_token was received "
@@ -92,6 +110,19 @@ def _await_request_token() -> str:
 
 
 def _exchange_for_access_token(api_key: str, api_secret: str, request_token: str) -> str:
+    """Exchange a request_token for an access_token via Kite's session API.
+
+    Args:
+        api_key: The registered Kite Connect app's API key.
+        api_secret: The registered Kite Connect app's API secret.
+        request_token: The token _await_request_token() caught.
+
+    Returns:
+        The resulting access_token.
+
+    Raises:
+        SystemExit: Kite's API returned a non-2xx response.
+    """
     checksum = sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()
     with httpx.Client(base_url=KITE_BASE_URL) as http:
         response = http.post(
@@ -111,6 +142,7 @@ def _exchange_for_access_token(api_key: str, api_secret: str, request_token: str
 
 
 def connect() -> None:
+    """Run the full Kite OAuth flow end to end and store the resulting session."""
     api_key, api_secret = _kite_app_credentials()
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
     print(f"Opening Kite login in your browser:\n{login_url}")
