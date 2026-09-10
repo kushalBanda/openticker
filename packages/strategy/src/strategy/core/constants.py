@@ -18,6 +18,7 @@ DEFAULT_COMMISSION_PER_SHARE: Final = 0.0
 
 TABLE_LEDGER_ENTRIES: Final = "ledger_entries"
 TABLE_EQUITY_CURVE_POINTS: Final = "equity_curve_points"
+TABLE_RUNS: Final = "runs"
 
 # statistics.py's sharpe_ratio needs at least 2 valid returns, which needs
 # at least 3 closes.
