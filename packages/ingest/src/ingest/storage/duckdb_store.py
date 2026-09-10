@@ -87,18 +87,53 @@ class DuckDBStore:
         # Does not detect a hole in the middle of an otherwise-cached range,
         # that would need a trading-calendar model to distinguish "no trading
         # that day" from "never fetched", out of scope for this slice.
-        existing = self.query_bars(symbol, interval, from_, to)
-        if not existing:
+        #
+        # MIN/MAX only — cheaper than fetching and building every cached Bar
+        # in range just to read the first/last timestamp.
+        row = self._conn.execute(
+            f"""
+            SELECT MIN(ts), MAX(ts)
+            FROM {TABLE_BARS}
+            WHERE symbol = ? AND interval = ? AND ts >= ? AND ts <= ?
+            """,
+            [symbol, interval, from_, to],
+        ).fetchone()
+        # A bare MIN/MAX with no GROUP BY always returns exactly one row
+        # (NULLs when nothing matches) — row is never None.
+        assert row is not None
+        earliest, latest = row
+        if earliest is None:
             return [(from_, to)]
 
         gaps: list[tuple[datetime, datetime]] = []
-        earliest = existing[0].ts
-        latest = existing[-1].ts
 
-        if earliest > from_:
-            gaps.append((from_, earliest - timedelta(microseconds=1)))
-        if latest < to:
-            gaps.append((latest + timedelta(microseconds=1), to))
+        # Daily bars land at exact local-exchange midnight (e.g. 00:00 IST
+        # for Kite), which as an absolute instant can be hours away from a
+        # from_/to boundary built at UTC midnight of that same calendar day
+        # — comparing exact instants reported a false gap on every single
+        # call even when the day was fully cached. So for "1d" bars only,
+        # compare at the bar's own calendar day instead: from_/to are
+        # converted into the bars' own tzinfo first, since a request built
+        # in UTC and a bar timestamped in the exchange's local time can
+        # otherwise disagree about which calendar day an instant falls on.
+        # `to` is inclusive of its own calendar day (matches server's
+        # `Market > Get bars`: from=day1/to=day3 expects day3's bar too,
+        # not day3 excluded). Sub-day intervals keep the exact-instant
+        # comparison: two timestamps sharing a calendar date does not mean
+        # the same intraday time is covered, day-granularity would hide a
+        # real multi-hour gap.
+        if interval == "1d":
+            from_in_bar_tz = from_.astimezone(earliest.tzinfo) if earliest.tzinfo else from_
+            to_in_bar_tz = to.astimezone(latest.tzinfo) if latest.tzinfo else to
+            if earliest.date() > from_in_bar_tz.date():
+                gaps.append((from_, earliest - timedelta(microseconds=1)))
+            if latest.date() < to_in_bar_tz.date():
+                gaps.append((latest + timedelta(microseconds=1), to))
+        else:
+            if earliest > from_:
+                gaps.append((from_, earliest - timedelta(microseconds=1)))
+            if latest < to:
+                gaps.append((latest + timedelta(microseconds=1), to))
 
         return gaps
 

@@ -13,6 +13,7 @@ dependencies = [
     "quant",
     "strategy",
     "execution",
+    "agents",
 ]
 
 [tool.uv.sources]
@@ -20,6 +21,7 @@ ingest = { workspace = true }
 quant = { workspace = true }
 strategy = { workspace = true }
 execution = { workspace = true }
+agents = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

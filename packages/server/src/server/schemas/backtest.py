@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from server.core.constants import DEFAULT_ADVISOR_MODEL
+
 
 class BacktestRequestBase(BaseModel):
     symbols: list[str]
@@ -14,6 +16,16 @@ class BacktestRequestBase(BaseModel):
     commission_per_share: float | None = None
 
     model_config = {"populate_by_name": True}
+
+    @classmethod
+    def non_kwarg_fields(cls) -> frozenset[str]:
+        """Fields beyond `BacktestRequestBase`'s that configure the request
+        itself rather than the strategy's constructor — excluded from
+        `_strategy_params` in `routers/backtest.py`. Empty by default;
+        override on a request model that adds one (see
+        `PairsTradingRequest`).
+        """
+        return frozenset()
 
 
 class SmaCrossRequest(BacktestRequestBase):
@@ -50,6 +62,16 @@ class PairsTradingRequest(BacktestRequestBase):
     trading_months: int
     top_n_pairs: int
     entry_z: float
+    # When set, each reformation cycle is tuned by PairsTradingAdvisor (an
+    # LLM call) instead of using formation_months/trading_months/top_n_pairs/
+    # entry_z as fixed constants for the whole run — see
+    # docs/adr/0001-pairs-trading-advisor-shape.md.
+    use_advisor: bool = False
+    advisor_model: str = DEFAULT_ADVISOR_MODEL
+
+    @classmethod
+    def non_kwarg_fields(cls) -> frozenset[str]:
+        return frozenset({"use_advisor", "advisor_model"})
 
 
 # Add each new strategy's request model here as another Annotated union

@@ -1,6 +1,11 @@
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
+import pytest
+from agents.advisors.pairs_trading.schema import (
+    PairsTradingProposal,
+    SelectedPairWeight,
+)
 from fastapi.testclient import TestClient
 from ingest.core.models import Bar
 from ingest.storage.duckdb_store import DuckDBStore
@@ -185,6 +190,67 @@ def test_run_backtest_pairs_trading_routes_through_discriminated_union(
         "trading_months": 1,
         "top_n_pairs": 1,
         "entry_z": 2.0,
+    }
+    resp = client.post("/backtests", json=body, headers=auth_headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["trade_count"] >= 1
+
+
+class _FakeAdvisor:
+    """Stands in for PairsTradingAdvisor — no LLMClient/litellm call, just a
+    scripted proposal, so this test never hits a real LLM API.
+    """
+
+    def __init__(self, llm: object) -> None:
+        del llm
+
+    async def propose(
+        self, candidates: object, prior: PairsTradingProposal
+    ) -> PairsTradingProposal:
+        del candidates, prior
+        return PairsTradingProposal(
+            entry_z=2.0,
+            formation_months=1,
+            trading_months=1,
+            buffer=0.1,
+            selected=(SelectedPairWeight("NSE-RELIANCE", "NSE-TCS", 0.9),),
+        )
+
+
+def test_run_backtest_pairs_trading_with_advisor_routes_through_advisor(
+    client: TestClient,
+    duckdb_store: DuckDBStore,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("server.routers.backtest.PairsTradingAdvisor", _FakeAdvisor)
+
+    def a_close(day: int) -> float:
+        return 100.0 if day % 2 == 0 else 101.0
+
+    def b_close(day: int) -> float:
+        return 100.0 if day % 2 == 0 else 100.9
+
+    formation_days = range(32)
+    bars = [_pair_bar("NSE-RELIANCE", d, a_close(d)) for d in formation_days]
+    bars += [_pair_bar("NSE-TCS", d, b_close(d)) for d in formation_days]
+    bars += [_pair_bar("NSE-RELIANCE", d, 100.0) for d in (32, 33)]
+    bars += [_pair_bar("NSE-TCS", d, 1.0) for d in (32, 33)]
+    duckdb_store.write_bars(bars)
+
+    body = {
+        "strategy_name": "pairs_trading",
+        "symbols": ["NSE-RELIANCE", "NSE-TCS"],
+        "interval": "1d",
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-03-01T00:00:00Z",
+        "starting_cash": 100_000.0,
+        "formation_months": 1,
+        "trading_months": 1,
+        "top_n_pairs": 1,
+        "entry_z": 2.0,
+        "use_advisor": True,
     }
     resp = client.post("/backtests", json=body, headers=auth_headers)
 

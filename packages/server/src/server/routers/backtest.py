@@ -1,6 +1,10 @@
 from http import HTTPStatus
 from uuid import uuid4
 
+from agents.advisors.core.interfaces import Advisor
+from agents.advisors.pairs_trading.advisor import PairsTradingAdvisor
+from agents.advisors.pairs_trading.schema import CandidateStats, PairsTradingProposal
+from agents.llm import LLMClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ingest.core.engine import DataEngine
 from ingest.core.models import Bar
@@ -31,6 +35,7 @@ from server.schemas.backtest import (
     BacktestRequestBase,
     BacktestRunOut,
     LedgerEntryOut,
+    PairsTradingRequest,
     PerformanceReportOut,
     RunListOut,
     StrategyListOut,
@@ -45,10 +50,22 @@ action_router = APIRouter(tags=["backtests"])
 
 
 def _strategy_params(request: BacktestRequest) -> dict[str, object]:
-    extra_fields = set(type(request).model_fields) - set(
-        BacktestRequestBase.model_fields
-    ) - {"strategy_name"}
+    request_type = type(request)
+    extra_fields = (
+        set(request_type.model_fields)
+        - set(BacktestRequestBase.model_fields)
+        - {"strategy_name"}
+        - request_type.non_kwarg_fields()
+    )
     return request.model_dump(include=extra_fields)
+
+
+def _build_advisor(
+    request: BacktestRequest,
+) -> Advisor[CandidateStats, PairsTradingProposal] | None:
+    if not isinstance(request, PairsTradingRequest) or not request.use_advisor:
+        return None
+    return PairsTradingAdvisor(llm=LLMClient(model=request.advisor_model))
 
 
 async def _fetch_bars(
@@ -80,9 +97,11 @@ async def run_backtest(
     equity_curve_store: EquityCurveStore = Depends(get_equity_curve_store),
 ) -> BacktestRunOut:
     bars = await _fetch_bars(request, data_engine, session["provider"])
-    strategy = StrategyFactory.create(
-        request.strategy_name, _strategy_params(request)
-    )
+    params = _strategy_params(request)
+    advisor = _build_advisor(request)
+    if advisor is not None:
+        params["advisor"] = advisor
+    strategy = StrategyFactory.create(request.strategy_name, params)
 
     broker_kwargs: dict[str, float] = {}
     if request.slippage_bps is not None:

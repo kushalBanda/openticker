@@ -9,6 +9,7 @@ dependencies = [
     "quant",
     "execution",
     "server",
+    "agents",
 ]
 
 [tool.uv.sources]
@@ -17,6 +18,7 @@ strategy = { workspace = true }
 quant = { workspace = true }
 execution = { workspace = true }
 server = { workspace = true }
+agents = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -67,10 +69,14 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src:packages/server/src"
+mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src:packages/server/src:packages/agents/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

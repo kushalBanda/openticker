@@ -15,6 +15,7 @@ from strategy.core.action import (
 from strategy.core.interfaces import Broker
 from strategy.core.portfolio import Portfolio
 from strategy.core.registry import register_strategy
+from strategy.core.sizing import capital_to_quantity
 
 
 @register_strategy("time_series_momentum")
@@ -125,6 +126,6 @@ class TimeSeriesMomentumStrategy:
         # own docstring). Hard-cap notional here at one no-leverage share of
         # account equity across the live universe.
         budget = account_equity / num_symbols
-        max_shares = int(budget // bar.close)
+        max_shares = capital_to_quantity(budget, bar.close)
         capped = max(-max_shares, min(max_shares, int(sized.size)))
         return capped
