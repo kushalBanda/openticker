@@ -1,24 +1,18 @@
 [project]
 name = "quant-platform"
 version = "0.1.0"
-description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Quant Research Layer, Execution Engine"
+description = "Quant trading platform: DataEngine, Strategy/Backtest Engine, Quant Research Layer"
 requires-python = ">=3.13"
 dependencies = [
     "ingest",
     "strategy",
     "quant",
-    "execution",
-    "server",
-    "agents",
 ]
 
 [tool.uv.sources]
 ingest = { workspace = true }
 strategy = { workspace = true }
 quant = { workspace = true }
-execution = { workspace = true }
-server = { workspace = true }
-agents = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -56,28 +50,18 @@ dev = [
 # so a blind except converting to a typed error is the correct boundary.
 "packages/ingest/src/ingest/adapters/groww/adapter.py" = ["BLE001"]
 
-[tool.ruff.lint.flake8-bugbear]
-# FastAPI's dependency-injection pattern (Depends(...)/Query(...) as an
-# argument default) is idiomatic, not the mutable-default-argument bug
-# B008 exists to catch. Applies repo-wide since only packages/server uses
-# FastAPI.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
-
 [tool.mypy]
 python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src:packages/execution/src:packages/server/src:packages/agents/src"
+mypy_path = "packages/ingest/src:packages/strategy/src:packages/quant/src"
 
 [[tool.mypy.overrides]]
 module = ["growwapi", "growwapi.*", "kiteconnect", "kiteconnect.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["litellm", "litellm.*"]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["packages"]

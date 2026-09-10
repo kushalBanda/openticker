@@ -3,14 +3,9 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import date
 
-import pandas as pd
-from agents.advisors.core.interfaces import Advisor
-from agents.advisors.pairs_trading.constants import CANDIDATE_WINDOW_SIZE
-from agents.advisors.pairs_trading.schema import CandidateStats, PairsTradingProposal
 from ingest.core.models import Bar
 from quant.core.exceptions import InsufficientDataError
 from quant.core.series import bar_closes_to_series
-from quant.features.econometrics import correlation, volatility
 from quant.features.pairs import (
     Pair,
     SpreadBaseline,
@@ -70,15 +65,9 @@ class PairsTradingStrategy:
     open and the z-score's sign has flipped since entry (crossed back
     through the frozen mean) closes both legs.
 
-    With no `advisor`, keeps `top_n_pairs` (a plain rank cutoff) and splits
+    Keeps `top_n_pairs` (a plain rank cutoff) and splits
     `portfolio.cash / top_n_pairs` equal-weight across every selected pair —
-    today's baseline, rule-based behavior, unchanged.
-
-    With an `advisor` set, ranking still produces a `CANDIDATE_WINDOW_SIZE`
-    candidate window, but the `PairsTradingAdvisor` then curates which of
-    those to actually trade, their capital weights, the capital buffer, and
-    `entry_z`/`formation_months`/`trading_months` for the next cycle — see
-    `docs/adr/0001-pairs-trading-advisor-shape.md` and `CONTEXT.md`.
+    rule-based selection only, no LLM/advisor involvement.
     """
 
     def __init__(
@@ -87,7 +76,6 @@ class PairsTradingStrategy:
         trading_months: int,
         top_n_pairs: int,
         entry_z: float,
-        advisor: Advisor[CandidateStats, PairsTradingProposal] | None = None,
     ) -> None:
         if formation_months < 1:
             raise ValueError("formation_months must be at least 1")
@@ -102,21 +90,12 @@ class PairsTradingStrategy:
         self._trading_months = trading_months
         self._top_n_pairs = top_n_pairs
         self._entry_z = entry_z
-        self._advisor = advisor
 
         self._history: dict[str, deque[Bar]] = {}
         self._next_reformation_date: date | None = None
         self._selected: list[SelectedPair] = []
         self._open: dict[tuple[str, str], OpenPairPosition] = {}
         self._capital_by_pair: dict[tuple[str, str], float] = {}
-        self._pair_pnl_history: dict[tuple[str, str], list[float]] = {}
-        self._prior_proposal = PairsTradingProposal(
-            entry_z=entry_z,
-            formation_months=formation_months,
-            trading_months=trading_months,
-            buffer=0.1,
-            selected=(),
-        )
 
     async def on_bar(self, bars: dict[str, Bar], portfolio: Portfolio, broker: Broker) -> None:
         self._append_and_trim_history(bars)
@@ -152,27 +131,7 @@ class PairsTradingStrategy:
                 await ExitLongAction().execute(position.long_symbol, long_bar, portfolio, broker)
             if short_bar is not None:
                 await ExitShortAction().execute(position.short_symbol, short_bar, portfolio, broker)
-            self._record_pair_pnl(key, position, long_bar, short_bar)
             del self._open[key]
-
-    def _record_pair_pnl(
-        self,
-        key: tuple[str, str],
-        position: OpenPairPosition,
-        long_bar: Bar | None,
-        short_bar: Bar | None,
-    ) -> None:
-        """Estimated round-trip P&L for this closed pair, using the closing
-        bar's price as an exit-price proxy (the actual fill lands one bar
-        later per the engine's no-lookahead ordering). Informational only —
-        feeds the Advisor's `CandidateStats.win_rate`/`realized_pnl`, the
-        `TradeLedger` remains the source of truth for real accounting.
-        """
-        if long_bar is None or short_bar is None:
-            return
-        long_pnl = (long_bar.close - position.long_entry_price) * position.long_quantity
-        short_pnl = (position.short_entry_price - short_bar.close) * position.short_quantity
-        self._pair_pnl_history.setdefault(key, []).append(long_pnl + short_pnl)
 
     async def _reform(self, portfolio: Portfolio) -> None:
         self._selected = []
@@ -184,76 +143,25 @@ class PairsTradingStrategy:
             if len(history) >= 2
         }
 
-        window_size = CANDIDATE_WINDOW_SIZE if self._advisor is not None else self._top_n_pairs
         try:
-            ranked = select_pairs(formation_closes, window_size)
+            ranked = select_pairs(formation_closes, self._top_n_pairs)
         except InsufficientDataError:
             return
 
-        # Memoized per symbol, not per pair — the same symbol recurs across
-        # several candidate pairs and volatility() is a rolling-return calc
-        # over the whole formation window, not free to redo per occurrence.
-        vol_by_symbol: dict[str, pd.Series] = {}
-
         candidate_pairs: list[Pair] = []
         baselines: dict[tuple[str, str], SpreadBaseline] = {}
-        stats_by_key: dict[tuple[str, str], CandidateStats] = {}
         for pair in ranked:
             key = (pair.symbol_a, pair.symbol_b)
             closes_a = formation_closes[pair.symbol_a]
             closes_b = formation_closes[pair.symbol_b]
             try:
                 baseline = spread_baseline(closes_a, closes_b, pair.anchor_a, pair.anchor_b)
-                corr = correlation(closes_a, closes_b)
             except InsufficientDataError:
                 continue
             candidate_pairs.append(pair)
             baselines[key] = baseline
-            if self._advisor is not None:
-                stats_by_key[key] = self._build_candidate_stats(
-                    pair, baseline, corr, closes_a, closes_b, vol_by_symbol
-                )
 
-        if self._advisor is None:
-            self._apply_static_selection(candidate_pairs, baselines, portfolio)
-            return
-
-        await self._apply_advisor_selection(candidate_pairs, baselines, stats_by_key, portfolio)
-
-    def _build_candidate_stats(
-        self,
-        pair: Pair,
-        baseline: SpreadBaseline,
-        corr: float,
-        closes_a: pd.Series,
-        closes_b: pd.Series,
-        vol_by_symbol: dict[str, pd.Series],
-    ) -> CandidateStats:
-        if pair.symbol_a not in vol_by_symbol:
-            vol_by_symbol[pair.symbol_a] = volatility(closes_a)
-        if pair.symbol_b not in vol_by_symbol:
-            vol_by_symbol[pair.symbol_b] = volatility(closes_b)
-        vol_a = vol_by_symbol[pair.symbol_a]
-        vol_b = vol_by_symbol[pair.symbol_b]
-        realized_vol = float((vol_a.iloc[-1] + vol_b.iloc[-1]) / 2) if len(vol_a) and len(vol_b) else 0.0
-
-        history = self._pair_pnl_history.get((pair.symbol_a, pair.symbol_b), [])
-        win_rate = (sum(1 for pnl in history if pnl > 0) / len(history)) if history else None
-        realized_pnl = sum(history) if history else None
-        trade_count = len(history) if history else None
-
-        return CandidateStats(
-            symbol_a=pair.symbol_a,
-            symbol_b=pair.symbol_b,
-            ssd=pair.ssd,
-            spread_mean=baseline.mean,
-            spread_std=baseline.std,
-            realized_vol=realized_vol,
-            correlation=corr,
-            win_rate=win_rate,
-            realized_pnl=realized_pnl,
-            trade_count=trade_count,
-        )
+        self._apply_static_selection(candidate_pairs, baselines, portfolio)
 
     def _apply_selection(
         self,
@@ -277,26 +185,6 @@ class PairsTradingStrategy:
         capital_per_pair = portfolio.cash / self._top_n_pairs
         capital_by_key = {
             (pair.symbol_a, pair.symbol_b): capital_per_pair for pair in candidate_pairs
-        }
-        self._apply_selection(candidate_pairs, baselines, capital_by_key)
-
-    async def _apply_advisor_selection(
-        self,
-        candidate_pairs: list[Pair],
-        baselines: dict[tuple[str, str], SpreadBaseline],
-        stats_by_key: dict[tuple[str, str], CandidateStats],
-        portfolio: Portfolio,
-    ) -> None:
-        assert self._advisor is not None  # narrows for mypy, guaranteed by caller
-        proposal = await self._advisor.propose(list(stats_by_key.values()), self._prior_proposal)
-        self._prior_proposal = proposal
-
-        self._entry_z = proposal.entry_z
-        self._formation_months = proposal.formation_months
-        self._trading_months = proposal.trading_months
-
-        capital_by_key = {
-            (s.symbol_a, s.symbol_b): s.weight * portfolio.cash for s in proposal.selected
         }
         self._apply_selection(candidate_pairs, baselines, capital_by_key)
 
@@ -377,5 +265,4 @@ class PairsTradingStrategy:
             await ExitLongAction().execute(open_position.long_symbol, long_bar, portfolio, broker)
         if short_bar is not None:
             await ExitShortAction().execute(open_position.short_symbol, short_bar, portfolio, broker)
-        self._record_pair_pnl(key, open_position, long_bar, short_bar)
         del self._open[key]
