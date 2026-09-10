@@ -1,7 +1,7 @@
 {
   "extraKnownMarketplaces": {
     "quant-platform-marketplace": {
-      "source": "./.claude-plugin/marketplace.json"
+      "source": "."
     }
   },
   "enabledPlugins": {

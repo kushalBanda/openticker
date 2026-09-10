@@ -16,7 +16,6 @@ See plugin/references/strategies.md for each strategy's required params.
 import argparse
 import asyncio
 import sys
-import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from pathlib import Path
 # this must run before the sibling imports below, unlike every other
 # import in this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from data import connect_engine, fetch_symbol_bars
 from ingest.core.models import Bar
 from quant.core.exceptions import InsufficientDataError
 from strategies import ensure_strategies_registered
@@ -35,11 +35,6 @@ from strategy.core.interfaces import Strategy
 from strategy.core.portfolio import Portfolio
 from strategy.core.registry import StrategyFactory, list_strategy_names
 from strategy.metrics.performance import PerformanceReport, compute_metrics
-from strategy.storage.equity_curve_store import EquityCurveStore
-from strategy.storage.ledger_store import LedgerStore
-from strategy.storage.run_store import RunMetadata, RunStore
-
-from data import connect_engine, fetch_symbol_bars
 
 
 def _parse_params(raw: list[str]) -> dict[str, float | int]:
@@ -127,50 +122,6 @@ def _print_degraded_metrics(portfolio: Portfolio, exc: InsufficientDataError) ->
     print(f"raw return (not annualized): {raw_return:+.2%}")
 
 
-def _persist_run(
-    strategy_name: str,
-    params: dict[str, float | int],
-    symbols: list[str],
-    interval: str,
-    cash: float,
-    portfolio: Portfolio,
-) -> str | None:
-    """Persist a finished run's metadata, ledger, and equity curve for later visualization.
-
-    Args:
-        strategy_name: The strategy that was run.
-        params: Its constructor params.
-        symbols: Symbols traded.
-        interval: Bar interval used.
-        cash: Starting cash.
-        portfolio: The finished backtest's portfolio.
-
-    Returns:
-        The generated run id, or None if persistence failed. A warning is
-        printed to stderr in that case; the caller's performance report has
-        already printed successfully and must not be treated as failed.
-    """
-    run_id = f"{strategy_name}_{datetime.now(UTC):%Y%m%dT%H%M%S}_{uuid.uuid4().hex[:8]}"
-    try:
-        RunStore().write_run(
-            RunMetadata(
-                run_id=run_id,
-                created_at=datetime.now(UTC),
-                strategy=strategy_name,
-                params=params,
-                symbols=symbols,
-                interval=interval,
-                starting_cash=cash,
-            )
-        )
-        LedgerStore().write_entries(run_id, portfolio.ledger.entries)
-        EquityCurveStore().write_points(run_id, portfolio.equity_curve)
-    except Exception as exc:  # noqa: BLE001 - persistence must never fail an already-printed report
-        print(f"warning: could not save this run for later visualization: {exc}", file=sys.stderr)
-        return None
-    return run_id
-
-
 async def _run(
     strategy_name: str,
     symbols: list[str],
@@ -220,10 +171,6 @@ async def _run(
 
     print()
     print(f"ending cash: {portfolio.cash:,.2f}   positions: {portfolio.positions}")
-
-    run_id = _persist_run(strategy_name, params, symbols, interval, cash, portfolio)
-    if run_id is not None:
-        print(f"run id: {run_id}  (visualize with: uv run python plugin/scripts/visualize_backtest.py --run {run_id})")
 
 
 def _parse_args() -> argparse.Namespace:
