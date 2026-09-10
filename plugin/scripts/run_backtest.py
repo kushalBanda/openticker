@@ -75,16 +75,16 @@ async def _run(
     to = datetime.now(UTC)
     frm = to - timedelta(days=days)
 
-    bars: dict[str, list[object]] = {}
+    from ingest.core.models import Bar
+
+    bars: dict[str, list[Bar]] = {}
     for symbol in symbols:
-        bars[symbol] = await fetch_symbol_bars(  # type: ignore[assignment]
-            engine, resolved_provider, symbol, interval, frm, to
-        )
+        bars[symbol] = await fetch_symbol_bars(engine, resolved_provider, symbol, interval, frm, to)
 
     from quant.core.exceptions import InsufficientDataError
 
     backtest_engine = BacktestEngine(broker=BacktestBroker(), portfolio=Portfolio(starting_cash=cash))
-    portfolio = await backtest_engine.run(bars, strategy)  # type: ignore[arg-type]
+    portfolio = await backtest_engine.run(bars, strategy)
 
     print(f"provider: {resolved_provider}")
     print(f"strategy: {strategy_name}  params: {params}")

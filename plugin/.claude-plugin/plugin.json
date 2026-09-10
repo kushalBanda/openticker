@@ -1,5 +1,18 @@
 {
   "name": "quant-platform",
   "version": "0.1.1",
-  "description": "AI-native trading agents, skills, and connectors for the Quant Platform repo"
+  "description": "AI-native trading agents, skills, and connectors for the Quant Platform repo",
+  "author": {
+    "name": "Kushal Banda",
+    "url": "https://github.com/kushalBanda"
+  },
+  "homepage": "https://github.com/kushalBanda/Quant",
+  "repository": "https://github.com/kushalBanda/Quant",
+  "keywords": [
+    "quant",
+    "trading",
+    "backtesting",
+    "kite-connect",
+    "claude-code"
+  ]
 }

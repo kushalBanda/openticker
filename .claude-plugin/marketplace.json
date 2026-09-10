@@ -3,12 +3,29 @@
   "owner": {
     "name": "Quant Platform"
   },
+  "metadata": {
+    "description": "Quant Platform marketplace for Claude Code.",
+    "version": "0.1.1"
+  },
   "plugins": [
     {
       "name": "quant-platform",
       "source": "./plugin",
       "description": "AI-native trading agents, skills, and connectors for the Quant Platform repo",
-      "version": "0.1.1"
+      "version": "0.1.1",
+      "author": {
+        "name": "Kushal Banda",
+        "url": "https://github.com/kushalBanda"
+      },
+      "homepage": "https://github.com/kushalBanda/Quant",
+      "repository": "https://github.com/kushalBanda/Quant",
+      "keywords": [
+        "quant",
+        "trading",
+        "backtesting",
+        "kite-connect",
+        "claude-code"
+      ]
     }
   ]
 }
