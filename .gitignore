@@ -153,7 +153,6 @@ __pycache__/
 
 # DataEngine local storage (fetched market data, not source)
 data/
-scripts_v1/
 
 # Docs
 docs/

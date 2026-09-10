@@ -2,9 +2,9 @@
 
 `ingest.adapters.*` packages are deliberately empty __init__.py's - an
 adapter only self-registers (via @register_adapter) when its concrete
-module is actually imported. packages/server has its own version of this
-(server/core/registrations.py); the plugin needs the same step since it
-does not import packages/server.
+module is actually imported. The plugin needs this explicit step since
+it does not go through any server-side registration module. See
+strategies.py for the same pattern applied to packages/strategy.
 """
 
 from importlib import import_module
