@@ -153,9 +153,9 @@ __pycache__/
 
 # DataEngine local storage (fetched market data, not source)
 data/
+docs/
+scripts_v1/
 packages/server/postman/
 
 # Docs
-docs/
-scripts/
-CLAUDE.md
+docs/resources/*/

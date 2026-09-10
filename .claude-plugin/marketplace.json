@@ -1,0 +1,14 @@
+{
+  "name": "quant-platform-marketplace",
+  "owner": {
+    "name": "Quant Platform"
+  },
+  "plugins": [
+    {
+      "name": "quant-platform",
+      "source": "./plugin",
+      "description": "AI-native trading agents, skills, and connectors for the Quant Platform repo",
+      "version": "0.1.0"
+    }
+  ]
+}
