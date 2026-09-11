@@ -1,3 +1,5 @@
+import os
+import stat
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -11,11 +13,14 @@ from ingest.core.constants import (
 )
 from ingest.core.models import Bar, IndexConstituent, Tick
 
+_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR  # 0600, owner read/write only
+
 
 class DuckDBStore:
     def __init__(self, db_path: Path = DEFAULT_DB_PATH) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(db_path))
+        os.chmod(db_path, _FILE_MODE)
         self.ensure_schema()
 
     def ensure_schema(self) -> None:
