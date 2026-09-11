@@ -6,13 +6,19 @@ provider's raw credentials exactly as `ingest.core.registry.AdapterFactory
 or any other token format, because there is no auth boundary to cross:
 this file and the process reading it always belong to the same user.
 
-Stdlib only, on purpose - this module has no dependency on the uv
-workspace, so it works even before any packages/* package is installed.
+DuckDB-backed, its own file (credentials.duckdb) - a separate file from
+ingest's DEFAULT_DB_PATH (bars/ticks/ledger/equity, quant.duckdb) even
+though both now live in the same ~/.quant-plugin/ directory and the same
+engine. Kept as two files on purpose: DuckDB holds one exclusive
+cross-process write lock per file for as long as a connection is open,
+and a fetch-bars/run-backtest call can hold quant.duckdb open for the
+length of a whole fetch loop. Sharing one file would let a slow fetch in
+one session block a connect-adapter call in another. See
+docs/HLD/Parent-HLD.md's plugin storage note for the full rationale.
 """
 
 import json
 import os
-import sqlite3
 import stat
 from collections.abc import Mapping
 from contextlib import closing
@@ -20,8 +26,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import duckdb
+
 STATE_DIR = Path.home() / ".quant-plugin"
-STATE_DB = STATE_DIR / "state.db"
+CREDENTIALS_DB = STATE_DIR / "credentials.duckdb"
 
 _FILE_MODE = stat.S_IRUSR | stat.S_IWUSR  # 0600, owner read/write only
 
@@ -31,24 +39,22 @@ def _ensure_state_dir() -> None:
     os.chmod(STATE_DIR, stat.S_IRWXU)  # 0700, owner-only
 
 
-def _connect() -> sqlite3.Connection:
-    """Open (creating if needed) the state database with 0600 permissions."""
+def _connect() -> duckdb.DuckDBPyConnection:
+    """Open (creating if needed) the credentials database with 0600 permissions."""
     _ensure_state_dir()
-    conn = sqlite3.connect(STATE_DB)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = duckdb.connect(str(CREDENTIALS_DB))
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS credentials (
-            provider TEXT PRIMARY KEY,
-            credentials_json TEXT NOT NULL,
-            connected_at TEXT NOT NULL
+            provider VARCHAR PRIMARY KEY,
+            credentials_json VARCHAR NOT NULL,
+            connected_at VARCHAR NOT NULL
         )
         """
     )
-    conn.commit()
     # Re-assert on every connect (not just on creation) in case something
     # (an editor, a backup tool) loosened it after creation.
-    os.chmod(STATE_DB, _FILE_MODE)
+    os.chmod(CREDENTIALS_DB, _FILE_MODE)
     return conn
 
 
@@ -64,9 +70,8 @@ def save_credentials(provider: str, credentials: Mapping[str, Any]) -> None:
                 credentials_json = excluded.credentials_json,
                 connected_at = excluded.connected_at
             """,
-            (provider, json.dumps(dict(credentials)), connected_at),
+            [provider, json.dumps(dict(credentials)), connected_at],
         )
-        conn.commit()
 
 
 def load_credentials(provider: str) -> dict[str, Any] | None:
@@ -74,7 +79,7 @@ def load_credentials(provider: str) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute(
             "SELECT credentials_json FROM credentials WHERE provider = ?",
-            (provider,),
+            [provider],
         ).fetchone()
     if row is None:
         return None
@@ -116,6 +121,6 @@ if __name__ == "__main__":
     assert load_credentials("_selftest") == {"api_key": "fake", "access_token": "fake"}
     assert load_most_recent() is not None
     assert "_selftest" in list_providers()
-    mode = oct(STATE_DB.stat().st_mode & 0o777)
+    mode = oct(CREDENTIALS_DB.stat().st_mode & 0o777)
     assert mode == "0o600", f"expected 0600 permissions, got {mode}"
-    print(f"OK - state store round-trips correctly at {STATE_DB} (mode {mode})")
+    print(f"OK - state store round-trips correctly at {CREDENTIALS_DB} (mode {mode})")

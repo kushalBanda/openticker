@@ -15,7 +15,7 @@ CANONICAL_INTERVALS: Final[tuple[str, ...]] = (
     "1d",
 )
 
-DEFAULT_DB_PATH: Final = Path("data/quant.duckdb")
+DEFAULT_DB_PATH: Final = Path.home() / ".quant-plugin" / "quant.duckdb"
 TABLE_BARS: Final = "bars"
 TABLE_TICKS: Final = "ticks"
 TABLE_INDEX_CONSTITUENTS: Final = "index_constituents"

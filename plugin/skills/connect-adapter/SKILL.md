@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # Connect adapter
 
-Connects this plugin to a market-data/broker provider, storing the result locally in `~/.quant-plugin/state.db` (see `plugin/scripts/state.py`). No server is involved - the script talks to the provider directly.
+Connects this plugin to a market-data/broker provider, storing the result locally in `~/.quant-plugin/credentials.duckdb` (see `plugin/scripts/state.py`). No server is involved - the script talks to the provider directly.
 
 **Providers currently supported: Kite only.** Groww is planned but not yet built (see `docs/v2/quant-plugin/issues/04-connect-adapter-groww-login.md`, deferred). If the user asks for Groww, tell them plainly it isn't available yet rather than attempting it.
 
