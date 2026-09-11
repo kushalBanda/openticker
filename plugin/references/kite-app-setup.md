@@ -8,7 +8,7 @@ This plugin does not provide Kite credentials for you. Kite Connect API access i
    ```
    http://127.0.0.1:8765/kite/callback
    ```
-   This must match `plugin/scripts/auth_kite.py`'s `CALLBACK_PORT`/`CALLBACK_PATH`. If you ever change those in the script, update the Redirect URL in the Kite developer console to match.
+   This must match `packages/engine/src/engine/tools/connect_adapter.py`'s `CALLBACK_PORT`/`CALLBACK_PATH`. If you ever change those, update the Redirect URL in the Kite developer console to match.
 4. Note the app's **API Key** and **API Secret**.
 5. Create a `.env` file at the repo root (already gitignored — never commit it) with:
    ```

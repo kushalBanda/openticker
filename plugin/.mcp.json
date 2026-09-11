@@ -7,6 +7,12 @@
       "env": {
         "EXA_API_KEY": "${EXA_API_KEY:-}"
       }
+    },
+    "quant-engine": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "engine.server"],
+      "cwd": "${CLAUDE_PROJECT_DIR}"
     }
   }
 }

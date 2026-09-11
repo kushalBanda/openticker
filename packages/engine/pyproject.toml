@@ -1,0 +1,24 @@
+[project]
+name = "engine"
+version = "0.1.0"
+description = "Shared MCP server wrapping ingest/quant/strategy for any harness (Claude Code, Codex)"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp>=1.2,<2",
+    "pydantic>=2.0",
+    "ingest",
+    "quant",
+    "strategy",
+]
+
+[tool.uv.sources]
+ingest = { workspace = true }
+quant = { workspace = true }
+strategy = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/engine"]
