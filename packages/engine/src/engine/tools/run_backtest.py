@@ -1,12 +1,21 @@
 """run_backtest MCP tool (quant-engine server): run a registered strategy over real bars."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from ingest.core.models import Bar
 from pydantic import Field
 from quant.core.exceptions import InsufficientDataError
 from strategy.backtest.broker import BacktestBroker
+from strategy.core.cost_model import (
+    BpsSlippageModel,
+    PerShareFeeModel,
+    TransactionCostModel,
+    groww_delivery_cost_model,
+    groww_intraday_cost_model,
+    kite_delivery_cost_model,
+    kite_intraday_cost_model,
+)
 from strategy.core.engine import BacktestEngine
 from strategy.core.exceptions import UnknownStrategyError
 from strategy.core.portfolio import Portfolio
@@ -17,6 +26,13 @@ from engine.core.data import connect_engine, fetch_symbol_bars
 from engine.core.exceptions import InvalidStrategyParamsError
 from engine.core.serialization import to_json_dict
 from engine.core.strategies import ensure_strategies_registered
+
+_COST_PROFILES: dict[str, TransactionCostModel] = {
+    "kite_delivery": kite_delivery_cost_model(),
+    "kite_intraday": kite_intraday_cost_model(),
+    "groww_delivery": groww_delivery_cost_model(),
+    "groww_intraday": groww_intraday_cost_model(),
+}
 
 
 async def run_backtest(
@@ -68,6 +84,45 @@ async def run_backtest(
             )
         ),
     ] = None,
+    commission_per_share: Annotated[
+        float,
+        Field(
+            description=(
+                "Flat commission per share traded, e.g. 0.5. Default 0.0 "
+                "(free trading, unrealistic for most brokers)."
+            ),
+            ge=0,
+        ),
+    ] = 0.0,
+    slippage_bps: Annotated[
+        float,
+        Field(
+            description=(
+                "Price-impact slippage in basis points applied against the "
+                "trader on every fill (a buy pays more, a sell receives "
+                "less), e.g. 10.0 for 0.1%. Default 0.0 (no slippage, "
+                "unrealistic for most instruments)."
+            ),
+            ge=0,
+        ),
+    ] = 0.0,
+    cost_profile: Annotated[
+        Literal["kite_delivery", "kite_intraday", "groww_delivery", "groww_intraday"] | None,
+        Field(
+            description=(
+                "Use a real broker fee schedule instead of commission_per_share: "
+                '"kite_delivery" (Zerodha, Rs 0 brokerage but STT/exchange/SEBI/'
+                'stamp-duty/GST still apply), "kite_intraday" (brokerage capped at '
+                'min(0.03%, Rs 20/order)), "groww_delivery" (brokerage capped at '
+                "min(0.1%, Rs 20/order) plus a flat Rs 16.5 DP charge, Groww "
+                'dropped free delivery in 2024), "groww_intraday" (brokerage '
+                "capped at min(0.1%, Rs 20/order)). When set, overrides "
+                "commission_per_share (slippage_bps still applies separately, "
+                "these schedules model brokerage/statutory charges, not market "
+                "impact)."
+            )
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Fetch bars for one or more symbols and run a strategy backtest.
 
@@ -114,7 +169,14 @@ async def run_backtest(
             data_engine, resolved_provider, symbol, interval, frm, to
         )
 
-    backtest_engine = BacktestEngine(broker=BacktestBroker(), portfolio=Portfolio(starting_cash=cash))
+    cost_model = _COST_PROFILES[cost_profile] if cost_profile else PerShareFeeModel(commission_per_share)
+    backtest_engine = BacktestEngine(
+        broker=BacktestBroker(
+            cost_model=cost_model,
+            slippage_model=BpsSlippageModel(slippage_bps),
+        ),
+        portfolio=Portfolio(starting_cash=cash),
+    )
     portfolio = await backtest_engine.run(bars_by_symbol, strategy_instance)
 
     # equity_curve's last point is cash + mark-to-market position value
@@ -130,6 +192,9 @@ async def run_backtest(
         "interval": interval,
         "days": days,
         "starting_cash": cash,
+        "commission_per_share": None if cost_profile else commission_per_share,
+        "slippage_bps": slippage_bps,
+        "cost_profile": cost_profile,
         "ending_cash": portfolio.cash,
         "ending_equity": ending_equity,
         "positions": portfolio.positions,

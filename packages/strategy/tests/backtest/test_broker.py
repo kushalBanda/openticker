@@ -9,6 +9,7 @@ from strategy.core.constants import (
     ORDER_SIDE_SELL,
     ORDER_TYPE_MARKET,
 )
+from strategy.core.cost_model import BpsSlippageModel, PerShareFeeModel
 from strategy.core.engine import BacktestEngine
 from strategy.core.interfaces import Broker
 from strategy.core.models import Order
@@ -51,7 +52,7 @@ async def test_submit_then_match_next_bar_fills_at_next_open() -> None:
 
 
 async def test_slippage_worsens_buy_and_sell_in_opposite_directions() -> None:
-    broker = BacktestBroker(slippage_bps=100.0)  # 1%
+    broker = BacktestBroker(slippage_model=BpsSlippageModel(bps=100.0))  # 1%
 
     await broker.submit_order(_order(ORDER_SIDE_BUY))
     buy_fill = (await broker.match_pending_orders({"NSE-RELIANCE": _bar(open_=100.0)}))[0]
@@ -63,7 +64,7 @@ async def test_slippage_worsens_buy_and_sell_in_opposite_directions() -> None:
 
 
 async def test_commission_applied_per_share() -> None:
-    broker = BacktestBroker(commission_per_share=0.5)
+    broker = BacktestBroker(cost_model=PerShareFeeModel(cost_per_share=0.5))
     await broker.submit_order(_order(ORDER_SIDE_BUY))
 
     fill = (await broker.match_pending_orders({"NSE-RELIANCE": _bar(open_=100.0)}))[0]

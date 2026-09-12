@@ -3,8 +3,13 @@ from ingest.core.models import Bar
 from strategy.core.constants import (
     DEFAULT_COMMISSION_PER_SHARE,
     DEFAULT_SLIPPAGE_BPS,
-    ORDER_SIDE_BUY,
     ORDER_STATUS_PENDING,
+)
+from strategy.core.cost_model import (
+    BpsSlippageModel,
+    PerShareFeeModel,
+    SlippageModel,
+    TransactionCostModel,
 )
 from strategy.core.models import Fill, Order, OrderState
 
@@ -12,11 +17,14 @@ from strategy.core.models import Fill, Order, OrderState
 class BacktestBroker:
     def __init__(
         self,
-        slippage_bps: float = DEFAULT_SLIPPAGE_BPS,
-        commission_per_share: float = DEFAULT_COMMISSION_PER_SHARE,
+        cost_model: TransactionCostModel | None = None,
+        slippage_model: SlippageModel | None = None,
     ) -> None:
-        self._slippage_bps = slippage_bps
-        self._commission_per_share = commission_per_share
+        # Built fresh per instance, not a shared module-level default: both
+        # concrete models are stateless today, but a shared default instance
+        # would silently become a footgun the day either grows mutable state.
+        self._cost_model = cost_model or PerShareFeeModel(DEFAULT_COMMISSION_PER_SHARE)
+        self._slippage_model = slippage_model or BpsSlippageModel(DEFAULT_SLIPPAGE_BPS)
         self._pending_orders: list[Order] = []
 
     async def submit_order(self, order: Order) -> OrderState:
@@ -25,12 +33,12 @@ class BacktestBroker:
 
     async def cancel_order(self, order_id: str) -> None:
         # BacktestBroker fills against the very next bar, there is no
-        # window in which a backtest order can be cancelled — no caller
+        # window in which a backtest order can be cancelled - no caller
         # in the backtest path needs this today.
         raise NotImplementedError("BacktestBroker does not support cancel_order")
 
     async def get_fills(self, order_id: str) -> list[Fill]:
-        # BacktestBroker never tracked fills by order id, only by bar —
+        # BacktestBroker never tracked fills by order id, only by bar -
         # fills are consumed from match_pending_orders as they happen.
         raise NotImplementedError("BacktestBroker does not support get_fills")
 
@@ -42,12 +50,13 @@ class BacktestBroker:
             if next_bar is None:
                 still_pending.append(order)
                 continue
+            fill_price = self._slippage_model.get_fill_price(next_bar.open, order.side)
             fills.append(
                 Fill(
                     order=order,
-                    fill_price=self._apply_slippage(next_bar.open, order.side),
+                    fill_price=fill_price,
                     fill_ts=next_bar.ts,
-                    commission=order.quantity * self._commission_per_share,
+                    commission=self._cost_model.get_cost(order.quantity, fill_price),
                 )
             )
         self._pending_orders = still_pending
@@ -57,9 +66,3 @@ class BacktestBroker:
         dropped = self._pending_orders
         self._pending_orders = []
         return dropped
-
-    def _apply_slippage(self, price: float, side: str) -> float:
-        # A buy pays a worse (higher) price, a sell receives a worse (lower)
-        # price, both a realistic modeling of one-sided market impact.
-        direction = 1 if side == ORDER_SIDE_BUY else -1
-        return price * (1 + direction * self._slippage_bps / 10_000)

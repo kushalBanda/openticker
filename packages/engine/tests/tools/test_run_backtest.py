@@ -171,6 +171,93 @@ async def test_run_backtest_translates_unknown_strategy_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_backtest_wires_cost_assumptions_into_broker_and_result() -> None:
+    from strategy.core.cost_model import BpsSlippageModel, PerShareFeeModel
+
+    bars = [_bar(1, 100.0)]
+    fake_portfolio = Mock(cash=100_000.0, positions={}, equity_curve=[])
+    report = PerformanceReport(
+        total_return=0.0,
+        annualized_return=0.0,
+        max_drawdown=0.0,
+        sharpe_ratio=0.0,
+        exponential_std=0.0,
+        win_rate=0.0,
+    )
+
+    with (
+        patch(
+            "engine.tools.run_backtest.connect_engine",
+            new=AsyncMock(return_value=("kite", object())),
+        ),
+        patch("engine.tools.run_backtest.fetch_symbol_bars", new=AsyncMock(return_value=bars)),
+        patch("engine.tools.run_backtest.ensure_strategies_registered"),
+        patch("engine.tools.run_backtest.StrategyFactory"),
+        patch("engine.tools.run_backtest.BacktestEngine") as mock_engine_cls,
+        patch("engine.tools.run_backtest.BacktestBroker") as mock_broker_cls,
+        patch("engine.tools.run_backtest.compute_metrics", return_value=report),
+    ):
+        mock_engine_cls.return_value.run = AsyncMock(return_value=fake_portfolio)
+        result = await run_backtest(
+            strategy="buy_and_hold",
+            symbols=["RELIANCE"],
+            commission_per_share=0.5,
+            slippage_bps=10.0,
+        )
+
+    _, kwargs = mock_broker_cls.call_args
+    assert isinstance(kwargs["cost_model"], PerShareFeeModel)
+    assert isinstance(kwargs["slippage_model"], BpsSlippageModel)
+    assert result["commission_per_share"] == 0.5
+    assert result["slippage_bps"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_run_backtest_cost_profile_overrides_commission_per_share() -> None:
+    from strategy.core.cost_model import kite_delivery_cost_model
+
+    bars = [_bar(1, 100.0)]
+    fake_portfolio = Mock(cash=100_000.0, positions={}, equity_curve=[])
+    report = PerformanceReport(
+        total_return=0.0,
+        annualized_return=0.0,
+        max_drawdown=0.0,
+        sharpe_ratio=0.0,
+        exponential_std=0.0,
+        win_rate=0.0,
+    )
+
+    with (
+        patch(
+            "engine.tools.run_backtest.connect_engine",
+            new=AsyncMock(return_value=("kite", object())),
+        ),
+        patch("engine.tools.run_backtest.fetch_symbol_bars", new=AsyncMock(return_value=bars)),
+        patch("engine.tools.run_backtest.ensure_strategies_registered"),
+        patch("engine.tools.run_backtest.StrategyFactory"),
+        patch("engine.tools.run_backtest.BacktestEngine") as mock_engine_cls,
+        patch("engine.tools.run_backtest.BacktestBroker") as mock_broker_cls,
+        patch("engine.tools.run_backtest.compute_metrics", return_value=report),
+    ):
+        mock_engine_cls.return_value.run = AsyncMock(return_value=fake_portfolio)
+        result = await run_backtest(
+            strategy="buy_and_hold",
+            symbols=["RELIANCE"],
+            commission_per_share=99.0,  # should be ignored in favor of cost_profile
+            cost_profile="kite_delivery",
+        )
+
+    _, kwargs = mock_broker_cls.call_args
+    used_cost_model = kwargs["cost_model"]
+    reference_cost_model = kite_delivery_cost_model()
+    assert used_cost_model.get_cost(quantity=10, price=100.0) == reference_cost_model.get_cost(
+        quantity=10, price=100.0
+    )
+    assert result["cost_profile"] == "kite_delivery"
+    assert result["commission_per_share"] is None
+
+
+@pytest.mark.asyncio
 async def test_run_backtest_translates_bad_params_to_engine_error() -> None:
     with (
         patch("engine.tools.run_backtest.ensure_strategies_registered"),
