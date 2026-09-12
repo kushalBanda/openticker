@@ -4,3 +4,11 @@ class StrategyEngineError(Exception):
 
 class UnknownStrategyError(StrategyEngineError):
     pass
+
+
+class UnknownOrderError(StrategyEngineError):
+    pass
+
+
+class OrderNotCancellableError(StrategyEngineError):
+    pass

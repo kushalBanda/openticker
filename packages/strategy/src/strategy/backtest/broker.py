@@ -1,4 +1,4 @@
-from ingest.core.models import Bar
+from ingest.core.models import Bar, Tick
 
 from strategy.core.constants import (
     DEFAULT_COMMISSION_PER_SHARE,
@@ -61,6 +61,11 @@ class BacktestBroker:
             )
         self._pending_orders = still_pending
         return fills
+
+    async def on_tick(self, tick: Tick) -> list[Fill]:
+        # BacktestBroker replays historical bars via match_pending_orders,
+        # it has no live tick stream to fill against.
+        raise NotImplementedError("BacktestBroker does not support on_tick")
 
     async def close(self) -> list[Order]:
         dropped = self._pending_orders
