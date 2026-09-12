@@ -1,6 +1,6 @@
 # Quant Platform plugin
 
-Claude Code plugin for the [Quant Platform](https://github.com/kushalBanda/Quant) repo: connect a broker/data adapter and run market data, backtest, and research skills directly against `packages/ingest`, `packages/quant`, and `packages/strategy` - in-process, no server.
+Claude Code plugin for the [Quant Platform](https://github.com/kushalBanda/Quant) repo. There is no server and no separate Python package behind it - each skill below runs its own script directly against `plugin/lib`, in-process, no MCP tool layer for this repo's own logic.
 
 ## Install
 
@@ -18,7 +18,10 @@ See `references/install.md` for the full one-time setup (workspace trust, Kite a
 | `connect-adapter` | Connecting a broker/data provider (Kite Connect; Groww deferred). |
 | `fetch-bars` | A plain historical price/OHLCV data request. |
 | `research` | A written research report on a symbol (trend, volatility, outside context). |
-| `run-backtest` | Backtesting a registered strategy against real historical bars. |
+| `evaluate-signal` | Checking whether a signal (RSI, SMA, ...) predicts a symbol's forward returns. |
+| `run-backtest` | Backtesting one of 5 strategies against real historical bars. |
+
+Each skill's `SKILL.md` runs its own `scripts/<name>.py` and turns the JSON it prints into a plain-language answer - the skill file owns all the orchestration and decision-making.
 
 ## Agents
 
@@ -26,10 +29,10 @@ See `references/install.md` for the full one-time setup (workspace trust, Kite a
 |---|---|
 | `research-agent` | Turns fetched OHLCV bars into a plain-language research report, invoked by the `research` skill. |
 
+## Shared library
+
+`plugin/lib/` is the only shared code, split into `mechanics/` (Kite auth, historical fetch, DuckDB bars store) and `math/` (indicators, signal evaluation, cost models, the backtest loop, all 5 strategies). No registry, no `Protocol`, no factory - see `plugin/lib/CLAUDE.md` for how to extend it.
+
 ## References
 
-`references/install.md`, `references/kite-app-setup.md`, `references/strategies.md`, `references/quant-signals.md` - background Claude reads when a skill needs it, not run directly.
-
-## Scripts
-
-`scripts/*.py` are called by skills via `uv run python plugin/scripts/<name>.py ...` from the repo root - never invoked by the user directly. `state.py` (local credential store) and `adapters.py`/`strategies.py` (self-registration helpers) are shared infrastructure; `data.py` is the shared bar-fetch helper `fetch_bars.py` and `run_backtest.py` both use.
+`references/install.md`, `references/kite-app-setup.md`, `references/strategies.md`, `references/quant-signals.md`, `references/cost-models.md` - background Claude reads when a skill needs it, not run directly.

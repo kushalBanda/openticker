@@ -4,21 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A quant trading platform being built from scratch: DataEngine, Strategy/Backtest Engine, Quant Research Layer, plus a Claude Code plugin layer for the AI-native, interactive pieces — see `docs/HLD/Parent-HLD.md` for the full system map, and `docs/HLD/sub/` for each component's detailed HLD. This superseded the repo's earlier framing as an interview-prep curriculum for elite quant firms, the goal now is to actually build and run the product, learning production engineering practice along the way rather than studying it in isolation. The phase folders (01-05) from the old curriculum framing have been removed. Kite Connect and Groww (Indian market data, notes in `docs/dataConnect/`) are the two data sources wired in so far, Upstox is deferred.
+A quant trading platform built OpenClaw-style: a Claude Code plugin (`plugin/`) is the entire product. There is no separate backend service, no multi-package Python workspace, and no MCP server sitting between the agent and the math. A skill's own script does the mechanics (auth, data fetch, storage); the skill's `SKILL.md` does all orchestration and decision-making; a small shared library holds only the deterministic math that would otherwise be duplicated across skills.
 
-Design spec (historical, superseded by the HLD docs above): `docs/superpowers/specs/2026-08-30-elite-quant-curriculum-design.md`
+This is a deliberate architectural pivot away from an earlier, framework-heavy design (four Python packages - `ingest`, `quant`, `strategy`, `engine` - each with its own registry/`Protocol`/factory pattern, exposed to skills through one shared MCP server). That design accumulated real, working code that no longer had a reason to exist once the product's actual interactive layer was skills, not a service. See `docs/superpowers/specs/2026-09-12-openclaw-flat-scripts-design.md` for the full rationale and `docs/superpowers/plans/2026-09-12-flat-scripts-migration.md` for how the migration was executed.
+
+Kite Connect is the one data source wired in (Groww is deferred - see `plugin/skills/connect-adapter/SKILL.md`).
 
 ## Core stack decision
 
-**Python only.** The platform is built end to end in Python, no C++ port planned. This is a deliberate change from the repo's original interview-prep framing (which targeted C++ + Python to match firms like Optiver, Jump, HRT, Citadel Securities) since the focus is now on shipping the actual product, not on interview-specific language practice.
+**Python only**, run as flat scripts via `uv`, not as an installed package. There is no `pyproject.toml` workspace, no `packages/` directory, no `src/` layout with a build step. `uv run python plugin/skills/<name>/scripts/<name>.py` is how every skill's mechanics actually execute.
 
 ## Toolchain
 
-- **uv**, Python 3.13, dependency management and running. `uv sync` to install, `uv run pytest`/`uv run mypy`/`uv run ruff check` to verify.
-- **uv workspace**, not a flat single package and not separate repos per component. Each component lives at `packages/<component>/` with its own `pyproject.toml`, own dependencies, source under `src/<component>/`, tests under `packages/<component>/tests/`. Root `pyproject.toml` is the workspace root (`[tool.uv.workspace] members = ["packages/*"]`). Rationale recorded in `docs/HLD/Parent-HLD.md`'s "Repo strategy" section, components have genuinely different dependency sets and this keeps each one lean while staying in one repo.
-- **mypy --strict** and **ruff** must pass clean on every component before a slice is considered done. No bare `except`, full type coverage on public APIs.
-- Every literal that appears in more than one place within a component (provider names, table names, base URLs, rate limits, header values, HTTP status codes) belongs in that component's `core/constants.py`, imported everywhere it's used, never re-typed inline. Use stdlib `http.HTTPStatus` for status codes rather than raw integers.
-- Provider-specific translation tables (Kite's interval strings, Groww's interval minutes, and anything similar a new provider will need) do NOT belong in `core/constants.py` even though they're "constants" — that just relocates the scaling problem, `constants.py` would grow one dict per provider forever. Instead each provider owns its table in its own adapter package (e.g. `adapters/kite/intervals.py`), self-registered into a small generic registry in `core/` (see `core/intervals.py`'s `register_interval_map`/`to_provider_interval`), the same registry pattern already used for adapters themselves. A new provider adds one file to its own package and changes nothing in `core/`.
+- **uv**, Python 3.13. `uv sync` installs the runtime dependencies declared in the root `pyproject.toml` (`httpx`, `duckdb`, `pandas`, `numpy`, `scipy`, `python-dotenv`) plus the dev dependency group (`pytest`, `mypy`, `ruff`, etc.). There is nothing else to build or install - no wheel, no editable package.
+- **mypy --strict** and **ruff** must pass clean on `plugin/` before a change is considered done. No bare `except`, full type coverage on public functions.
+- **No `Protocol`, no `@register_*` decorator, no `*Factory`, no registry dict anywhere in `plugin/`.** This is not a style preference, it is the point of the architecture: a new signal or strategy is one new file plus one new entry in a skill script's own plain `dict[str, Callable]` dispatch table, never a decorator that hides the wiring. If you find yourself reaching for a registry pattern to add something, stop - that is the framework this repo deliberately does not have.
+- Every literal that appears in more than one place (provider names, table names, base URLs, bps rates, order-side strings) belongs in `plugin/lib/mechanics/kite.py` (mechanics constants) or `plugin/lib/math/constants.py` (math constants), imported everywhere it is used, never re-typed inline.
 
 ## Commands
 
@@ -26,38 +27,56 @@ Run these from the repo root.
 
 - Install dependencies: `uv sync`
 - Run all tests: `uv run pytest`
-- Run one package's tests: `uv run pytest packages/<component>/tests`
-- Run a single test: `uv run pytest packages/<component>/tests/path/to/test_file.py::test_name`
-- Type check (whole workspace, config is at root `pyproject.toml`): `uv run mypy`
-- Type check one package: `uv run mypy packages/<component>`
-- Lint: `uv run ruff check` (or `uv run ruff check packages/<component>` for one package)
+- Run one skill's or lib area's tests: `uv run pytest plugin/lib/tests/math` or `uv run pytest plugin/skills/run-backtest/scripts/tests`
+- Run a single test: `uv run pytest plugin/lib/tests/math/test_statistics.py::test_max_drawdown_detects_peak_to_trough`
+- Type check: `uv run mypy plugin`
+- Lint: `uv run ruff check plugin`
+- Run a skill's script directly (what a skill's own instructions do): `uv run python plugin/skills/fetch-bars/scripts/fetch_bars.py --symbol RELIANCE --days 365`
 
 ## Repo structure and how it fits together
 
-Phase folders (01-05) were removed for a revamp. Fixed pieces so far, each with its own `CLAUDE.md` for package-specific detail:
+```
+plugin/
+  lib/
+    mechanics/   flat I/O: Kite OAuth exchange, historical fetch, DuckDB bars store, credential store
+    math/        flat computation: indicators, signal evaluation, cost models, the backtest loop,
+                 portfolio/ledger accounting, and all 5 strategies under math/strategies/
+    tests/       tests for everything under lib/
+  skills/
+    connect-adapter/   SKILL.md + scripts/connect_adapter.py
+    fetch-bars/        SKILL.md + scripts/fetch_bars.py
+    evaluate-signal/   SKILL.md + scripts/evaluate_signal.py
+    run-backtest/      SKILL.md + scripts/run_backtest.py
+    research/          SKILL.md (calls fetch-bars's script, then the research-agent subagent)
+  references/    plain-text domain knowledge (formulas, strategy citations, cost-model tables,
+                 Kite app setup, install steps) - read by a skill when it needs context, never code
+  agents/        the research-agent subagent definition
+  assets/        plugin metadata assets
+  .claude-plugin/  marketplace manifest
+  .mcp.json        the one remaining MCP server, Exa web search for the research skill - not
+                   a server for this repo's own tools, those are gone
+```
 
-- `packages/ingest/` (formerly `data_engine`) — first component built, ingests market data via pluggable provider adapters (Kite Connect, Groww) into DuckDB. See `packages/ingest/CLAUDE.md` and `docs/plans/data-engine/` for its 4-gate design docs and slice-by-slice build status.
-- `packages/quant/` — Quant Research Layer: signals, forecast scaling, position sizing. Depends on `ingest`. See `packages/quant/CLAUDE.md`.
-- `packages/strategy/` — hand-built bar-by-bar backtest engine with pluggable strategies. Depends on `ingest` and `quant`. See `packages/strategy/CLAUDE.md`.
-- All three packages above share the same self-registering-registry pattern for their pluggable pieces (adapters, signals, strategies) — a `core/registry.py` with a decorator (`@register_*`) and a `*Factory`/`get_*_class` lookup, so `core/` never has to import concrete implementations by name.
-- **Deprecated and removed** (were `packages/execution`, `packages/server`, `packages/agents`): a pre-trade risk pipeline/paper broker, a FastAPI REST layer, and a litellm-based LLM advisor for in-loop strategy-param tuning. None had a real dependent once the plugin (below) became the interactive layer — Claude Code itself is now the harness and the model, so a separate REST API and a separate LLM-advisor package were redundant. The pairs-trading strategy's optional `advisor` hook (which imported `packages/agents`) was stripped back to its always-rule-based path when `agents` was deleted; no feature the plugin used was lost. If paper trading or a hosted REST API are needed again later, they get re-designed against the plugin-first architecture, not restored as-is.
-- `docs/HLD/Parent-HLD.md` and `docs/HLD/sub/` — high-level design for every component, read before starting work on a new one.
-- `docs/resources/` — cloned reference repos (e.g. `Kronos`, `TradingAgents`, `backtesting.py`, `gs-quant`) kept as read-only architecture study material. Gitignored (`docs/resources/*/`) — never treat these as vendored dependencies of this repo, and never edit files inside them.
-- `docs/dataConnect/Kite/` and `docs/dataConnect/Groww/` — API notes (auth, historical/live data, rate limits) for the two data providers wired in so far. Any data-engine adapter work should reference these notes.
+- `plugin/lib/mechanics/` - Kite OAuth exchange (`kite.py`), the DuckDB bars store (`store.py`, bars table only), the `Bar` dataclass (`models.py`), and the home-scoped credential store (`state.py`, `~/.quant-plugin/credentials.duckdb`). Each is a flat module: functions and one or two plain classes, no interface layer between a skill script and the mechanics it calls.
+- `plugin/lib/math/` - every deterministic computation, ported formula-for-formula from the deleted `quant`/`strategy` packages with the class/registry wrapping stripped off: `indicators.py` (RSI/SMA/volume/momentum, each a plain `compute_*`/`scale_*` function pair), `evaluation.py` (information-coefficient signal evaluation), `statistics.py`/`econometrics.py`/`pairs.py`/`technicals.py` (the underlying math), `cost_models.py` (real Kite/Groww fee schedules as 4 straight-line functions), `sizing.py`/`portfolio.py`/`broker.py`/`backtest.py`/`performance.py` (position sizing, P&L accounting, the bar-by-bar backtest loop), `triggers.py`/`actions.py` (composable entry/exit building blocks, plain functions/classes, no `Protocol`), and `strategies/` (`sma_cross`, `buy_and_hold`, `mean_reversion`, `pairs_trading`, `time_series_momentum` - all 5 live and reachable).
+- `plugin/skills/<name>/scripts/<name>.py` - one thin CLI entry point per skill. Parses its own arguments, imports the `plugin/lib` functions it needs, prints one JSON object to stdout. A skill's dispatch-by-name (which strategy, which signal) is a plain dict literal inside that script, built and read in one place.
+- `plugin/skills/<name>/SKILL.md` - all orchestration: which script to run, how to interpret its JSON output, what to do on each documented error, how to phrase the result in plain language. This is unchanged in role from before the migration - these files never contained framework code.
+- `plugin/references/` - `quant-signals.md` (signal formulas and the forecast-scaling convention), `strategies.md` (per-strategy params, citations, the no-lookahead rule), `cost-models.md` (the Kite/Groww bps tables), `kite-app-setup.md`, `install.md`.
 
-## v2: Claude Code plugin layer
+## What is deliberately not here
 
-A second, separate deployment target sits alongside the `packages/*` workspace: a Claude Code plugin at `plugin/` (repo root), distributed by cloning this repo — not a hosted SaaS, not a `/plugin install` from a public marketplace yet.
+Paper/live trading, a risk-check pipeline, order/ledger/equity-curve persistence, a correlation-aware multi-position sizer, and a watchlist/setup/screening layer all existed in the deleted packages with zero live caller from any skill. They were not ported - per the migration spec, if any of these is wanted later it gets designed fresh against this flat-script shape, not resurrected as-is. Index-constituent fetching and live tick storage were dropped the same way.
 
-- Claude Code is the interactive harness (skills, subagents, orchestration). It is not a replacement for `packages/*`'s actual computation — an LLM cannot itself be a deterministic backtest engine or a rate-limited data pipeline. `packages/*` (now just `ingest`, `quant`, `strategy`) stays the real backend; the plugin is the interactive layer on top of it.
-- The plugin never depended on `packages/server`'s REST + JWT layer, and that package (plus `packages/execution` and `packages/agents`) has since been deleted — see the "Deprecated and removed" note above. `plugin/scripts/*.py` call directly into `packages/ingest`, `packages/quant`, and `packages/strategy` (via `uv run python ...` from `${CLAUDE_PROJECT_DIR}`).
-- No persistent background process. The one exception: Kite's OAuth login inherently needs a local HTTP redirect target, so the connect flow spins up a short-lived listener for that one exchange and shuts it down immediately — not a daemon.
-- Plugin-local state (raw provider credentials, later a run cache) lives in a home-scoped DuckDB store, `~/.quant-plugin/credentials.duckdb` (0600 permissions) — never project-scoped, so it survives a repo re-clone. `packages/ingest`'s DuckDB market-data store (`ingest.core.constants.DEFAULT_DB_PATH`) is also home-scoped now, at `~/.quant-plugin/quant.duckdb`, for the same re-clone-survival reason — one engine (DuckDB) for both, but kept as two separate files rather than one: DuckDB holds an exclusive cross-process write lock on a file for as long as a connection stays open, and a fetch-bars/run-backtest call can hold `quant.duckdb` open for a whole multi-symbol fetch loop, not just an instant. One shared file would let a slow fetch in one session block a `connect-adapter` call in another; two files keep those locks independent, same as the earlier SQLite/DuckDB split did.
-- A self-registering `.claude-plugin/marketplace.json` plus a committed `.claude/settings.json` (`extraKnownMarketplaces` + `enabledPlugins`) declare the plugin, but install is not fully automatic — Claude Code still requires accepting a one-time workspace-trust prompt, then running `/plugin install quant-platform@quant-platform-marketplace` once (see `plugin/references/install.md`). This is a Claude Code security boundary, not something this plugin can bypass.
-- Bundles the Exa Web MCP server (`.mcp.json`, optional `EXA_API_KEY`) alongside Claude's own built-in web search, for the research agent's outside-context lookups.
-- Build plan: tracer-bullet tickets in `docs/v2/quant-plugin/issues/`, numbered in dependency order. Built and live-verified against a real Kite session: skeleton, local credential store, Kite connect, a fetch-bars skill, the research agent, and a run-backtest skill (ticket 06) wrapping `packages/strategy`/`packages/quant` the same way `fetch_bars.py` wraps `ingest` — see `plugin/references/strategies.md` and `plugin/references/quant-signals.md`. Groww (ticket 04) is deliberately deferred (p2) — `AdapterFactory` is already provider-agnostic, so adding it later is additive, not a redesign. The fuller agent catalog (a judge/decision agent, a trader/proposal agent) is deferred until real usage on this slice justifies it.
+## Adding a new signal or strategy
+
+There is no registration step.
+
+1. **New signal:** add `compute_<name>`/`scale_<name>` functions to `plugin/lib/math/indicators.py` (or a new module if it needs feature math that doesn't exist yet - add that to `plugin/lib/math/` first). Add a test in `plugin/lib/tests/math/`. Wire it into `evaluate-signal`'s script by adding one entry to that script's `_SIGNAL_COMPUTE` dict.
+2. **New strategy:** add `plugin/lib/math/strategies/<name>.py` with a class implementing `on_bar(bars, portfolio, broker)` and a `make_<name>_on_bar(params) -> OnBar` factory, composing `plugin/lib/math/triggers.py`/`actions.py` for its entry/exit logic rather than inlining conditions. Add a test in `plugin/lib/tests/math/strategies/`. Wire it into `run-backtest`'s script by adding one entry to that script's `_STRATEGY_FACTORY` dict.
+3. Update `plugin/references/quant-signals.md` or `strategies.md` with the new formula/params so a skill can describe it to the user.
 
 ## Explicit constraints (deliberate, do not "fix")
 
-- No week/time estimates anywhere in phase docs or specs — sequencing is by dependency, not by timeline. This was an explicit user requirement.
-- The Strategy/Backtest Engine (see `docs/HLD/sub/strategy-backtest-engine.md`) is meant to be hand-built, not swapped for an off-the-shelf backtesting library — the point is production-grade engineering practice, not the fastest path to a working backtest.
+- No week/time estimates anywhere in phase docs or specs - sequencing is by dependency, not by timeline.
+- The backtest loop (`plugin/lib/math/backtest.py`) is hand-built on purpose, not swapped for an off-the-shelf backtesting library - the point is production-grade engineering practice, not the fastest path to a working backtest.
+- No `Protocol`/registry/factory pattern gets added back to `plugin/lib/`. If a future feature seems to need one, that is a signal to reconsider the feature's shape, not to reintroduce the framework this repo moved away from.
