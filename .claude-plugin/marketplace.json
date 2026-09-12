@@ -21,7 +21,8 @@
       "repository": "https://github.com/kushalBanda/Quant",
       "keywords": [
         "quant",
-        "trading",
+        "trading-bot",
+        "execution",
         "backtesting",
         "kite-connect",
         "claude-code"

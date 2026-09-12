@@ -1,15 +1,19 @@
 # Quant
 
-Quant is a trading platform for research and backtesting. You talk to it through Claude Code. You ask for data, a research report, or a backtest, in plain language, and it runs on real market data.
+Quant is a self-hosted trading bot platform. You talk to it through Claude Code. You ask for data, a research report, a backtest, or — once execution ships — a live or paper trade, in plain language, and it runs on real market data.
 
-Quant pulls bars from Kite Connect and Groww, computes signals and position sizes, and runs those signals through a hand built backtest engine. A Claude Code plugin sits on top and exposes this as skills: fetch data, run research, connect a broker, run a backtest.
+Quant pulls bars from Kite Connect and Groww, computes signals and position sizes, and runs those signals through a hand built backtest engine. Order execution (paper, then live) is the current build priority — see `docs/designs/trading-bot-first-pivot.md`. A Claude Code plugin sits on top and exposes this as skills: fetch data, run research, connect a broker, run a backtest.
 
-## What it does
+## What it does today
 
 - **Fetch bars** - pull historical OHLCV data for a symbol, for example "fetch me Reliance data for the last year".
 - **Research** - get a plain language report on trend, volatility, and notable levels, with optional web and news context.
 - **Connect a broker** - log in to Kite so live data and orders can flow.
 - **Run a backtest** - test a strategy, such as a moving average crossover or pairs trading, against real historical bars.
+
+## What's next
+
+Real order execution — a `PaperBroker`, gated by a pre-trade risk pipeline, then `LiveBroker` through Kite. This is not built yet. See `docs/designs/trading-bot-first-pivot.md` for the full design and safety gates.
 
 All computation is deterministic Python. Claude Code is the interactive layer, not the engine. It never invents a bar or a fill.
 
@@ -64,4 +68,4 @@ Kite Connect and Groww are wired in today, for Indian markets. Upstox is planned
 
 ## License
 
-Private repo. No license granted for external use.
+MIT. See `LICENSE`.
