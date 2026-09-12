@@ -22,6 +22,13 @@ from strategy.core.portfolio import Portfolio
 from strategy.core.registry import StrategyFactory, list_strategy_names
 from strategy.metrics.performance import compute_metrics
 
+from engine.core.constants import (
+    COST_PROFILE_FREE,
+    COST_PROFILE_MANUAL,
+    COST_SEGMENT_DELIVERY,
+    COST_SEGMENT_INTRADAY,
+    DELIVERY_INTERVAL,
+)
 from engine.core.data import connect_engine, fetch_symbol_bars
 from engine.core.exceptions import InvalidStrategyParamsError
 from engine.core.serialization import to_json_dict
@@ -33,6 +40,34 @@ _COST_PROFILES: dict[str, TransactionCostModel] = {
     "groww_delivery": groww_delivery_cost_model(),
     "groww_intraday": groww_intraday_cost_model(),
 }
+
+
+def _resolve_cost_model(
+    cost_profile: str | None,
+    resolved_provider: str,
+    interval: str,
+    commission_per_share: float,
+) -> tuple[TransactionCostModel, str, bool]:
+    """Picks the cost model to charge fills with.
+
+    Returns (model, profile actually used, whether it was auto-selected
+    from the resolved adapter rather than named by the caller).
+    """
+    if cost_profile == COST_PROFILE_MANUAL:
+        return PerShareFeeModel(commission_per_share), COST_PROFILE_MANUAL, False
+    if cost_profile == COST_PROFILE_FREE:
+        return PerShareFeeModel(0.0), COST_PROFILE_FREE, False
+    if cost_profile is not None:
+        return _COST_PROFILES[cost_profile], cost_profile, False
+
+    # No explicit choice: charge whatever the connected adapter actually
+    # charges, so a caller who never thinks about costs still gets a
+    # realistic result instead of a silently frictionless one.
+    segment = COST_SEGMENT_DELIVERY if interval == DELIVERY_INTERVAL else COST_SEGMENT_INTRADAY
+    auto_key = f"{resolved_provider}_{segment}"
+    if auto_key in _COST_PROFILES:
+        return _COST_PROFILES[auto_key], auto_key, True
+    return PerShareFeeModel(0.0), COST_PROFILE_FREE, True
 
 
 async def run_backtest(
@@ -88,8 +123,9 @@ async def run_backtest(
         float,
         Field(
             description=(
-                "Flat commission per share traded, e.g. 0.5. Default 0.0 "
-                "(free trading, unrealistic for most brokers)."
+                'Flat commission per share, only used when cost_profile="manual" '
+                "(otherwise ignored in favor of the resolved adapter's real "
+                "schedule, or whatever cost_profile names). Default 0.0."
             ),
             ge=0,
         ),
@@ -107,19 +143,33 @@ async def run_backtest(
         ),
     ] = 0.0,
     cost_profile: Annotated[
-        Literal["kite_delivery", "kite_intraday", "groww_delivery", "groww_intraday"] | None,
+        Literal[
+            "kite_delivery",
+            "kite_intraday",
+            "groww_delivery",
+            "groww_intraday",
+            "free",
+            "manual",
+        ]
+        | None,
         Field(
             description=(
-                "Use a real broker fee schedule instead of commission_per_share: "
-                '"kite_delivery" (Zerodha, Rs 0 brokerage but STT/exchange/SEBI/'
-                'stamp-duty/GST still apply), "kite_intraday" (brokerage capped at '
-                'min(0.03%, Rs 20/order)), "groww_delivery" (brokerage capped at '
-                "min(0.1%, Rs 20/order) plus a flat Rs 16.5 DP charge, Groww "
-                'dropped free delivery in 2024), "groww_intraday" (brokerage '
-                "capped at min(0.1%, Rs 20/order)). When set, overrides "
-                "commission_per_share (slippage_bps still applies separately, "
-                "these schedules model brokerage/statutory charges, not market "
-                "impact)."
+                "Which broker fee schedule to charge fills with. Omit (default) "
+                "to auto-select the resolved adapter's real schedule - "
+                '"kite_delivery"/"groww_delivery" when interval="1d", '
+                '"kite_intraday"/"groww_intraday" otherwise - so results reflect '
+                "what that adapter actually charges without the caller having "
+                'to know it. Pass "kite_delivery" (Zerodha, Rs 0 brokerage but '
+                "STT/exchange/SEBI/stamp-duty/GST still apply), \"kite_intraday\" "
+                '(brokerage capped at min(0.03%, Rs 20/order)), "groww_delivery" '
+                "(brokerage capped at min(0.1%, Rs 20/order) plus a flat Rs 16.5 "
+                'DP charge, Groww dropped free delivery in 2024), or '
+                '"groww_intraday" (brokerage capped at min(0.1%, Rs 20/order)) '
+                'to force a specific schedule regardless of adapter. Pass "free" '
+                'for zero-cost frictionless fills, or "manual" to use '
+                "commission_per_share as a flat per-share fee instead. "
+                "slippage_bps always applies separately (these schedules model "
+                "brokerage/statutory charges, not market impact)."
             )
         ),
     ] = None,
@@ -169,7 +219,9 @@ async def run_backtest(
             data_engine, resolved_provider, symbol, interval, frm, to
         )
 
-    cost_model = _COST_PROFILES[cost_profile] if cost_profile else PerShareFeeModel(commission_per_share)
+    cost_model, resolved_cost_profile, cost_profile_auto_selected = _resolve_cost_model(
+        cost_profile, resolved_provider, interval, commission_per_share
+    )
     backtest_engine = BacktestEngine(
         broker=BacktestBroker(
             cost_model=cost_model,
@@ -183,6 +235,7 @@ async def run_backtest(
     # (Portfolio.mark_to_market) - the true ending value, not just cash.
     # Falls back to cash only if the curve is empty (no bars ever marked).
     ending_equity = portfolio.equity_curve[-1][1] if portfolio.equity_curve else portfolio.cash
+    total_commission_paid = sum(entry.commission for entry in portfolio.ledger.entries)
 
     result: dict[str, Any] = {
         "provider": resolved_provider,
@@ -192,12 +245,19 @@ async def run_backtest(
         "interval": interval,
         "days": days,
         "starting_cash": cash,
-        "commission_per_share": None if cost_profile else commission_per_share,
-        "slippage_bps": slippage_bps,
-        "cost_profile": cost_profile,
         "ending_cash": portfolio.cash,
         "ending_equity": ending_equity,
         "positions": portfolio.positions,
+        # Reported separately from cash/equity above (which already have
+        # these costs baked in through each fill) so a caller can see the
+        # cost impact on its own, not just infer it from a lower ending
+        # number - and see which schedule was applied without guessing.
+        "costs": {
+            "profile": resolved_cost_profile,
+            "auto_selected_from_adapter": cost_profile_auto_selected,
+            "slippage_bps": slippage_bps,
+            "total_commission_paid": total_commission_paid,
+        },
     }
 
     try:
