@@ -30,13 +30,29 @@ script's.
    - If scoped to a stock or sector, target the searches at that scope.
    - If unscoped, search broadly: today's market news, notable sector
      moves, earnings, corporate actions, block deals.
+   - Prefer exchange filings (NSE/BSE announcements), regulator
+     releases, and named mainstream financial outlets over blogs,
+     forums, or social posts. A candidate sourced only from a low-quality
+     site needs a second, higher-quality source before it counts.
+   - Only count a story as "in the news right now" if it is dated within
+     the last 48-72 hours. Discard anything older, even if it still
+     ranks in search results - the market has likely already priced it.
 4. From the results, extract a list of candidate symbols that are
-   genuinely active in the news right now. If a universe was named in
-   Step 2, drop any candidate not in that list.
+   genuinely active in the news right now, per the recency and source
+   bar above. If a universe was named in Step 2, drop any candidate not
+   in that list.
 5. For each surviving candidate, make one more Exa search call to
-   verify the news is material and judge its sentiment (positive,
-   negative, or noise). Drop any candidate whose news is negative and
-   material, or whose news doesn't hold up under a closer look.
+   verify the news and judge it against two separate bars:
+   - **Materiality**: does it plausibly move earnings, guidance, or
+     valuation - an order win, regulatory action, management change,
+     M&A, capacity/capex news, a rating or guidance revision - not just
+     a routine price mention, an analyst reiterating an old view, or
+     the stock's own price move being reported as if it were the news.
+   - **Sentiment**: positive, negative, or noise, using the same
+     material-vs-routine bar - noise never survives, and negative-and-
+     material is dropped in the next step regardless of sentiment.
+   Drop any candidate whose news is negative and material, whose news
+   doesn't hold up under a closer look, or that fails either bar above.
 6. If no candidates survive, tell the user plainly: no eligible news-led
    setups right now. Stop here.
 
