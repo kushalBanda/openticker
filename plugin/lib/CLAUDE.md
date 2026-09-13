@@ -4,12 +4,14 @@ This file gives guidance for work inside `plugin/lib`. Read the root `/CLAUDE.md
 
 ## What this holds
 
-The only shared code in the repo. Everything here exists to avoid duplicating deterministic math or I/O mechanics across the 4 skill scripts that call into it (`connect-adapter`, `fetch-bars`, `evaluate-signal`, `run-backtest`). Nothing here is a service, a package with its own registry, or a framework - it is flat modules, imported directly by name.
+The only shared code in the repo. Everything here exists to avoid duplicating deterministic math or I/O mechanics across the skill scripts that call into it (`connect-adapter`, `fetch-bars`, `research`, `technical-screen`, `position-sizing`; `scan-market` calls the other skills, not `plugin/lib` directly, so it isn't a `plugin/lib` caller itself). Nothing here is a service, a package with its own registry, or a framework - it is flat modules, imported directly by name.
 
 ## The mechanics/math split
 
-- `mechanics/` is I/O: things that talk to a network, a filesystem, or a clock. Kite OAuth exchange and historical fetch (`kite.py`), the DuckDB bars store (`store.py`), the credential store (`state.py`), the `Bar` dataclass (`models.py`).
-- `math/` is pure computation: given the same inputs, always the same output, no I/O. Indicators, signal evaluation, cost models, position sizing, portfolio/ledger accounting, the backtest loop, and all 5 strategies.
+- `mechanics/` is I/O: things that talk to a network, a filesystem, or a clock. Kite OAuth exchange and historical fetch (`kite.py`), the DuckDB bars store (`store.py`), the credential store (`state.py`), the `Bar` dataclass (`models.py`), NSE index-constituent fetch with a local cache (`nse_index.py`).
+- `math/` is pure computation: given the same inputs, always the same output, no I/O. The `indicators/` package (`trend.py`/`momentum.py`/`volatility.py`/`volume.py` wrap `ta`; `structure.py`/`cross_sectional.py` are hand-rolled, since `ta` has no equivalent for either) plus `position_sizing.py`.
+
+Before hand-rolling a new indicator, check whether `ta` (`https://github.com/bukosabino/ta`, already a dependency) already has it - this repo adopted `ta` specifically to avoid re-deriving textbook technical-analysis formulas by hand.
 
 A new file goes in whichever side matches what it actually does. If a function needs to be told to do a network call to compute right, it is mechanics; if it only needs numbers, it is math.
 
@@ -21,9 +23,10 @@ Where a `Protocol` used to exist purely for duck-typing (e.g. `Trigger`/`Action`
 
 ## Adding to `math/`
 
-1. Add the function or class to the most specific existing module (`indicators.py` for a new signal, `strategies/` for a new strategy, a new module if the math doesn't fit anywhere existing).
-2. Write its test in `plugin/lib/tests/math/` (or `tests/mechanics/` for I/O), mirroring the module path.
-3. Wire it into the one skill script that needs it, as a new dict entry - not a new class hierarchy.
+1. Add the function to the matching category module in `indicators/` (`trend.py`, `momentum.py`, `volatility.py`, `volume.py` if `ta` has an equivalent; `structure.py` or `cross_sectional.py` if it doesn't), or to `position_sizing.py`.
+2. Give every threshold/window a keyword parameter with a default - never close over a fixed value. This is a Global Constraint, not a suggestion.
+3. Write its test in `plugin/lib/tests/math/indicators/` (or `tests/mechanics/` for I/O), mirroring the module path.
+4. Wire it into `technical-screen`'s script's `_SINGLE_SERIES_INDICATORS` or `_CROSS_SECTIONAL_INDICATORS` dict - not a new class hierarchy.
 
 ## Numeric-correctness discipline
 

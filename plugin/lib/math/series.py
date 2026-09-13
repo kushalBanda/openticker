@@ -23,3 +23,19 @@ def bar_volumes_to_series(bars: list[Bar]) -> pd.Series:
         index=pd.DatetimeIndex([bar.ts for bar in bars]),
         dtype=float,
     )
+
+
+def bar_highs_to_series(bars: list[Bar]) -> pd.Series:
+    return pd.Series(
+        [bar.high for bar in bars],
+        index=pd.DatetimeIndex([bar.ts for bar in bars]),
+        dtype=float,
+    )
+
+
+def bar_lows_to_series(bars: list[Bar]) -> pd.Series:
+    return pd.Series(
+        [bar.low for bar in bars],
+        index=pd.DatetimeIndex([bar.ts for bar in bars]),
+        dtype=float,
+    )

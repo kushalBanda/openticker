@@ -18,8 +18,9 @@ See `references/install.md` for the full one-time setup (workspace trust, Kite a
 | `connect-adapter` | Connecting a broker/data provider (Kite Connect; Groww deferred). |
 | `fetch-bars` | A plain historical price/OHLCV data request. |
 | `research` | A written research report on a symbol (trend, volatility, outside context). |
-| `evaluate-signal` | Checking whether a signal (RSI, SMA, ...) predicts a symbol's forward returns. |
-| `run-backtest` | Backtesting one of 5 strategies against real historical bars. |
+| `scan-market` | Finding trade candidates from news, with no symbol named up front. |
+| `technical-screen` | Checking any technical indicator (trend, momentum, volatility, volume, structure, cross-sectional) on a symbol. |
+| `position-sizing` | A suggested stop, target, and quantity for a trade. |
 
 Each skill's `SKILL.md` runs its own `scripts/<name>.py` and turns the JSON it prints into a plain-language answer - the skill file owns all the orchestration and decision-making.
 
@@ -31,8 +32,8 @@ Each skill's `SKILL.md` runs its own `scripts/<name>.py` and turns the JSON it p
 
 ## Shared library
 
-`plugin/lib/` is the only shared code, split into `mechanics/` (Kite auth, historical fetch, DuckDB bars store) and `math/` (indicators, signal evaluation, cost models, the backtest loop, all 5 strategies). No registry, no `Protocol`, no factory - see `plugin/lib/CLAUDE.md` for how to extend it.
+`plugin/lib/` is the only shared code, split into `mechanics/` (Kite auth, historical fetch, DuckDB bars store, NSE index-constituent cache) and `math/` (the `indicators/` package - `trend.py`, `momentum.py`, `volatility.py`, `volume.py`, `structure.py`, `cross_sectional.py` - plus `position_sizing.py`). No registry, no `Protocol`, no factory - see `plugin/lib/CLAUDE.md` for how to extend it.
 
 ## References
 
-`references/install.md`, `references/kite-app-setup.md`, `references/strategies.md`, `references/quant-signals.md`, `references/cost-models.md` - background Claude reads when a skill needs it, not run directly.
+`references/install.md`, `references/kite-app-setup.md`, `references/scan-market.md` - background Claude reads when a skill needs it, not run directly.

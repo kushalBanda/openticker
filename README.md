@@ -1,16 +1,16 @@
 # Quant
 
-Quant is a self-hosted trading bot platform. You talk to it through Claude Code. You ask for data, a research report, a signal evaluation, or a backtest, in plain language, and it runs on real market data.
+Quant is a self-hosted trading bot platform. You talk to it through Claude Code. You ask for data, a research report, a technical reading, or a full market scan, in plain language, and it runs on real market data.
 
-Quant pulls bars from Kite Connect, computes signals and position sizes, and runs those signals through a hand built backtest engine. There is no separate server and no multi-package Python backend - the Claude Code plugin in `plugin/` is the entire product, built OpenClaw-style: a thin script per skill does the mechanics, the skill's own instructions do all the orchestration, and one small shared library holds the deterministic math.
+Quant pulls bars from Kite Connect, computes technical indicators, and proposes stop/target/size for a candidate trade. There is no separate server and no multi-package Python backend - the Claude Code plugin in `plugin/` is the entire product, built OpenClaw-style: a thin script per skill does the mechanics, the skill's own instructions do all the orchestration, and one small shared library holds the deterministic math.
 
 ## What it does today
 
 - **Fetch bars** - pull historical OHLCV data for a symbol, for example "fetch me Reliance data for the last year".
 - **Research** - get a plain language report on trend, volatility, and notable levels, with optional web and news context.
 - **Connect a broker** - log in to Kite so live data can flow.
-- **Evaluate a signal** - check whether a signal like RSI actually predicts a symbol's forward returns.
-- **Run a backtest** - test a strategy (moving average crossover, mean reversion, pairs trading, time-series momentum, or buy-and-hold) against real historical bars.
+- **Scan the market** - find trade candidates from the day's news, verify them, check their chart, and propose a position, with no symbol named up front.
+- **Check any technical indicator** - trend, momentum, volatility, volume, structure, or cross-sectional, on any symbol, with any parameters you name.
 
 All computation is deterministic Python. Claude Code is the interactive layer, not the engine. It never invents a bar or a fill.
 
@@ -18,22 +18,22 @@ All computation is deterministic Python. Claude Code is the interactive layer, n
 
 ```
  You, in Claude Code
-      │  "backtest a moving average crossover on Reliance"
+      │  "scan the market for setups"
       ▼
- A skill's SKILL.md (fetch-bars, research, connect-adapter, evaluate-signal, run-backtest)
+ A skill's SKILL.md (fetch-bars, research, connect-adapter, scan-market, technical-screen, position-sizing)
       │  runs
       ▼
- That skill's own script (plugin/skills/<name>/scripts/<name>.py)
+ That skill's own script (plugin/skills/<name>/scripts/<name>.py) - scan-market has none, it's pure orchestration
       │  calls into
       ▼
- plugin/lib/mechanics  → Kite auth, historical fetch, DuckDB bars store
- plugin/lib/math        → signals, cost models, the backtest loop, all 5 strategies
+ plugin/lib/mechanics  → Kite auth, historical fetch, DuckDB bars store, NSE index constituents
+ plugin/lib/math        → the indicators/ package, position sizing
       │
       ▼
  One JSON result, turned into a plain-language report back to you
 ```
 
-There is no registry, no `Protocol`, no factory pattern anywhere in `plugin/lib` - a new signal or strategy is one new file and one new dict entry in the skill script that uses it, nothing more.
+There is no registry, no `Protocol`, no factory pattern anywhere in `plugin/lib` - a new technical indicator is one new function and one new dict entry in the skill script that uses it, nothing more.
 
 ## Get started
 
@@ -53,8 +53,8 @@ After that, just ask in plain language:
 - "Connect my Kite account"
 - "Fetch me TCS data for the last 6 months"
 - "Give me a research report on Reliance"
-- "Does RSI predict Reliance's next-week return?"
-- "Backtest a moving average crossover on Reliance"
+- "Scan the market for setups"
+- "What's the RSI and 200-EMA on Reliance?"
 
 ## Stack
 
