@@ -155,5 +155,7 @@ __pycache__/
 data/
 
 # Docs
-docs/
-docs/resources/*/
+docs/handoff/
+docs/known-issues/
+docs/log/
+docs/resources/
