@@ -1,61 +1,44 @@
 # Quant
 
-Quant is a self-hosted trading bot platform. You talk to it through Claude Code. You ask for market data in plain language, and it pulls it from real broker data.
-
-Quant pulls bars from Kite Connect and stores them locally. There is no separate server and no multi-package Python backend - the Claude Code plugin in `plugin/` is the entire product, built OpenClaw-style: a thin script per skill does the mechanics, the skill's own instructions do all the orchestration.
+Quant pulls historical bars from Kite Connect and stores them locally in DuckDB. No server, no framework - just two CLI scripts and a small shared library.
 
 ## What it does today
 
-- **Connect a broker** - log in to Kite so data can flow.
-- **Fetch bars** - pull historical OHLCV data for a symbol, for example "fetch me Reliance data for the last year".
+- **Connect a broker** - log in to Kite so data can flow: `uv run python scripts/connect_adapter.py`
+- **Fetch bars** - pull historical OHLCV data for a symbol: `uv run python scripts/fetch_bars.py --symbol RELIANCE --days 365`
 
 ## How it works
 
 ```
- You, in Claude Code
-      │  "fetch me Reliance data"
+ scripts/connect_adapter.py, scripts/fetch_bars.py   (thin CLI entry points)
+      │  call into
       ▼
- A skill's SKILL.md (connect-adapter, fetch-bars)
-      │  runs
-      ▼
- That skill's own script (plugin/skills/<name>/scripts/<name>.py)
-      │  calls into
-      ▼
- plugin/lib/mechanics  → Kite auth, historical fetch, DuckDB bars store
+ lib/mechanics   → Kite auth, historical fetch, DuckDB bars store
       │
       ▼
- One JSON result, turned into a plain-language report back to you
+ One JSON object printed to stdout
 ```
 
-There is no registry, no `Protocol`, no factory pattern anywhere in `plugin/lib`.
+There is no registry, no `Protocol`, no factory pattern anywhere in `lib`.
 
 ## Get started
 
 ```bash
 uv sync                # install dependencies
 uv run pytest          # confirm the mechanics work
+uv run python scripts/connect_adapter.py
+uv run python scripts/fetch_bars.py --symbol RELIANCE --days 365
 ```
 
-Then, inside Claude Code, install the plugin once:
-
-```
-/plugin install quant-platform@quant-platform-marketplace
-```
-
-After that, just ask in plain language:
-
-- "Connect my Kite account"
-- "Fetch me TCS data for the last 6 months"
+See `references/kite-app-setup.md` for registering a Kite Connect app first.
 
 ## Stack
 
 Quant is Python only, on Python 3.13, run as flat scripts via `uv` - no build step, no installed package. `mypy --strict` and `ruff` must pass clean before any change is considered done.
 
-No week or time estimates appear anywhere in this repo. Work is sequenced by dependency, not by a timeline.
-
 ## Data sources
 
-Kite Connect is wired in today, for Indian markets. Groww is planned but not yet built (see `plugin/skills/connect-adapter/SKILL.md`).
+Kite Connect is wired in today, for Indian markets.
 
 ## License
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""connect-adapter skill script: Kite Connect OAuth login.
+"""connect-adapter script: Kite Connect OAuth login.
 
-Run as: uv run python plugin/skills/connect-adapter/scripts/connect_adapter.py
+Run as: uv run python scripts/connect_adapter.py
 
 No server is involved - this talks to Zerodha's API directly:
 
@@ -29,8 +29,8 @@ from urllib.parse import parse_qs, urlparse
 
 from dotenv import load_dotenv
 
-_PLUGIN_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_PLUGIN_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from lib.mechanics.exceptions import AuthExpiredError
 from lib.mechanics.kite import exchange_request_token
@@ -39,7 +39,6 @@ from lib.mechanics.state import save_credentials
 CALLBACK_HOST = "127.0.0.1"
 CALLBACK_PORT = 8765
 CALLBACK_PATH = "/kite/callback"
-REPO_ROOT = _PLUGIN_ROOT.parent
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -77,7 +76,7 @@ def _kite_app_credentials() -> tuple[str, str]:
     if not api_key or not api_secret:
         raise AuthExpiredError(
             "KITE_API_KEY / KITE_API_SECRET are not set. See "
-            "plugin/references/kite-app-setup.md for how to register a "
+            "references/kite-app-setup.md for how to register a "
             "Kite Connect app and where to put these (a .env file at the "
             "repo root)."
         )

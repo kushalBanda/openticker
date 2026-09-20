@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""fetch-bars skill script: historical OHLCV bars for one symbol.
+"""fetch-bars script: historical OHLCV bars for one symbol.
 
-Run as: uv run python plugin/skills/fetch-bars/scripts/fetch_bars.py \
+Run as: uv run python scripts/fetch_bars.py \
     --symbol RELIANCE --interval 1d --days 365 [--provider kite]
 
 Prints one JSON object to stdout with the resolved provider, symbol,
@@ -16,8 +16,8 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-_PLUGIN_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_PLUGIN_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT))
 
 from lib.mechanics.exceptions import (
     AuthExpiredError,
