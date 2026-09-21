@@ -9,7 +9,7 @@ import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from importlib.metadata import version
 from typing import Annotated
 
@@ -34,11 +34,13 @@ from openticker.adapters.inbound.mcp_models import (
     ConnectResult,
     InstrumentResult,
     LoginUrlResult,
+    OptionChainResult,
     QuoteResult,
     SearchResult,
     SyncResult,
 )
 from openticker.composition import build_event_bus
+from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.events.bus import EventBus
 from openticker.events.types import (
     InstrumentSyncCompleted,
@@ -53,6 +55,8 @@ from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_us
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
 )
+from openticker.use_cases.get_option_chain import NoOptionsError
+from openticker.use_cases.get_option_chain import get_option_chain as get_option_chain_use_case
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError
 from openticker.use_cases.search_instruments import (
@@ -69,6 +73,8 @@ Typical flow:
    "reconnect" error means repeat this step.
 2. sync_instruments once per day (instrument lists change with every expiry).
 3. search_instruments to find the exact symbol, then get_quote / get_historical_bars.
+4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
+   strikes, prices, IV and Greeks around at-the-money.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -85,6 +91,7 @@ mcp = MCPServer(
 DEFAULT_MAX_BARS = 200
 DEFAULT_SEARCH_LIMIT = 20
 DEFAULT_AUDIT_LIMIT = 20
+DEFAULT_STRIKE_COUNT = 10
 EVENT_TYPE_NAMES = [
     event.__name__ for event in (OrderPlaced, OrderFailed, RiskBreached, InstrumentSyncCompleted)
 ]
@@ -127,6 +134,8 @@ _AGENT_FIXABLE_ERRORS = (
     UnknownInstrumentError,
     UnknownBrokerError,
     BrokerConfigError,
+    UnsupportedUnderlyingError,
+    NoOptionsError,
 )
 
 
@@ -287,6 +296,52 @@ def get_historical_bars(
             else None
         ),
     )
+
+
+@mcp.tool(
+    title="Get option chain",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_option_chain(
+    broker: Broker,
+    underlying: Annotated[
+        str,
+        Field(
+            description="The underlying's own symbol, not an option's: NIFTY 50, NIFTY BANK, "
+            "NIFTY FIN SERVICE, NIFTY MID SELECT, NIFTY NEXT 50, SENSEX, BANKEX, or a stock "
+            "such as RELIANCE."
+        ),
+    ],
+    exchange: Annotated[
+        Exchange, Field(description="The underlying's exchange: NSE, or BSE for SENSEX/BANKEX.")
+    ],
+    expiry: Annotated[
+        date | None,
+        Field(description="Expiry date. Omit for the nearest; the result lists all of them."),
+    ] = None,
+    strike_count: Annotated[
+        int, Field(ge=1, le=50, description="Strikes to show either side of at-the-money.")
+    ] = DEFAULT_STRIKE_COUNT,
+    interest_rate: Annotated[
+        float,
+        Field(ge=0, le=20, description="Annualized risk-free rate in percent, for the Greeks."),
+    ] = 0.0,
+) -> OptionChainResult:
+    """Calls and puts for one expiry around at-the-money: live price, open
+    interest, implied volatility and Greeks (Black-76 on the forward implied by
+    the ATM pair). Needs sync_instruments to have run today."""
+    now = datetime.now(UTC)
+    with _agent_facing_errors():
+        chain, expiries = get_option_chain_use_case(
+            get_adapter(broker),
+            underlying,
+            exchange.value,
+            expiry,
+            strike_count,
+            interest_rate / 100,
+            now,
+        )
+    return OptionChainResult.of(chain, expiries, now)
 
 
 @mcp.tool(

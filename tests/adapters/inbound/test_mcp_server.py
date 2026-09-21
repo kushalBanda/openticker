@@ -90,3 +90,31 @@ def test_every_tool_is_fully_described_for_agents() -> None:
 
 def test_server_tells_the_agent_the_workflow() -> None:
     assert "sync_instruments" in (mcp_server.mcp.instructions or "")
+
+
+def test_get_option_chain_reports_percent_units_and_exchange_local_expiry() -> None:
+    from openticker.storage.sqlite.instruments_repo import upsert_instruments
+    from tests.fixtures.options import NIFTY_INDEX, chain_contracts
+
+    expiry = date(2099, 1, 1)  # far enough that the test's real clock never passes it
+    upsert_instruments([NIFTY_INDEX] + chain_contracts("NIFTY", expiry, [2400.0, 2500.0, 2600.0]))
+
+    result = mcp_server.get_option_chain(
+        broker="fake",
+        underlying="NIFTY 50",
+        exchange=Exchange.NSE,
+        strike_count=1,
+        interest_rate=6.5,
+    )
+
+    assert result.atm_strike == 2500  # FakeBrokerPort quotes everything at 2500
+    assert result.interest_rate == 6.5
+    assert result.expires_at.isoformat() == "2099-01-01T15:30:00+05:30"
+    assert result.available_expiries == [expiry]
+    atm_call = result.rows[1].call
+    assert atm_call is not None and atm_call.label == "ATM" and atm_call.greeks_model is not None
+
+
+def test_get_option_chain_before_sync_is_an_agent_facing_error() -> None:
+    with pytest.raises(ToolError, match="sync_instruments"):
+        mcp_server.get_option_chain(broker="fake", underlying="NIFTY 50", exchange=Exchange.NSE)

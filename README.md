@@ -16,11 +16,12 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `search_instruments` | Find symbols: `RELIANCE`, `NIFTY 50`, all `NIFTY22SEP26` options, ... |
 | `get_quote` | Live last traded price. |
 | `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
+| `get_option_chain` | Calls and puts around at-the-money for an index or stock: price, open interest, implied volatility, Greeks. |
 | `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
 
 Example session, in plain language to your agent:
 
-> "Connect Zerodha, then show me the last month of daily candles for RELIANCE and the NIFTY call options expiring this week near the current index level."
+> "Connect Zerodha, then show me the last month of daily candles for RELIANCE and this week's NIFTY option chain with IV and delta."
 
 ## Quickstart
 
@@ -86,11 +87,12 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 
 ## Roadmap
 
-- Risk checks: position limits, stop-loss and trailing-stop evaluation
-- Options analytics: Greeks and option chains
 - Sandbox order placement through the full validate, risk-check, notify path
-- Screener webhooks (ChartInk) that place sandbox orders
-- REST API mirroring the MCP tools
+- An always-on server with a REST API mirroring the MCP tools
+- Live prices and a market calendar
+- Strategies that run unattended: multi-leg options strategies chosen relative to the market, strategy-wide stop loss, target, profit lock and kill switch, surviving restarts
+- Signal strategies driven by ChartInk or TradingView alerts
+- Hosting your own Python strategy scripts, without handing them your broker keys
 - More brokers, added on demand
 
 A web UI is planned after the agent-first surface is complete.

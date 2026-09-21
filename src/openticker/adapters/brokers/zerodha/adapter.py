@@ -1,5 +1,6 @@
 """ZerodhaAdapter — BrokerPort over Kite Connect."""
 
+from collections.abc import Sequence
 from datetime import date
 
 from openticker.adapters.brokers.zerodha.auth import exchange_request_token
@@ -11,6 +12,7 @@ from openticker.adapters.brokers.zerodha.market_data import (
     KiteSessionError,
     fetch_candles,
     fetch_quote,
+    fetch_quotes,
 )
 from openticker.core.orders.models import OrderRequest, OrderResult
 from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
@@ -39,6 +41,9 @@ class ZerodhaAdapter:
 
     def get_quote(self, instrument: Instrument) -> Quote:
         return fetch_quote(self._api_key, self._session_token(), instrument)
+
+    def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
+        return fetch_quotes(self._api_key, self._session_token(), instruments)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

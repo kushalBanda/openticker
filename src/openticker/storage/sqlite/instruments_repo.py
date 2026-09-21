@@ -1,10 +1,11 @@
-"""get_instrument, search_instruments, upsert_instruments — the broker-agnostic
-instrument master.
+"""get_instrument, search_instruments, upsert_instruments, option_expiries,
+option_contracts — the broker-agnostic instrument master.
 
 Upsert, not replace: rows for contracts that have since expired stay in the
 table until something prunes them (nothing does yet).
 """
 
+import re
 from dataclasses import asdict
 from datetime import date
 
@@ -79,6 +80,36 @@ def search_instruments(
     with Session(get_engine()) as session:
         rows = session.scalars(statement).all()
     return [_to_instrument(row) for row in rows]
+
+
+def option_expiries(name: str, exchange: str, live_on: date) -> list[date]:
+    """Expiries, earliest first, of options whose symbols start with the
+    underlying `name` (ADR 4 in docs/adr), from `live_on` onwards."""
+    return sorted({row.expiry for row in _options(name, exchange, live_on) if row.expiry})
+
+
+def option_contracts(name: str, exchange: str, expiry: date) -> list[Instrument]:
+    """Every call and put on `name` expiring on `expiry`, by strike."""
+    rows = [row for row in _options(name, exchange, expiry) if row.expiry == expiry]
+    return [
+        _to_instrument(row) for row in sorted(rows, key=lambda row: (row.strike or 0.0, row.symbol))
+    ]
+
+
+def _options(name: str, exchange: str, live_on: date) -> list[InstrumentRow]:
+    """Option rows for exactly `name`. The LIKE prefix also matches longer
+    names (NIFTY matches NIFTYNXT50...), so symbols are checked against the
+    full `<name><DDMMMYY><strike><CE|PE>` shape."""
+    shape = re.compile(rf"{re.escape(name)}\d{{2}}[A-Z]{{3}}\d{{2}}[\d.]+(CE|PE)")
+    statement = select(InstrumentRow).where(
+        InstrumentRow.exchange == exchange,
+        InstrumentRow.instrument_type.in_([InstrumentType.CE.value, InstrumentType.PE.value]),
+        InstrumentRow.symbol.startswith(name, autoescape=True),
+        InstrumentRow.expiry >= live_on,
+    )
+    with Session(get_engine()) as session:
+        rows = session.scalars(statement).all()
+    return [row for row in rows if shape.fullmatch(row.symbol)]
 
 
 def _to_instrument(row: InstrumentRow) -> Instrument:

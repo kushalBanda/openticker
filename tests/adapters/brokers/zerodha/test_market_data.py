@@ -146,3 +146,31 @@ def test_adapter_without_session_raises_before_any_http_call() -> None:
 
     with pytest.raises(market_data.KiteSessionError, match="not connected"):
         adapter.get_quote(FAKE_INSTRUMENT)
+
+
+def test_fetch_quotes_batches_and_skips_instruments_kite_did_not_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    instruments = [
+        replace(FAKE_INSTRUMENT, symbol=f"S{n}", broker_symbol=f"S{n}") for n in range(501)
+    ]
+    first = {
+        f"NSE:S{n}": {"last_price": 10.0, "oi": 1500, "timestamp": "2026-09-18 15:30:00"}
+        for n in range(500)
+        if n != 7
+    }
+    client = _install(
+        monkeypatch,
+        [_ok(first), _ok({"NSE:S500": {"last_price": 11.0, "timestamp": "2026-09-18 15:30:00"}})],
+    )
+
+    quotes = market_data.fetch_quotes("key", "token", instruments)
+
+    assert len(client.requests) == 2
+    assert len(client.requests[0][1]) == market_data.MAX_QUOTES_PER_REQUEST
+    assert len(quotes) == 500
+    assert "S7" not in {quote.instrument.symbol for quote in quotes}
+    assert quotes[0].open_interest == 1500
+    assert quotes[-1].open_interest is None

@@ -1,5 +1,6 @@
 """FakeBrokerPort — a BrokerPort for tests. No network calls; fixed values."""
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus
@@ -50,6 +51,9 @@ class FakeBrokerPort:
 
     def get_quote(self, instrument: Instrument) -> Quote:
         return Quote(instrument=instrument, last_price=FAKE_LAST_PRICE, as_of=datetime.now(UTC))
+
+    def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
+        return [self.get_quote(instrument) for instrument in instruments]
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

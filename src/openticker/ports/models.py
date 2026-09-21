@@ -66,6 +66,7 @@ class Quote:
     instrument: Instrument
     last_price: float
     as_of: datetime  # tz-aware (UTC) — callers populate this, never naive local time
+    open_interest: int | None = None  # derivatives only
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -117,3 +118,87 @@ class AuditEntryResult(BaseModel):
 
 class AuditLogResult(BaseModel):
     entries: list[AuditEntryResult] = Field(description="Most recent first.")
+
+
+class OptionQuoteResult(BaseModel):
+    symbol: str
+    label: str = Field(description="ATM, or ITM<n>/OTM<n>: listed strikes from at-the-money.")
+    last_price: float | None = Field(description="None when the contract has no usable price.")
+    open_interest: int | None
+    greeks_model: GreeksModel | None = Field(
+        description="implied: from the implied volatility. intrinsic: no time value left to "
+        "solve from, so delta is 1/-1 in the money and 0 out of it, the rest 0. None: unpriced."
+    )
+    implied_volatility: float | None = Field(description="Annualized, in percent.")
+    delta: float | None
+    gamma: float | None
+    theta: float | None = Field(description="Price change per calendar day.")
+    vega: float | None = Field(description="Price change per 1 point of volatility.")
+    rho: float | None = Field(description="Price change per 1 point of interest rate.")
+
+    @classmethod
+    def of(cls, option: OptionQuote) -> "OptionQuoteResult":
+        greeks = option.greeks
+        return cls(
+            symbol=option.instrument.symbol,
+            label=option.label,
+            last_price=option.last_price,
+            open_interest=option.open_interest,
+            greeks_model=greeks.model if greeks else None,
+            implied_volatility=(
+                round(greeks.implied_volatility * 100, 2)
+                if greeks and greeks.implied_volatility is not None
+                else None
+            ),
+            delta=round(greeks.delta, 4) if greeks else None,
+            gamma=round(greeks.gamma, 6) if greeks else None,
+            theta=round(greeks.theta, 4) if greeks else None,
+            vega=round(greeks.vega, 4) if greeks else None,
+            rho=round(greeks.rho, 4) if greeks else None,
+        )
+
+
+class ChainRowResult(BaseModel):
+    strike: float
+    call: OptionQuoteResult | None
+    put: OptionQuoteResult | None
+
+
+class OptionChainResult(BaseModel):
+    underlying: str
+    exchange: Exchange
+    underlying_price: float
+    forward_price: float = Field(
+        description="Implied by put-call parity at the ATM strike; the underlying price when "
+        "either ATM leg is unpriced. Greeks are priced off this (Black-76)."
+    )
+    expiry: date
+    expires_at: datetime = Field(description="15:30 on expiry day, exchange-local.")
+    days_to_expiry: float
+    atm_strike: float
+    interest_rate: float = Field(description="Annualized, in percent, used for the Greeks.")
+    rows: list[ChainRowResult] = Field(description="Ascending strike.")
+    available_expiries: list[date] = Field(description="Unexpired expiries, earliest first.")
+
+    @classmethod
+    def of(cls, chain: OptionChain, expiries: list[date], now: datetime) -> "OptionChainResult":
+        return cls(
+            underlying=chain.underlying.symbol,
+            exchange=chain.underlying.exchange,
+            underlying_price=chain.underlying_price,
+            forward_price=round(chain.forward_price, 2),
+            expiry=chain.expiry,
+            expires_at=chain.expires_at.astimezone(EXCHANGE_TIMEZONE),
+            days_to_expiry=round((chain.expires_at - now).total_seconds() / 86400, 3),
+            atm_strike=chain.atm_strike,
+            interest_rate=round(chain.interest_rate * 100, 4),
+            rows=[
+                ChainRowResult(
+                    strike=row.strike,
+                    call=OptionQuoteResult.of(row.call) if row.call else None,
+                    put=OptionQuoteResult.of(row.put) if row.put else None,
+                )
+                for row in chain.rows
+            ],
+            available_expiries=expiries,
+        )

@@ -87,6 +87,33 @@ def test_search_ranks_exact_then_prefix_and_hides_expired() -> None:
 def test_search_treats_like_wildcards_literally() -> None:
     instruments_repo.upsert_instruments([_EQUITY])
 
-    assert instruments_repo.search_instruments(
-        "%", exchange=None, instrument_type=None, live_on=None, limit=10
-    ) == []
+    assert (
+        instruments_repo.search_instruments(
+            "%", exchange=None, instrument_type=None, live_on=None, limit=10
+        )
+        == []
+    )
+
+
+def test_option_queries_match_the_exact_underlying_name() -> None:
+    from tests.fixtures.options import chain_contracts
+
+    this_week, next_week, expired = date(2026, 9, 22), date(2026, 9, 29), date(2026, 9, 15)
+    instruments_repo.upsert_instruments(
+        chain_contracts("NIFTY", this_week, [25100.0, 25000.0])
+        + chain_contracts("NIFTY", next_week, [25000.0])
+        + chain_contracts("NIFTY", expired, [25000.0])
+        + chain_contracts("NIFTYNXT50", this_week, [70000.0])
+        + chain_contracts("BANKNIFTY", this_week, [55000.0])
+    )
+
+    expiries = instruments_repo.option_expiries("NIFTY", "NFO", live_on=date(2026, 9, 20))
+    contracts = instruments_repo.option_contracts("NIFTY", "NFO", this_week)
+
+    assert expiries == [this_week, next_week]
+    assert [contract.symbol for contract in contracts] == [
+        "NIFTY22SEP2625000CE",
+        "NIFTY22SEP2625000PE",
+        "NIFTY22SEP2625100CE",
+        "NIFTY22SEP2625100PE",
+    ]

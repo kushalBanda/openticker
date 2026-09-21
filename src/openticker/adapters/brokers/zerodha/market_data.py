@@ -5,7 +5,7 @@ responses into `Quote` / `Bar`. Both calls need a session access token
 """
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 from typing import Any
@@ -48,16 +48,46 @@ class InvalidCandleRequestError(BrokerError, ValueError):
     """Unknown interval, or a date range that ends before it starts."""
 
 
+# Kite answers at most this many instruments per /quote call.
+MAX_QUOTES_PER_REQUEST = 500
+
+
 def fetch_quote(api_key: str, access_token: str, instrument: Instrument) -> Quote:
-    key = f"{instrument.broker_exchange}:{instrument.broker_symbol}"
+    key = _quote_key(instrument)
     payload = _get(api_key, access_token, "/quote", params={"i": key})
     data: dict[str, Any] | None = payload["data"].get(key)
     if data is None:
         raise KiteApiError(f"Kite returned no quote for {key}")
+    return _to_quote(instrument, data)
+
+
+def fetch_quotes(api_key: str, access_token: str, instruments: Sequence[Instrument]) -> list[Quote]:
+    """Quotes for many instruments, batched. Instruments Kite has no quote for
+    (untraded or unknown) are left out."""
+    quotes: list[Quote] = []
+    for start in range(0, len(instruments), MAX_QUOTES_PER_REQUEST):
+        batch = instruments[start : start + MAX_QUOTES_PER_REQUEST]
+        payload = _get(
+            api_key, access_token, "/quote", params=tuple(("i", _quote_key(item)) for item in batch)
+        )
+        data: dict[str, dict[str, Any]] = payload["data"]
+        quotes.extend(
+            _to_quote(item, data[_quote_key(item)]) for item in batch if _quote_key(item) in data
+        )
+    return quotes
+
+
+def _quote_key(instrument: Instrument) -> str:
+    return f"{instrument.broker_exchange}:{instrument.broker_symbol}"
+
+
+def _to_quote(instrument: Instrument, data: dict[str, Any]) -> Quote:
+    open_interest = data.get("oi")
     return Quote(
         instrument=instrument,
         last_price=float(data["last_price"]),
         as_of=_quote_time(data),
+        open_interest=int(open_interest) if open_interest is not None else None,
     )
 
 
@@ -87,9 +117,7 @@ def fetch_candles(
                 "to": f"{chunk_end.isoformat()} 23:59:59",
             },
         )
-        bars.extend(
-            _to_bar(instrument, interval, candle) for candle in payload["data"]["candles"]
-        )
+        bars.extend(_to_bar(instrument, interval, candle) for candle in payload["data"]["candles"])
     return bars
 
 
@@ -124,7 +152,12 @@ def _quote_time(data: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(raw).replace(tzinfo=_IST).astimezone(UTC)
 
 
-def _get(api_key: str, access_token: str, path: str, params: dict[str, str]) -> dict[str, Any]:
+def _get(
+    api_key: str,
+    access_token: str,
+    path: str,
+    params: dict[str, str] | tuple[tuple[str, str], ...],
+) -> dict[str, Any]:
     with httpx.Client(base_url=KITE_BASE_URL, timeout=30.0) as client:
         response = client.get(
             path,

@@ -4,7 +4,7 @@ Guidance for Claude Code (and other coding agents) working in this repository. M
 
 ## What this repo is
 
-**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes and historical bars. Risk checks, notifications, options analytics, sandbox order placement, screener webhooks and a REST API are planned. No web UI yet.
+**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes, historical bars and option chains with Greeks. Risk rules, an audit log and notifications are built. Sandbox order placement, an always-on daemon with a REST API, live prices, unattended strategies (rule-based, alert-driven, and user Python scripts) are planned (ADRs 11-15). No web UI yet.
 
 Design decisions and their reasoning live in `docs/adr/` (`1. hexagonal-architecture.md` onward). Read the relevant ADR before changing an area; add a new ADR when making a decision a future contributor would otherwise have to reverse-engineer.
 
@@ -17,7 +17,7 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes), risk/ (position risk rules).
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
 adapters/     implementations: brokers/ (registry + zerodha/), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py).
 use_cases/    one flat function per operation, not a class. May call storage directly; publish events.
