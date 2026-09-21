@@ -10,3 +10,5 @@ All notable changes to this project are documented here. The format follows [Kee
 - Zerodha (Kite Connect) broker adapter: login, instrument master, quotes, historical candles.
 - Encrypted local storage of broker sessions (SQLite) and historical bars (DuckDB).
 - Architecture decision records in `docs/adr/`.
+- Event bus with an append-only audit log (`get_audit_log` tool) and notifications for orders and risk breaches via Slack Incoming Webhooks and SMTP email.
+- Risk core: per-position stop loss, target, continuous and stepped trailing stops, capital cap, and configuration validation (`core/risk`).

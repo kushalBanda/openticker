@@ -3,6 +3,10 @@ tool reaches its broker through the registry (`get_adapter`); none knows a
 broker by name. Tool design conventions: ADR 8 in docs/adr.
 """
 
+import atexit
+import json
+import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -23,6 +27,8 @@ from openticker.adapters.brokers.registry import (
     get_login_url,
 )
 from openticker.adapters.inbound.mcp_models import (
+    AuditEntryResult,
+    AuditLogResult,
     BarResult,
     BarsResult,
     ConnectResult,
@@ -32,9 +38,18 @@ from openticker.adapters.inbound.mcp_models import (
     SearchResult,
     SyncResult,
 )
+from openticker.composition import build_event_bus
+from openticker.events.bus import EventBus
+from openticker.events.types import (
+    InstrumentSyncCompleted,
+    OrderFailed,
+    OrderPlaced,
+    RiskBreached,
+)
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, InstrumentType, Interval
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
+from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
 )
@@ -69,6 +84,24 @@ mcp = MCPServer(
 
 DEFAULT_MAX_BARS = 200
 DEFAULT_SEARCH_LIMIT = 20
+DEFAULT_AUDIT_LIMIT = 20
+EVENT_TYPE_NAMES = [
+    event.__name__ for event in (OrderPlaced, OrderFailed, RiskBreached, InstrumentSyncCompleted)
+]
+
+_event_bus: EventBus | None = None
+_event_bus_lock = threading.Lock()
+
+
+def event_bus() -> EventBus:
+    """Built on first use (or by `main`), after the environment is loaded.
+    Tools run on worker threads, so two first calls can race; the lock keeps
+    it to one bus."""
+    global _event_bus
+    with _event_bus_lock:
+        if _event_bus is None:
+            _event_bus = build_event_bus(os.environ)
+        return _event_bus
 
 Broker = Annotated[
     str,
@@ -158,7 +191,7 @@ def sync_instruments(broker: Broker) -> SyncResult:
     symbol lookups use. Run once a day, and whenever a symbol isn't found.
     Takes a few seconds; safe to re-run."""
     with _agent_facing_errors():
-        count = sync_instruments_use_case(get_adapter(broker))
+        count = sync_instruments_use_case(broker, get_adapter(broker), event_bus())
     return SyncResult(broker=broker, instrument_count=count)
 
 
@@ -256,8 +289,39 @@ def get_historical_bars(
     )
 
 
+@mcp.tool(
+    title="Get audit log",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_audit_log(
+    event_type: Annotated[
+        str | None,
+        Field(description=f"Only this event type: {', '.join(EVENT_TYPE_NAMES)}."),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=200, description="Most entries to return.")] = (
+        DEFAULT_AUDIT_LIMIT
+    ),
+) -> AuditLogResult:
+    """What OpenTicker has done, most recent first: every order, risk breach
+    and instrument sync, with who triggered it. Local data only."""
+    entries = get_audit_log_use_case(limit, event_type)
+    return AuditLogResult(
+        entries=[
+            AuditEntryResult(
+                id=entry.id,
+                occurred_at=entry.occurred_at.astimezone(EXCHANGE_TIMEZONE),
+                event_type=entry.event_type,
+                triggered_by=entry.triggered_by,
+                details=json.loads(entry.payload),
+            )
+            for entry in entries
+        ]
+    )
+
+
 def main() -> None:
     load_dotenv()  # process entry point only — importing this module must stay side-effect-free
+    atexit.register(event_bus().close)  # built now so bad notification settings fail at startup
     mcp.run()
 
 

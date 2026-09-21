@@ -1,6 +1,6 @@
 """SQLAlchemy table definitions."""
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -34,3 +34,15 @@ class InstrumentRow(Base):
     lot_size: Mapped[int]
     instrument_type: Mapped[str]
     tick_size: Mapped[float]
+
+
+class AuditLogRow(Base):
+    """Append-only record of every domain event. Never updated or deleted."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    occurred_at: Mapped[datetime]  # UTC, stored naive
+    event_type: Mapped[str] = mapped_column(index=True)
+    triggered_by: Mapped[str | None]
+    payload: Mapped[str]  # the event's fields as JSON

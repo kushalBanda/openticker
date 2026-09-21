@@ -16,6 +16,7 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `search_instruments` | Find symbols: `RELIANCE`, `NIFTY 50`, all `NIFTY22SEP26` options, ... |
 | `get_quote` | Live last traded price. |
 | `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
+| `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
 
 Example session, in plain language to your agent:
 
@@ -57,6 +58,10 @@ claude mcp add openticker -- uv --directory /absolute/path/to/openticker run ope
 
 Then ask the agent to connect Zerodha. It walks you through login and instrument sync.
 
+### Notifications (optional)
+
+Orders and risk breaches can be sent to Slack (Incoming Webhook) and/or email (any SMTP server, including Resend and Amazon SES). Set the variables in `.env`; see `.env.example`. Everything is recorded in the local audit log either way.
+
 ## How it works
 
 ```
@@ -71,7 +76,8 @@ Then ask the agent to connect Zerodha. It walks you through login and instrument
       ▼                 ▼
  ports/ (Protocols) ◄── adapters/brokers/zerodha    Kite Connect: auth, instruments, market data
       │
- storage/  SQLite (credentials, instruments) · DuckDB (historical bars)
+ events/   bus: audit log (inline) · notifications to Slack/email (background)
+ storage/  SQLite (credentials, instruments, audit log) · DuckDB (historical bars)
 ```
 
 Hexagonal architecture: domain logic depends only on interfaces, so adding a broker or another entry point (REST, webhooks) doesn't touch the core. Every significant design decision is written up in [docs/adr/](docs/adr/).
@@ -81,7 +87,6 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 ## Roadmap
 
 - Risk checks: position limits, stop-loss and trailing-stop evaluation
-- Event bus with audit log and notifications (Slack, email)
 - Options analytics: Greeks and option chains
 - Sandbox order placement through the full validate, risk-check, notify path
 - Screener webhooks (ChartInk) that place sandbox orders

@@ -17,10 +17,12 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports, zero knowledge of adapters/use_cases.
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes), risk/ (position risk rules).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
-adapters/     implementations: brokers/ (registry + zerodha/), inbound/ (mcp_server.py, mcp_models.py).
-use_cases/    one flat function per operation, not a class. May call storage directly.
+adapters/     implementations: brokers/ (registry + zerodha/), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py).
+use_cases/    one flat function per operation, not a class. May call storage directly; publish events.
+events/       EventBus, event types, subscribers (audit_log inline, notifications background), ADR 10.
+composition.py  builds the event bus and notification channels from env. The only place they're wired.
 storage/      sqlite/ (transactional state) and duckdb/ (bars), ADR 3.
 ```
 
@@ -35,6 +37,8 @@ Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in 
 - **MCP tools follow ADR 8**: title, annotations, every parameter described, Pydantic result model, bounded responses. `test_every_tool_is_fully_described_for_agents` fails any tool that doesn't.
 - **Times**: stored and passed around as tz-aware UTC; returned to agents exchange-local (`+05:30`). Input dates are exchange-local trading dates (ADR 3).
 - **Importing a module must be side-effect-free.** `load_dotenv()` runs only in `mcp_server.main()`.
+- **Risk rules are pure functions** in `core/risk/` (ADR 9): absent prices are `None`/0 and never defaulted, direction is `side` never a signed quantity, stop loss beats target.
+- **Side effects go through events** (ADR 10): use cases publish, subscribers audit and notify. Never call a notification channel from a use case.
 - **Order placement is sandbox-only** (ADR 6).
 - **Code comments reference ADRs, never internal planning docs.** This repo is public.
 

@@ -3,6 +3,7 @@ carries a description the agent reads. Times are exchange-local (IST offset
 included), matching the trading dates the tools take as input."""
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -104,3 +105,15 @@ class BarsResult(BaseModel):
     total_bars: int = Field(description="Bars in the requested range, all stored locally.")
     bars: list[BarResult] = Field(description="Oldest first; the most recent `max_bars` only.")
     note: str | None = Field(description="Set when `bars` was cut short, with what to do.")
+
+
+class AuditEntryResult(BaseModel):
+    id: int
+    occurred_at: datetime = Field(description="Exchange-local.")
+    event_type: str
+    triggered_by: str | None = Field(description="Which entry point caused it: mcp, rest, webhook.")
+    details: dict[str, Any] = Field(description="The event's own fields.")
+
+
+class AuditLogResult(BaseModel):
+    entries: list[AuditEntryResult] = Field(description="Most recent first.")
