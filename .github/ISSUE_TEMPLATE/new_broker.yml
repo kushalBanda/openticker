@@ -1,0 +1,27 @@
+name: New broker
+description: Request or propose support for another broker.
+labels: [broker]
+body:
+  - type: input
+    id: broker
+    attributes:
+      label: Broker
+      placeholder: Upstox, Dhan, Fyers, Angel One, ...
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: API documentation link
+  - type: checkboxes
+    id: involvement
+    attributes:
+      label: Your involvement
+      options:
+        - label: I'd like to implement it
+        - label: I have an account and can test against the real API
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Login flow, instrument list format, rate limits, pricing, anything unusual.

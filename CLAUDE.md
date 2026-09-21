@@ -1,58 +1,55 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (and other coding agents) working in this repository. Maintainers may also have a gitignored `CLAUDE.local.md` with private workflow notes.
 
 ## What this repo is
 
-Flat Kite Connect mechanics: OAuth login and historical bar fetch, backed by a local DuckDB store. No Claude Code plugin, no skills layer, no separate backend service, no multi-package Python workspace, no MCP server. Two CLI scripts under `scripts/` are the only entry points; a small shared library under `lib/` holds the mechanics they call into.
+**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes and historical bars. Risk checks, notifications, options analytics, sandbox order placement, screener webhooks and a REST API are planned. No web UI yet.
 
-Kite Connect is the one data source wired in.
+Design decisions and their reasoning live in `docs/adr/` (`1. hexagonal-architecture.md` onward). Read the relevant ADR before changing an area; add a new ADR when making a decision a future contributor would otherwise have to reverse-engineer.
 
-## Core stack decision
+## Core stack
 
-**Python only**, run as flat scripts via `uv`, not as an installed package. There is no `packages/` directory, no `src/` layout with a build step. `uv run python scripts/<name>.py` is how everything actually executes.
+**Python 3.13, `src/` layout, `uv`.** `uv sync` installs everything. Entry point: `openticker-mcp` (MCP over stdio, spawned per agent session, no port).
 
-## Toolchain
+Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import from `mcp.server.mcpserver`, not the `fastmcp` path most examples online show), `pydantic` (MCP result models only), `sqlalchemy` (SQLite), `duckdb` (bars), `httpx` (sync client), `cryptography` (Fernet, credentials encrypted at rest), `python-dotenv`.
 
-- **uv**, Python 3.13. `uv sync` installs the runtime dependencies declared in the root `pyproject.toml` (`httpx`, `duckdb`, `pytz`, `python-dotenv`) plus the dev dependency group (`pytest`, `mypy`, `ruff`, etc.). There is nothing else to build or install - no wheel, no editable package.
-- **mypy --strict** and **ruff** must pass clean before a change is considered done. No bare `except`, full type coverage on public functions.
-- **No `Protocol`, no `@register_*` decorator, no `*Factory`, no registry dict anywhere in `lib/`.** This is not a style preference, it is the point of the architecture. If you find yourself reaching for a registry pattern, stop - that is the framework this repo deliberately does not have.
-- Every literal that appears in more than one place (provider names, table names, base URLs) belongs in `lib/mechanics/kite.py` (mechanics constants), imported everywhere it is used, never re-typed inline.
+## Architecture (hexagonal, ADR 1)
+
+```
+core/         domain logic. Zero I/O, zero framework imports, zero knowledge of adapters/use_cases.
+ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
+adapters/     implementations: brokers/ (registry + zerodha/), inbound/ (mcp_server.py, mcp_models.py).
+use_cases/    one flat function per operation, not a class. May call storage directly.
+storage/      sqlite/ (transactional state) and duckdb/ (bars), ADR 3.
+```
+
+Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in `core/` or `ports/` imports from `adapters/` or `use_cases/`.
+
+- **`Protocol`, not `ABC`, for every port** (ADR 1).
+- **One broker registry**: `adapters/brokers/registry.py` maps broker names to adapter builders and login-URL builders. Inbound adapters never special-case a broker name; they call `get_adapter()` / `get_login_url()`.
+- **Frozen dataclasses in `core/` and `ports/`.** Pydantic exists only at the MCP edge (`mcp_models.py`).
+- **Sync, not async, throughout `core/` and `use_cases/`**, and SQLite always via `NullPool` (ADR 2). Don't "fix" either.
+- **A `BrokerPort` implementation must satisfy the full Protocol**: methods not wired yet raise `NotImplementedError("<what> is not implemented yet")`.
+- **Broker errors derive from `ports.errors.BrokerError`** with messages that say how to recover. The MCP edge turns agent-fixable errors into `ToolError`; anything else stays an opaque crash (ADR 7).
+- **MCP tools follow ADR 8**: title, annotations, every parameter described, Pydantic result model, bounded responses. `test_every_tool_is_fully_described_for_agents` fails any tool that doesn't.
+- **Times**: stored and passed around as tz-aware UTC; returned to agents exchange-local (`+05:30`). Input dates are exchange-local trading dates (ADR 3).
+- **Importing a module must be side-effect-free.** `load_dotenv()` runs only in `mcp_server.main()`.
+- **Order placement is sandbox-only** (ADR 6).
+- **Code comments reference ADRs, never internal planning docs.** This repo is public.
 
 ## Commands
 
-Run these from the repo root.
+- Install: `uv sync`
+- Tests: `uv run pytest`
+- Type check (must pass clean, strict): `uv run mypy src tests`
+- Lint: `uv run ruff check src tests`
+- Run the MCP server: `uv run openticker-mcp`
 
-- Install dependencies: `uv sync`
-- Run all tests: `uv run pytest`
-- Run a single test: `uv run pytest lib/tests/mechanics/test_store.py::test_write_and_query_round_trip`
-- Type check: `uv run mypy lib scripts`
-- Lint: `uv run ruff check lib scripts`
-- Connect a broker: `uv run python scripts/connect_adapter.py`
-- Fetch bars: `uv run python scripts/fetch_bars.py --symbol RELIANCE --days 365`
+## Tests
 
-## Repo structure and how it fits together
+`tests/` mirrors `src/openticker/`. `tests/conftest.py` gives every test its own `OPENTICKER_HOME`, so nothing touches `~/.openticker`. `tests/fixtures/fake_broker.py` (`FakeBrokerPort`) is a network-free broker; MCP tool tests register it under the name `"fake"` and exercise the full tool -> registry -> use case -> storage path. HTTP in adapter tests is faked by monkeypatching `httpx`.
 
-```
-lib/
-  mechanics/   flat I/O: Kite OAuth exchange, historical fetch, DuckDB bars store, credential store
-  tests/       tests for everything under lib/
-scripts/
-  connect_adapter.py   Kite OAuth login CLI
-  fetch_bars.py        historical OHLCV bars CLI
-  tests/               tests for the scripts above
-references/    plain-text domain knowledge (Kite app setup)
-```
+## Secrets
 
-- `lib/mechanics/` - Kite OAuth exchange (`kite.py`), the DuckDB bars store (`store.py`, bars table only), the `Bar` dataclass (`models.py`), the home-scoped credential store (`state.py`, `~/.quant-plugin/credentials.duckdb`), shared exceptions (`exceptions.py`). Each is a flat module: functions and one or two plain classes, no interface layer between a script and the mechanics it calls.
-- `scripts/<name>.py` - one thin CLI entry point. Parses its own arguments, imports the `lib` functions it needs, prints one JSON object to stdout.
-- `references/` - `kite-app-setup.md`.
-
-## What is deliberately not here
-
-A Claude Code plugin/skills layer, technical indicators, position sizing, research reports, market scanning, paper/live trading, a risk-check pipeline, order/ledger/equity-curve persistence, and a persistent trade ledger all remain undesigned against this flat-script shape - if wanted later, they get designed fresh, not bolted onto the current scripts.
-
-## Explicit constraints (deliberate, do not "fix")
-
-- No week/time estimates anywhere in phase docs or specs - sequencing is by dependency, not by timeline.
-- No `Protocol`/registry/factory pattern gets added back to `lib/`. If a future feature seems to need one, that is a signal to reconsider the feature's shape, not to reintroduce the framework this repo moved away from.
+`.env` (gitignored) holds broker API credentials. Never print or commit its values. Broker session tokens are stored Fernet-encrypted and never returned by any tool (ADR 5).

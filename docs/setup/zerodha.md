@@ -1,18 +1,36 @@
-# Registering a Kite Connect app
+# Connecting Zerodha (Kite Connect)
 
-This plugin does not provide Kite credentials for you. Kite Connect API access is a paid Zerodha subscription (~₹500/month) — this is an external prerequisite, unrelated to this plugin, and cannot be automated away.
+OpenTicker talks to Zerodha through your own Kite Connect app. You need a Zerodha account and a Kite Connect subscription that includes market data and historical candles; see Zerodha's current pricing at <https://developers.kite.trade/>.
 
-1. Go to `https://developers.kite.trade/` and sign in with your Zerodha account.
-2. Create a new Kite Connect app.
-3. Set the app's **Redirect URL** to exactly:
-   ```
-   http://127.0.0.1:8765/kite/callback
-   ```
-   This must match `plugin/skills/connect-adapter/scripts/connect_adapter.py`'s `CALLBACK_PORT`/`CALLBACK_PATH`. If you ever change those, update the Redirect URL in the Kite developer console to match.
-4. Note the app's **API Key** and **API Secret**.
-5. Create a `.env` file at the repo root (already gitignored — never commit it) with:
-   ```
-   KITE_API_KEY=your_api_key
-   KITE_API_SECRET=your_api_secret
-   ```
-6. Run the connect-adapter skill. It opens Kite's login page in your browser, waits for the redirect, and stores the resulting session locally — your API Secret never leaves this exchange, and your Kite password never touches this plugin at all (you type it only on Zerodha's own login page).
+## 1. Create a Kite Connect app
+
+1. Sign in at <https://developers.kite.trade/> with your Zerodha account.
+2. Create a new app.
+3. Set **Redirect URL** to `http://127.0.0.1/`. Nothing needs to be listening there: after login the browser tries to load that address and fails, but the address bar still shows the `request_token` OpenTicker needs.
+4. Copy the app's **API key** and **API secret**.
+
+## 2. Configure OpenTicker
+
+Copy `.env.example` to `.env` at the repo root and fill in:
+
+```
+KITE_API_KEY=your_api_key
+KITE_API_SECRET=your_api_secret
+```
+
+`.env` is gitignored. Never commit it.
+
+## 3. Log in (daily)
+
+Kite sessions expire every day, so this runs once per trading day. Ask your agent to connect Zerodha; it will:
+
+1. call `get_broker_login_url` and show you the link,
+2. wait while you log in on Zerodha's own page (OpenTicker never sees your password or TOTP),
+3. ask you for the `request_token` from the address bar you land on (`http://127.0.0.1/?request_token=...&action=login&status=success`),
+4. call `connect_broker` with it.
+
+The session token is stored encrypted under `~/.openticker` (or `$OPENTICKER_HOME`) and is never returned to the agent. When it expires, tools fail with a message asking to reconnect.
+
+## 4. Load instruments
+
+Ask the agent to run `sync_instruments` once a day. It downloads Zerodha's instrument list (about 80,000 contracts across NSE, BSE, NFO, BFO and MCX) so that symbols like `NIFTY22SEP2623350CE` resolve.
