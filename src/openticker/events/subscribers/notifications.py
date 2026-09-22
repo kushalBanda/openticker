@@ -4,19 +4,21 @@ channel never delays the use case that published the event."""
 
 from collections.abc import Callable, Sequence
 
-from openticker.events.types import OrderFailed, OrderPlaced, RiskBreached
+from openticker.events.types import OrderFailed, OrderFilled, RiskBreached
 from openticker.ports.notification_port import NotificationPort
 
-NOTIFIED_EVENTS: tuple[type, ...] = (OrderPlaced, OrderFailed, RiskBreached)
+# OrderPlaced is audited, not notified: a market order fills at once, and one
+# message per order is enough.
+NOTIFIED_EVENTS: tuple[type, ...] = (OrderFilled, OrderFailed, RiskBreached)
 
 
 def describe(event: object) -> tuple[str, str] | None:
     """(subject, message) for an event worth a notification, else None."""
     match event:
-        case OrderPlaced():
+        case OrderFilled():
             return (
-                f"Order placed: {event.side} {event.quantity} {event.symbol}",
-                f"Order {event.order_id} placed via {event.triggered_by}.",
+                f"Order filled: {event.side} {event.quantity} {event.symbol} @ {event.price:,.2f}",
+                f"Sandbox order {event.order_id} filled via {event.triggered_by}.",
             )
         case OrderFailed():
             return (

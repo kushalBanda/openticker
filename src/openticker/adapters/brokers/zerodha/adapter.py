@@ -14,7 +14,7 @@ from openticker.adapters.brokers.zerodha.market_data import (
     fetch_quote,
     fetch_quotes,
 )
-from openticker.core.orders.models import OrderRequest, OrderResult
+from openticker.core.orders.models import Order, OrderRequest, OrderResult
 from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
 
 
@@ -52,11 +52,16 @@ class ZerodhaAdapter:
             self._api_key, self._session_token(), instrument, interval, start, end
         )
 
+    # Live orders are not implemented: orders go through the sandbox, which
+    # uses this adapter for prices only (ADR 11 in docs/adr).
     def place_order(self, request: OrderRequest) -> OrderResult:
-        raise NotImplementedError("sandbox order placement is not implemented yet")
+        raise NotImplementedError("live order placement is not implemented yet")
 
     def get_positions(self) -> list[Position]:
-        raise NotImplementedError("sandbox order placement is not implemented yet")
+        raise NotImplementedError("live positions are not implemented yet")
 
     def get_funds(self) -> Funds:
-        raise NotImplementedError("sandbox order placement is not implemented yet")
+        raise NotImplementedError("live funds are not implemented yet")
+
+    def get_orderbook(self, limit: int) -> list[Order]:
+        raise NotImplementedError("the live order book is not implemented yet")

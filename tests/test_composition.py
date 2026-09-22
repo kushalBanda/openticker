@@ -50,3 +50,15 @@ def test_smtp_username_is_never_assumed_to_be_the_sender() -> None:
 
     with pytest.raises(NotificationConfigError, match="NOTIFY_EMAIL_FROM"):
         notification_channels(resend_style)
+
+
+def test_sandbox_settings_read_positive_numbers_and_reject_the_rest() -> None:
+    from openticker.composition import SandboxConfigError, capital_cap, sandbox_settings
+
+    assert sandbox_settings({}).starting_capital == 10_000_000.0
+    assert sandbox_settings({"SANDBOX_STARTING_CAPITAL": "5,00,000"}).starting_capital == 500_000.0
+    assert capital_cap({}) is None
+    assert capital_cap({"OPENTICKER_CAPITAL_CAP": "200000"}) == 200_000.0
+    for bad in ("-1", "lots", "nan"):
+        with pytest.raises(SandboxConfigError, match="OPENTICKER_CAPITAL_CAP"):
+            capital_cap({"OPENTICKER_CAPITAL_CAP": bad})

@@ -32,33 +32,60 @@ from openticker.adapters.inbound.mcp_models import (
     BarResult,
     BarsResult,
     ConnectResult,
+    FundsResult,
     InstrumentResult,
     LoginUrlResult,
     OptionChainResult,
+    OrderbookEntryResult,
+    OrderbookResult,
+    PlaceOrderResult,
+    PositionResult,
+    PositionsResult,
     QuoteResult,
+    RiskCheckResult,
     SearchResult,
     SyncResult,
 )
-from openticker.composition import build_event_bus
+from openticker.adapters.sandbox.broker import SandboxBroker
+from openticker.composition import (
+    SandboxConfigError,
+    build_event_bus,
+    capital_cap,
+    sandbox_settings,
+)
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
+from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.events.bus import EventBus
 from openticker.events.types import (
     InstrumentSyncCompleted,
     OrderFailed,
+    OrderFilled,
     OrderPlaced,
     RiskBreached,
 )
 from openticker.ports.errors import BrokerError
-from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, InstrumentType, Interval
+from openticker.ports.models import (
+    EXCHANGE_TIMEZONE,
+    Exchange,
+    InstrumentType,
+    Interval,
+    Product,
+    Side,
+)
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
+from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
 from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
+from openticker.use_cases.get_funds import get_funds as get_funds_use_case
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
 )
 from openticker.use_cases.get_option_chain import NoOptionsError
 from openticker.use_cases.get_option_chain import get_option_chain as get_option_chain_use_case
+from openticker.use_cases.get_orderbook import get_orderbook as get_orderbook_use_case
+from openticker.use_cases.get_positions import get_positions as get_positions_use_case
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
-from openticker.use_cases.resolve_instrument import UnknownInstrumentError
+from openticker.use_cases.place_order import place_order as place_order_use_case
+from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.search_instruments import (
     search_instruments as search_instruments_use_case,
 )
@@ -75,6 +102,9 @@ Typical flow:
 3. search_instruments to find the exact symbol, then get_quote / get_historical_bars.
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
    strikes, prices, IV and Greeks around at-the-money.
+5. Trading is paper trading only (a local sandbox with virtual capital): place_order
+   never sends anything to the broker. evaluate_risk checks stop/target settings
+   first; get_positions, get_funds and get_orderbook show the result.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -92,8 +122,10 @@ DEFAULT_MAX_BARS = 200
 DEFAULT_SEARCH_LIMIT = 20
 DEFAULT_AUDIT_LIMIT = 20
 DEFAULT_STRIKE_COUNT = 10
+DEFAULT_ORDERBOOK_LIMIT = 20
 EVENT_TYPE_NAMES = [
-    event.__name__ for event in (OrderPlaced, OrderFailed, RiskBreached, InstrumentSyncCompleted)
+    event.__name__
+    for event in (OrderPlaced, OrderFilled, OrderFailed, RiskBreached, InstrumentSyncCompleted)
 ]
 
 _event_bus: EventBus | None = None
@@ -109,6 +141,7 @@ def event_bus() -> EventBus:
         if _event_bus is None:
             _event_bus = build_event_bus(os.environ)
         return _event_bus
+
 
 Broker = Annotated[
     str,
@@ -136,6 +169,7 @@ _AGENT_FIXABLE_ERRORS = (
     BrokerConfigError,
     UnsupportedUnderlyingError,
     NoOptionsError,
+    SandboxConfigError,
 )
 
 
@@ -221,9 +255,7 @@ def search_instruments(
     instrument_type: Annotated[
         InstrumentType | None, Field(description="Only this type, e.g. CE for call options.")
     ] = None,
-    include_expired: Annotated[
-        bool, Field(description="Include contracts past expiry.")
-    ] = False,
+    include_expired: Annotated[bool, Field(description="Include contracts past expiry.")] = False,
     limit: Annotated[int, Field(ge=1, le=500, description="Most results to return.")] = (
         DEFAULT_SEARCH_LIMIT
     ),
@@ -342,6 +374,186 @@ def get_option_chain(
             now,
         )
     return OptionChainResult.of(chain, expiries, now)
+
+
+def order_broker(broker: str) -> SandboxBroker:
+    """The sandbox, pricing through the named broker (ADR 11 in docs/adr)."""
+    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(os.environ))
+
+
+Quantity = Annotated[
+    int, Field(ge=1, description="Units, not lots: a multiple of the lot size for F&O.")
+]
+SideParam = Annotated[Side, Field(description="BUY or SELL.")]
+Price = Annotated[float | None, Field(gt=0)]
+
+
+@mcp.tool(
+    title="Place sandbox order",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def place_order(
+    broker: Broker,
+    symbol: Symbol,
+    exchange: ExchangeParam,
+    side: SideParam,
+    quantity: Quantity,
+    product: Annotated[
+        Product,
+        Field(
+            description="MIS: intraday (equity or F&O). NRML: F&O carried overnight. "
+            "CNC: equity delivery (can't be sold short)."
+        ),
+    ],
+    order_type: Annotated[
+        OrderType, Field(description="Only MARKET is supported for now.")
+    ] = OrderType.MARKET,
+    price: Annotated[Price, Field(description="Limit price; leave unset for MARKET.")] = None,
+) -> PlaceOrderResult:
+    """Paper trade: fill a MARKET order in the local sandbox at the broker's
+    live price. Nothing is sent to the broker. Checks the order shape, the
+    capital cap and virtual funds first; a rejection says why."""
+    now = datetime.now(UTC)
+    with _agent_facing_errors():
+        instrument = resolve_instrument(symbol, exchange.value)
+        result = place_order_use_case(
+            OrderRequest(
+                instrument=instrument,
+                side=side,
+                quantity=quantity,
+                product=product,
+                order_type=order_type,
+                price=price,
+                triggered_by="mcp",
+            ),
+            order_broker(broker),
+            event_bus(),
+            capital_cap(os.environ),
+            now,
+        )
+    filled = result.status is OrderStatus.FILLED
+    return PlaceOrderResult(
+        order_id=result.broker_order_id,
+        status=result.status,
+        symbol=symbol,
+        exchange=exchange,
+        side=side,
+        quantity=quantity,
+        product=product,
+        fill_price=result.fill_price,
+        reason=result.reason,
+        next_step=(
+            "get_positions shows the position and its P&L."
+            if filled
+            else "Fix what the reason says and place the order again."
+        ),
+    )
+
+
+@mcp.tool(
+    title="Get sandbox positions",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_positions(
+    broker: Broker,
+    include_closed: Annotated[
+        bool, Field(description="Also list positions closed earlier, with their realized P&L.")
+    ] = False,
+) -> PositionsResult:
+    """Sandbox net positions valued at the broker's live prices."""
+    with _agent_facing_errors():
+        positions = get_positions_use_case(order_broker(broker))
+    shown = [position for position in positions if include_closed or position.quantity]
+    unrealized = [position.unrealized_pnl for position in shown]
+    return PositionsResult(
+        positions=[PositionResult.of(position) for position in shown],
+        total_unrealized_pnl=(
+            None
+            if any(value is None for value in unrealized)
+            else round(sum(value or 0.0 for value in unrealized), 2)
+        ),
+        total_realized_pnl=round(sum(position.realized_pnl for position in positions), 2),
+    )
+
+
+@mcp.tool(
+    title="Get sandbox funds",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_funds(broker: Broker) -> FundsResult:
+    """Virtual capital, margin in use and realized P&L in the sandbox."""
+    with _agent_facing_errors():
+        funds = get_funds_use_case(order_broker(broker))
+    return FundsResult(
+        total_capital=funds.total_capital,
+        available_cash=round(funds.available_cash, 2),
+        used_margin=round(funds.used_margin, 2),
+        realized_pnl=round(funds.realized_pnl, 2),
+    )
+
+
+@mcp.tool(
+    title="Get sandbox order book",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_orderbook(
+    broker: Broker,
+    limit: Annotated[int, Field(ge=1, le=200, description="Most orders to return.")] = (
+        DEFAULT_ORDERBOOK_LIMIT
+    ),
+) -> OrderbookResult:
+    """Sandbox orders, filled and rejected, most recent first."""
+    with _agent_facing_errors():
+        orders = get_orderbook_use_case(order_broker(broker), limit)
+    return OrderbookResult(orders=[OrderbookEntryResult.of(order) for order in orders])
+
+
+@mcp.tool(
+    title="Evaluate position risk",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def evaluate_risk(
+    broker: Broker,
+    symbol: Symbol,
+    exchange: ExchangeParam,
+    side: Annotated[Side, Field(description="BUY for a long position, SELL for a short.")],
+    quantity: Quantity,
+    entry_price: Annotated[
+        Price, Field(description="Omit to evaluate entering now, at the live price.")
+    ] = None,
+    stop_loss: Annotated[Price, Field(description="Exit price if the trade goes wrong.")] = None,
+    target: Annotated[Price, Field(description="Exit price if the trade goes right.")] = None,
+    capital_cap: Annotated[
+        Price, Field(description="Most the position may be worth, in rupees.")
+    ] = None,
+) -> RiskCheckResult:
+    """Would these stop loss, target and capital cap settings exit right now,
+    and are any of them on the wrong side of the market? Places nothing."""
+    with _agent_facing_errors():
+        check = evaluate_risk_use_case(
+            get_adapter(broker),
+            symbol,
+            exchange.value,
+            side,
+            quantity,
+            entry_price,
+            stop_loss,
+            target,
+            capital_cap,
+        )
+    decision = check.decision
+    return RiskCheckResult(
+        last_price=check.last_price,
+        breached=decision.breached,
+        reason=decision.reason,
+        detail=decision.detail,
+        stop_loss=decision.stop_loss,
+        unrealized_pnl=round(decision.unrealized_pnl, 2),
+        exit_side=decision.exit_side,
+        warnings=check.warnings,
+    )
 
 
 @mcp.tool(

@@ -17,6 +17,9 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `get_quote` | Live last traded price. |
 | `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
 | `get_option_chain` | Calls and puts around at-the-money for an index or stock: price, open interest, implied volatility, Greeks. |
+| `place_order` | Paper trade: fill a MARKET order in the local sandbox at the live price. Nothing reaches the broker. |
+| `get_positions`, `get_funds`, `get_orderbook` | Sandbox positions with live P&L, virtual capital and margin, order history. |
+| `evaluate_risk` | Check stop loss, target and capital cap settings against the live price before acting. |
 | `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
 
 Example session, in plain language to your agent:
@@ -87,7 +90,6 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 
 ## Roadmap
 
-- Sandbox order placement through the full validate, risk-check, notify path
 - An always-on server with a REST API mirroring the MCP tools
 - Live prices and a market calendar
 - Strategies that run unattended: multi-leg options strategies chosen relative to the market, strategy-wide stop loss, target, profit lock and kill switch, surviving restarts

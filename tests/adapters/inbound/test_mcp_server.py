@@ -12,7 +12,7 @@ from mcp.types import Tool
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
-from openticker.ports.models import Exchange, InstrumentType, Interval
+from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
 from tests.fixtures.fake_broker import FAKE_LAST_PRICE, FakeBrokerPort
 
 
@@ -118,3 +118,59 @@ def test_get_option_chain_reports_percent_units_and_exchange_local_expiry() -> N
 def test_get_option_chain_before_sync_is_an_agent_facing_error() -> None:
     with pytest.raises(ToolError, match="sync_instruments"):
         mcp_server.get_option_chain(broker="fake", underlying="NIFTY 50", exchange=Exchange.NSE)
+
+
+def test_sandbox_round_trip_through_the_tools() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=4,
+        product=Product.MIS,
+    )
+    positions = mcp_server.get_positions(broker="fake")
+    funds = mcp_server.get_funds(broker="fake")
+    book = mcp_server.get_orderbook(broker="fake")
+    audit = mcp_server.get_audit_log(event_type="OrderFilled")
+
+    assert (placed.status, placed.fill_price) == ("FILLED", FAKE_LAST_PRICE)
+    assert [(p.symbol, p.quantity) for p in positions.positions] == [("RELIANCE", 4)]
+    assert positions.total_unrealized_pnl == 0.0
+    assert funds.used_margin == 4 * FAKE_LAST_PRICE / 5  # intraday equity: 5x leverage
+    assert [order.order_id for order in book.orders] == [placed.order_id]
+    assert audit.entries[0].triggered_by == "mcp"
+
+
+def test_rejected_order_explains_itself_and_suggests_a_fix() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    result = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.SELL,
+        quantity=1,
+        product=Product.CNC,
+    )
+
+    assert result.status == "REJECTED" and result.reason is not None
+    assert "sold short" in result.reason
+    assert result.next_step.startswith("Fix")
+
+
+def test_evaluate_risk_tool_reports_wrong_side_settings() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    result = mcp_server.evaluate_risk(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=1,
+        stop_loss=FAKE_LAST_PRICE + 10,
+    )
+
+    assert result.breached and result.reason == "stop_loss" and result.warnings

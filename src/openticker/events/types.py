@@ -20,6 +20,17 @@ class OrderPlaced:
 
 
 @dataclass(frozen=True)
+class OrderFilled:
+    order_id: str
+    symbol: str
+    side: str
+    quantity: int
+    price: float
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class OrderFailed:
     symbol: str
     reason: str

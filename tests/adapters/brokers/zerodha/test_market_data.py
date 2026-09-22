@@ -174,3 +174,24 @@ def test_fetch_quotes_batches_and_skips_instruments_kite_did_not_return(
     assert "S7" not in {quote.instrument.symbol for quote in quotes}
     assert quotes[0].open_interest == 1500
     assert quotes[-1].open_interest is None
+
+
+def test_fetch_quote_carries_the_day_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(
+        monkeypatch,
+        [
+            _ok(
+                {
+                    "NSE:RELIANCE": {
+                        "last_price": 1374.6,
+                        "timestamp": "2026-09-18 15:30:00",
+                        "ohlc": {"open": 1360.0, "high": 1380.0, "low": 1355.5, "close": 1358.0},
+                    }
+                }
+            )
+        ],
+    )
+
+    quote = market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+
+    assert (quote.day_low, quote.day_high) == (1355.5, 1380.0)

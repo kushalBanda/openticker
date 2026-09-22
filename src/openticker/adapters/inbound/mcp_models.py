@@ -8,6 +8,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
+from openticker.core.orders.models import Order, OrderStatus, OrderType
+from openticker.core.risk.models import BreachReason
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -15,7 +17,10 @@ from openticker.ports.models import (
     Instrument,
     InstrumentType,
     Interval,
+    Position,
+    Product,
     Quote,
+    Side,
 )
 
 
@@ -202,3 +207,104 @@ class OptionChainResult(BaseModel):
             ],
             available_expiries=expiries,
         )
+
+
+class PlaceOrderResult(BaseModel):
+    order_id: str | None = Field(description="Sandbox order id; None when rejected before it.")
+    status: OrderStatus = Field(description="FILLED, or REJECTED/FAILED with a reason.")
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    product: Product
+    fill_price: float | None
+    reason: str | None = Field(description="Why it was not filled.")
+    next_step: str
+
+
+class PositionResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    product: Product
+    quantity: int = Field(description="Net and signed: negative is short, 0 is closed.")
+    average_price: float
+    last_price: float | None = Field(description="None when no fresh price was available.")
+    unrealized_pnl: float | None
+    realized_pnl: float
+
+    @classmethod
+    def of(cls, position: Position) -> "PositionResult":
+        return cls(
+            symbol=position.instrument.symbol,
+            exchange=position.instrument.exchange,
+            product=position.product,
+            quantity=position.quantity,
+            average_price=round(position.average_price, 4),
+            last_price=position.last_price,
+            unrealized_pnl=(
+                round(position.unrealized_pnl, 2) if position.unrealized_pnl is not None else None
+            ),
+            realized_pnl=round(position.realized_pnl, 2),
+        )
+
+
+class PositionsResult(BaseModel):
+    positions: list[PositionResult]
+    total_unrealized_pnl: float | None = Field(
+        description="None when any open position has no current price."
+    )
+    total_realized_pnl: float
+
+
+class FundsResult(BaseModel):
+    total_capital: float = Field(description="Virtual starting capital.")
+    available_cash: float = Field(description="Capital - used margin + realized P&L.")
+    used_margin: float
+    realized_pnl: float
+
+
+class OrderbookEntryResult(BaseModel):
+    order_id: str
+    placed_at: datetime = Field(description="Exchange-local.")
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    product: Product
+    order_type: OrderType
+    status: OrderStatus
+    fill_price: float | None
+    reason: str | None
+    triggered_by: str
+
+    @classmethod
+    def of(cls, order: Order) -> "OrderbookEntryResult":
+        return cls(
+            order_id=order.order_id,
+            placed_at=order.placed_at.astimezone(EXCHANGE_TIMEZONE),
+            symbol=order.instrument.symbol,
+            exchange=order.instrument.exchange,
+            side=order.side,
+            quantity=order.quantity,
+            product=order.product,
+            order_type=order.order_type,
+            status=order.status,
+            fill_price=order.fill_price,
+            reason=order.reason,
+            triggered_by=order.triggered_by,
+        )
+
+
+class OrderbookResult(BaseModel):
+    orders: list[OrderbookEntryResult] = Field(description="Most recent first.")
+
+
+class RiskCheckResult(BaseModel):
+    last_price: float
+    breached: bool = Field(description="True when the settings would exit at this price now.")
+    reason: BreachReason | None
+    detail: str | None
+    stop_loss: float | None
+    unrealized_pnl: float = Field(description="At the last price, from the entry price.")
+    exit_side: Side | None = Field(description="The order side that would close the position.")
+    warnings: list[str] = Field(description="Settings that would exit at once or trail badly.")

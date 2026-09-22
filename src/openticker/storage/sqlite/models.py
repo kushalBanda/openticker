@@ -46,3 +46,67 @@ class AuditLogRow(Base):
     event_type: Mapped[str] = mapped_column(index=True)
     triggered_by: Mapped[str | None]
     payload: Mapped[str]  # the event's fields as JSON
+
+
+# Sandbox (paper trading) tables, kept apart from anything live (ADR 11 in docs/adr).
+
+
+class SandboxOrderRow(Base):
+    __tablename__ = "sandbox_orders"
+
+    order_id: Mapped[str] = mapped_column(primary_key=True)
+    placed_at: Mapped[datetime] = mapped_column(index=True)  # UTC, stored naive
+    exchange: Mapped[str]
+    symbol: Mapped[str]
+    side: Mapped[str]
+    quantity: Mapped[int]
+    product: Mapped[str]
+    order_type: Mapped[str]
+    status: Mapped[str]
+    fill_price: Mapped[float | None]
+    reason: Mapped[str | None]
+    triggered_by: Mapped[str]
+    strategy_id: Mapped[str | None] = mapped_column(index=True)
+    run_id: Mapped[str | None] = mapped_column(index=True)
+
+
+class SandboxTradeRow(Base):
+    __tablename__ = "sandbox_trades"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    order_id: Mapped[str] = mapped_column(index=True)
+    filled_at: Mapped[datetime]  # UTC, stored naive
+    exchange: Mapped[str]
+    symbol: Mapped[str]
+    side: Mapped[str]
+    quantity: Mapped[int]
+    price: Mapped[float]
+    product: Mapped[str]
+    strategy_id: Mapped[str | None] = mapped_column(index=True)
+    run_id: Mapped[str | None] = mapped_column(index=True)
+
+
+class SandboxPositionRow(Base):
+    """Net position per instrument and product. Rows stay once flat, keeping
+    the realized P&L."""
+
+    __tablename__ = "sandbox_positions"
+
+    exchange: Mapped[str] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(primary_key=True)
+    product: Mapped[str] = mapped_column(primary_key=True)
+    quantity: Mapped[int]  # signed: negative is short
+    average_price: Mapped[float]
+    margin_blocked: Mapped[float]
+    realized_pnl: Mapped[float]
+
+
+class SandboxFundsRow(Base):
+    """One row. Available cash is derived: capital - used margin + realized P&L."""
+
+    __tablename__ = "sandbox_funds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    total_capital: Mapped[float]
+    used_margin: Mapped[float]
+    realized_pnl: Mapped[float]

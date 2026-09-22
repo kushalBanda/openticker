@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Protocol
 
-from openticker.core.orders.models import OrderRequest, OrderResult
+from openticker.core.orders.models import Order, OrderRequest, OrderResult
 from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
 
 
@@ -17,8 +17,10 @@ class BrokerPort(Protocol):
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
     ) -> list[Bar]: ...
-    def place_order(
-        self, request: OrderRequest
-    ) -> OrderResult: ...  # sandbox-only (ADR 6 in docs/adr)
+    # The order side: only the sandbox implements it (ADR 11 in docs/adr).
+    def place_order(self, request: OrderRequest) -> OrderResult: ...
     def get_positions(self) -> list[Position]: ...
     def get_funds(self) -> Funds: ...
+    def get_orderbook(self, limit: int) -> list[Order]:
+        """Most recent first."""
+        ...

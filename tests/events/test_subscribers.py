@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from openticker.events.subscribers.audit_log import record_event
-from openticker.events.subscribers.notifications import describe, notifier
+from openticker.events.subscribers.notifications import NOTIFIED_EVENTS, describe, notifier
 from openticker.events.types import InstrumentSyncCompleted, OrderPlaced, RiskBreached
 from openticker.storage.sqlite.audit_repo import list_audit
 
@@ -67,3 +67,19 @@ def test_one_failing_channel_does_not_silence_the_others() -> None:
         notify(RiskBreached(symbol="RELIANCE", reason="stop_loss", detail="hit"))
 
     assert working.sent == [("Risk breached: RELIANCE (stop_loss)", "hit")]
+
+
+def test_a_fill_is_notified_but_the_placement_before_it_is_not() -> None:
+    from openticker.events.types import OrderFilled
+
+    placed = OrderPlaced(order_id="SB1", symbol="RELIANCE", side="BUY", quantity=4, triggered_by="mcp")
+    filled = OrderFilled(
+        order_id="SB1", symbol="RELIANCE", side="BUY", quantity=4, price=1374.6, triggered_by="mcp"
+    )
+
+    assert describe(placed) is None
+    assert OrderFilled in NOTIFIED_EVENTS and OrderPlaced not in NOTIFIED_EVENTS
+    assert describe(filled) == (
+        "Order filled: BUY 4 RELIANCE @ 1,374.60",
+        "Sandbox order SB1 filled via mcp.",
+    )

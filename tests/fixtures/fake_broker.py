@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
-from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus
+from openticker.core.orders.models import Order, OrderRequest, OrderResult
 from openticker.ports.models import (
     Bar,
     Credentials,
@@ -72,11 +72,16 @@ class FakeBrokerPort:
             for timestamp in FAKE_BAR_TIMES
         ]
 
+    # The order side is never reached: orders go through the sandbox, which
+    # wraps this adapter for prices (ADR 11 in docs/adr).
     def place_order(self, request: OrderRequest) -> OrderResult:
-        return OrderResult(status=OrderStatus.PLACED, broker_order_id="fake-order-1", reason=None)
+        raise NotImplementedError("live order placement is not implemented")
 
     def get_positions(self) -> list[Position]:
-        return []
+        raise NotImplementedError("live positions are not implemented")
 
     def get_funds(self) -> Funds:
-        return Funds(broker="fake", available_cash=0.0, used_margin=0.0)
+        raise NotImplementedError("live funds are not implemented")
+
+    def get_orderbook(self, limit: int) -> list[Order]:
+        raise NotImplementedError("the live order book is not implemented")

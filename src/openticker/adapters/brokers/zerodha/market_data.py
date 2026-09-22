@@ -83,11 +83,14 @@ def _quote_key(instrument: Instrument) -> str:
 
 def _to_quote(instrument: Instrument, data: dict[str, Any]) -> Quote:
     open_interest = data.get("oi")
+    ohlc: dict[str, Any] = data.get("ohlc") or {}
     return Quote(
         instrument=instrument,
         last_price=float(data["last_price"]),
         as_of=_quote_time(data),
         open_interest=int(open_interest) if open_interest is not None else None,
+        day_high=float(ohlc["high"]) if "high" in ohlc else None,
+        day_low=float(ohlc["low"]) if "low" in ohlc else None,
     )
 
 

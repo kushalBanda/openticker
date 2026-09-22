@@ -1,11 +1,13 @@
-"""Composition root: builds the event bus and its subscribers from
-configuration. The one module allowed to wire events, storage and outbound
+"""Composition root: builds the event bus, its subscribers and the sandbox
+settings from configuration. The one module allowed to wire events, storage and outbound
 adapters together; entry points (`openticker-mcp`) call it, nothing else does."""
 
+import math
 from collections.abc import Mapping
 
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
+from openticker.adapters.sandbox.broker import SandboxSettings
 from openticker.events.bus import EventBus
 from openticker.events.subscribers.audit_log import record_event
 from openticker.events.subscribers.notifications import NOTIFIED_EVENTS, notifier
@@ -24,6 +26,10 @@ _SMTP_REQUIRED = (
 
 class NotificationConfigError(Exception):
     """Notification settings are present but incomplete."""
+
+
+class SandboxConfigError(Exception):
+    """A sandbox setting is not a positive number."""
 
 
 def build_event_bus(env: Mapping[str, str]) -> EventBus:
@@ -66,3 +72,27 @@ def notification_channels(env: Mapping[str, str]) -> list[NotificationPort]:
             )
         )
     return channels
+
+
+def sandbox_settings(env: Mapping[str, str]) -> SandboxSettings:
+    """`SANDBOX_STARTING_CAPITAL` applies when sandbox funds are first created."""
+    capital = _positive_number(env, "SANDBOX_STARTING_CAPITAL")
+    return SandboxSettings() if capital is None else SandboxSettings(starting_capital=capital)
+
+
+def capital_cap(env: Mapping[str, str]) -> float | None:
+    """`OPENTICKER_CAPITAL_CAP`: the most one position may be worth. Unset means no cap."""
+    return _positive_number(env, "OPENTICKER_CAPITAL_CAP")
+
+
+def _positive_number(env: Mapping[str, str], name: str) -> float | None:
+    raw = env.get(name)
+    if not raw:
+        return None
+    try:
+        value = float(raw.replace(",", "").replace("_", ""))
+    except ValueError:
+        value = 0.0
+    if not (math.isfinite(value) and value > 0):
+        raise SandboxConfigError(f"{name} must be a positive number, got {raw!r}")
+    return value

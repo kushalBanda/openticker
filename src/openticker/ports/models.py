@@ -47,6 +47,15 @@ class Side(StrEnum):
     SELL = "SELL"
 
 
+class Product(StrEnum):
+    """What a position is for, which decides its margin and whether it is
+    squared off at the session close."""
+
+    MIS = "MIS"  # intraday
+    NRML = "NRML"  # futures and options carried overnight
+    CNC = "CNC"  # equity delivery
+
+
 @dataclass(frozen=True)
 class Instrument:
     symbol: str
@@ -67,6 +76,8 @@ class Quote:
     last_price: float
     as_of: datetime  # tz-aware (UTC) — callers populate this, never naive local time
     open_interest: int | None = None  # derivatives only
+    day_high: float | None = None
+    day_low: float | None = None
 
 
 @dataclass(frozen=True)
@@ -92,9 +103,12 @@ class Credentials:
 @dataclass(frozen=True)
 class Position:
     instrument: Instrument
-    quantity: int
-    average_price: float
-    last_price: float
+    product: Product
+    quantity: int  # net and signed, as brokers report it: negative is short
+    average_price: float  # of the open quantity; 0 when flat
+    last_price: float | None  # None when no current price could be fetched
+    realized_pnl: float
+    unrealized_pnl: float | None
 
 
 @dataclass(frozen=True)
@@ -102,3 +116,5 @@ class Funds:
     broker: str
     available_cash: float
     used_margin: float
+    total_capital: float
+    realized_pnl: float

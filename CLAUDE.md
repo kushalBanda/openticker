@@ -4,7 +4,7 @@ Guidance for Claude Code (and other coding agents) working in this repository. M
 
 ## What this repo is
 
-**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes, historical bars and option chains with Greeks. Risk rules, an audit log and notifications are built. Sandbox order placement, an always-on daemon with a REST API, live prices, unattended strategies (rule-based, alert-driven, and user Python scripts) are planned (ADRs 11-15). No web UI yet.
+**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes, historical bars and option chains with Greeks, and paper trade in a local sandbox. Risk rules, an audit log and notifications are built. An always-on daemon with a REST API, live prices, unattended strategies (rule-based, alert-driven, and user Python scripts) are planned (ADRs 11-15). No web UI yet.
 
 Design decisions and their reasoning live in `docs/adr/` (`1. hexagonal-architecture.md` onward). Read the relevant ADR before changing an area; add a new ADR when making a decision a future contributor would otherwise have to reverse-engineer.
 
@@ -17,9 +17,9 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16).
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
-adapters/     implementations: brokers/ (registry + zerodha/), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py).
+adapters/     implementations: brokers/ (registry + zerodha/), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py).
 use_cases/    one flat function per operation, not a class. May call storage directly; publish events.
 events/       EventBus, event types, subscribers (audit_log inline, notifications background), ADR 10.
 composition.py  builds the event bus and notification channels from env. The only place they're wired.
@@ -39,7 +39,7 @@ Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in 
 - **Importing a module must be side-effect-free.** `load_dotenv()` runs only in `mcp_server.main()`.
 - **Risk rules are pure functions** in `core/risk/` (ADR 9): absent prices are `None`/0 and never defaulted, direction is `side` never a signed quantity, stop loss beats target.
 - **Side effects go through events** (ADR 10): use cases publish, subscribers audit and notify. Never call a notification channel from a use case.
-- **Order placement is sandbox-only** (ADR 6).
+- **Order placement is sandbox-only** (ADR 6, ADR 11): `SandboxBroker` wraps the real broker adapter for prices; broker adapters' order methods raise `NotImplementedError`. Sandbox fills go through `sandbox_repo.fill_transaction()` (`BEGIN IMMEDIATE`).
 - **Code comments reference ADRs, never internal planning docs.** This repo is public.
 
 ## Commands
