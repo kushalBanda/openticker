@@ -9,10 +9,11 @@ from openticker.ports.models import Instrument, Product, Side
 
 
 class OrderStatus(StrEnum):
-    PENDING = "PENDING"
+    PENDING = "PENDING"  # resting until the price crosses it
     FILLED = "FILLED"
     REJECTED = "REJECTED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"  # by the user, or expired at the session's end
 
 
 class OrderType(StrEnum):
@@ -29,10 +30,11 @@ class OrderRequest:
     quantity: int
     product: Product
     order_type: OrderType
-    price: float | None  # limit price; None for MARKET
+    price: float | None  # limit price: LIMIT and SL only
     triggered_by: str  # "mcp", "rest", "strategy:<id>": audit trail, never branched on
     strategy_id: str | None = None
     run_id: str | None = None
+    trigger_price: float | None = None  # SL and SL-M only
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,9 @@ class Order:
     placed_at: datetime  # tz-aware UTC
     strategy_id: str | None
     run_id: str | None
+    price: float | None = None
+    trigger_price: float | None = None
+    triggered: bool = False  # an SL order whose trigger has been crossed: now a resting limit
 
 
 @dataclass(frozen=True)

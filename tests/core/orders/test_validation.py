@@ -41,8 +41,22 @@ def test_a_well_formed_order_is_valid() -> None:
         ({"instrument": NIFTY_CALL, "quantity": 100, "product": Product.NRML}, "lot size 65"),
         ({"product": Product.NRML}, "CNC or MIS"),
         ({"instrument": NIFTY_CALL, "quantity": 65, "product": Product.CNC}, "NRML or MIS"),
-        ({"order_type": OrderType.LIMIT, "price": 99.0}, "not supported yet"),
         ({"price": 99.0}, "take no price"),
+        ({"order_type": OrderType.LIMIT}, "LIMIT orders need a price"),
+        ({"order_type": OrderType.LIMIT, "price": 99.0, "trigger_price": 98.0}, "no trigger"),
+        ({"order_type": OrderType.SL_M}, "need a trigger_price"),
+        ({"order_type": OrderType.SL_M, "trigger_price": 99.0, "price": 99.5}, "take no price"),
+        ({"order_type": OrderType.SL, "trigger_price": 99.0}, "SL orders need a price"),
+        ({"order_type": OrderType.LIMIT, "price": 99.03}, "tick size 0.05"),
+        ({"order_type": OrderType.LIMIT, "price": -5.0}, "positive"),
+        (
+            {"order_type": OrderType.SL, "price": 99.0, "trigger_price": 100.0},
+            "at or above its trigger",
+        ),
+        (
+            {"order_type": OrderType.SL, "side": Side.SELL, "price": 101.0, "trigger_price": 100.0},
+            "at or below its trigger",
+        ),
         ({"quantity": 0}, "positive"),
     ],
 )
@@ -51,3 +65,16 @@ def test_malformed_orders_say_why(changes: dict[str, object], reason: str) -> No
 
     assert not result.valid
     assert result.reason is not None and reason in result.reason
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"order_type": OrderType.LIMIT, "price": 99.05},
+        {"order_type": OrderType.SL_M, "trigger_price": 101.0},
+        {"order_type": OrderType.SL, "price": 101.5, "trigger_price": 101.0},
+        {"order_type": OrderType.SL, "side": Side.SELL, "price": 98.5, "trigger_price": 99.0},
+    ],
+)
+def test_resting_order_types_take_their_prices(changes: dict[str, object]) -> None:
+    assert validate_order(_request(**changes), TODAY).valid

@@ -64,6 +64,10 @@ class StoredOrder:
     triggered_by: str
     strategy_id: str | None
     run_id: str | None
+    price: float | None = None
+    trigger_price: float | None = None
+    triggered: bool = False
+    reserved_margin: float = 0.0
 
     def to_order(self, instrument: Instrument) -> Order:
         return Order(
@@ -80,6 +84,9 @@ class StoredOrder:
             placed_at=self.placed_at,
             strategy_id=self.strategy_id,
             run_id=self.run_id,
+            price=self.price,
+            trigger_price=self.trigger_price,
+            triggered=self.triggered,
         )
 
 
@@ -157,23 +164,52 @@ def record_order(session: Session, order: StoredOrder) -> None:
             triggered_by=order.triggered_by,
             strategy_id=order.strategy_id,
             run_id=order.run_id,
+            price=order.price,
+            trigger_price=order.trigger_price,
+            triggered=order.triggered,
+            reserved_margin=order.reserved_margin,
+            updated_at=None,
         )
     )
     if order.status is OrderStatus.FILLED and order.fill_price is not None:
-        session.add(
-            SandboxTradeRow(
-                order_id=order.order_id,
-                filled_at=_naive_utc(order.placed_at),
-                exchange=order.exchange,
-                symbol=order.symbol,
-                side=order.side.value,
-                quantity=order.quantity,
-                price=order.fill_price,
-                product=order.product.value,
-                strategy_id=order.strategy_id,
-                run_id=order.run_id,
-            )
+        _add_trade(session, order, order.fill_price, order.placed_at)
+
+
+def load_order(session: Session, order_id: str) -> StoredOrder | None:
+    row = session.get(SandboxOrderRow, order_id)
+    return _stored(row) if row is not None else None
+
+
+def update_order(session: Session, order: StoredOrder, now: datetime) -> None:
+    """Writes a resting order's new state; a fill also records its trade."""
+    row = session.get(SandboxOrderRow, order.order_id)
+    if row is None:
+        raise LookupError(f"no sandbox order {order.order_id}")
+    row.status = order.status.value
+    row.fill_price = order.fill_price
+    row.reason = order.reason
+    row.triggered = order.triggered
+    row.reserved_margin = order.reserved_margin
+    row.updated_at = _naive_utc(now)
+    if order.status is OrderStatus.FILLED and order.fill_price is not None:
+        _add_trade(session, order, order.fill_price, now)
+
+
+def _add_trade(session: Session, order: StoredOrder, price: float, filled_at: datetime) -> None:
+    session.add(
+        SandboxTradeRow(
+            order_id=order.order_id,
+            filled_at=_naive_utc(filled_at),
+            exchange=order.exchange,
+            symbol=order.symbol,
+            side=order.side.value,
+            quantity=order.quantity,
+            price=price,
+            product=order.product.value,
+            strategy_id=order.strategy_id,
+            run_id=order.run_id,
         )
+    )
 
 
 def read_funds(starting_capital: float) -> FundsState:
@@ -207,25 +243,47 @@ def list_orders(limit: int) -> list[StoredOrder]:
             .order_by(SandboxOrderRow.placed_at.desc(), SandboxOrderRow.order_id.desc())
             .limit(limit)
         ).all()
-    return [
-        StoredOrder(
-            order_id=row.order_id,
-            placed_at=row.placed_at.replace(tzinfo=UTC),
-            exchange=row.exchange,
-            symbol=row.symbol,
-            side=Side(row.side),
-            quantity=row.quantity,
-            product=Product(row.product),
-            order_type=OrderType(row.order_type),
-            status=OrderStatus(row.status),
-            fill_price=row.fill_price,
-            reason=row.reason,
-            triggered_by=row.triggered_by,
-            strategy_id=row.strategy_id,
-            run_id=row.run_id,
-        )
-        for row in rows
-    ]
+    return [_stored(row) for row in rows]
+
+
+def find_order(order_id: str) -> StoredOrder | None:
+    with Session(get_engine()) as session:
+        row = session.get(SandboxOrderRow, order_id)
+        return _stored(row) if row is not None else None
+
+
+def list_pending_orders() -> list[StoredOrder]:
+    """Oldest first, so earlier orders fill first on the same price."""
+    with Session(get_engine()) as session:
+        rows = session.scalars(
+            select(SandboxOrderRow)
+            .where(SandboxOrderRow.status == OrderStatus.PENDING.value)
+            .order_by(SandboxOrderRow.placed_at, SandboxOrderRow.order_id)
+        ).all()
+    return [_stored(row) for row in rows]
+
+
+def _stored(row: SandboxOrderRow) -> StoredOrder:
+    return StoredOrder(
+        order_id=row.order_id,
+        placed_at=row.placed_at.replace(tzinfo=UTC),
+        exchange=row.exchange,
+        symbol=row.symbol,
+        side=Side(row.side),
+        quantity=row.quantity,
+        product=Product(row.product),
+        order_type=OrderType(row.order_type),
+        status=OrderStatus(row.status),
+        fill_price=row.fill_price,
+        reason=row.reason,
+        triggered_by=row.triggered_by,
+        strategy_id=row.strategy_id,
+        run_id=row.run_id,
+        price=row.price,
+        trigger_price=row.trigger_price,
+        triggered=bool(row.triggered),
+        reserved_margin=row.reserved_margin or 0.0,
+    )
 
 
 def _naive_utc(moment: datetime) -> datetime:

@@ -17,9 +17,9 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13).
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math, resting-order matching), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
-adapters/     implementations: brokers/ (registry + zerodha/, including the WebSocket feed), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py, rest_api.py, daemon/: main.py entry point, feed_loop.py, prices.py).
+adapters/     implementations: brokers/ (registry + zerodha/, including the WebSocket feed), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py, rest_api.py, daemon/: main.py entry point, feed_loop.py, execution_loop.py, prices.py).
 use_cases/    one flat function per operation, not a class. May call storage directly; publish events.
 events/       EventBus, event types, subscribers (audit_log inline, notifications background), ADR 10.
 composition.py  builds the event bus, notification channels and the sandbox (`order_broker`) from env. The only place they're wired.
@@ -42,7 +42,8 @@ Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in 
 - **Side effects go through events** (ADR 10): use cases publish, subscribers audit and notify. Never call a notification channel from a use case.
 - **Anything time-dependent takes the clock as a parameter** (`now`, or a `clock` callable at the edges: `mcp_server.clock`, `create_app(clock=...)`). Tests pin it to a trading time; nothing reads the wall clock deep inside.
 - **Live prices come through `MarketFeedPort`** (ADR 13). `ticks()` raises `BrokerSessionError` when the broker refuses the session; `FeedLoop` turns that into one `BrokerSessionExpired` event. Never log the Kite ticker URL: it carries the access token.
-- **Order placement is sandbox-only** (ADR 6, ADR 11): `SandboxBroker` wraps the real broker adapter for prices; broker adapters' order methods raise `NotImplementedError`. Sandbox fills go through `sandbox_repo.fill_transaction()` (`BEGIN IMMEDIATE`).
+- **Schema changes are additive** (ADR 18): a new column on an existing table must be nullable, and readers treat NULL as its default. `get_engine()` adds it to old databases. Anything else needs a real migration.
+- **Order placement is sandbox-only** (ADR 6, ADR 11): `SandboxBroker` wraps the real broker adapter for prices; broker adapters' order methods raise `NotImplementedError`. Sandbox fills go through `sandbox_repo.fill_transaction()` (`BEGIN IMMEDIATE`). Resting orders are filled by the daemon through `SandboxPort` (`use_cases/execute_resting_orders.py`); intraday square-off is `use_cases/square_off.py`; expiry settlement is `use_cases/settle_expired.py` (price rules in `core/orders/settlement.py`).
 - **Code comments reference ADRs, never internal planning docs.** This repo is public.
 
 ## Commands

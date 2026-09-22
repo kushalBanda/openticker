@@ -22,3 +22,17 @@ def test_open_positions_and_the_watch_list_are_streamed_once_each() -> None:
     )
 
     assert [i.symbol for i in watched] == ["RELIANCE", "NIFTY 50"]
+
+
+def test_pending_orders_are_streamed_too() -> None:
+    from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+    from openticker.core.orders.models import OrderRequest, OrderType
+    from openticker.ports.models import Side
+    from tests.fixtures.priced_broker import PricedBroker
+
+    upsert_instruments([FAKE_INSTRUMENT, INFY])
+    SandboxBroker("fake", PricedBroker(100.0), SandboxSettings()).place_order(
+        OrderRequest(INFY, Side.BUY, 1, Product.CNC, OrderType.LIMIT, 90.0, "mcp")
+    )
+
+    assert [i.symbol for i in watched_instruments([])] == ["INFY"]

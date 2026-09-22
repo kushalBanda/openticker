@@ -19,6 +19,8 @@ INDEX_OPTION_NAMES: dict[tuple[str, Exchange], str] = {
 }
 
 _OPTIONS_EXCHANGE = {Exchange.NSE: Exchange.NFO, Exchange.BSE: Exchange.BFO}
+_UNDERLYING_EXCHANGE = {derivatives: cash for cash, derivatives in _OPTIONS_EXCHANGE.items()}
+_INDEX_OF_NAME = {name: key for key, name in INDEX_OPTION_NAMES.items()}
 
 
 class UnsupportedUnderlyingError(LookupError):
@@ -48,3 +50,21 @@ def options_of(underlying: Instrument) -> tuple[str, Exchange]:
         f"{underlying.symbol} is {underlying.instrument_type}; an option chain needs an index "
         "or a stock as its underlying"
     )
+
+
+def underlying_of(derivative: Instrument) -> tuple[str, Exchange] | None:
+    """The symbol and exchange of what a future or option is written on, read
+    from its standardized symbol: `NIFTY22SEP2623350CE` is on NIFTY 50,
+    `RELIANCE29SEP26FUT` on RELIANCE. None for contracts without a listed
+    underlying OpenTicker knows, such as MCX commodities."""
+    cash = _UNDERLYING_EXCHANGE.get(derivative.exchange)
+    if derivative.expiry is None or cash is None:
+        return None
+    stamp = derivative.expiry.strftime("%d%b%y").upper()
+    name, found, _ = derivative.symbol.partition(stamp)
+    if not found or not name:
+        return None
+    index = _INDEX_OF_NAME.get(name)
+    if index is not None:
+        return index
+    return name, cash

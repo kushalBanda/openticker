@@ -298,7 +298,10 @@ class MarketStatusesResult(BaseModel):
 
 class PlaceOrderResult(BaseModel):
     order_id: str | None = Field(description="Sandbox order id; None when rejected before it.")
-    status: OrderStatus = Field(description="FILLED, or REJECTED/FAILED with a reason.")
+    status: OrderStatus = Field(
+        description="FILLED; PENDING for a LIMIT/SL/SL-M order resting in the sandbox; "
+        "or REJECTED/FAILED with a reason."
+    )
     symbol: str
     exchange: Exchange
     side: Side
@@ -322,6 +325,16 @@ class PlaceOrderResult(BaseModel):
             reason=result.reason,
             next_step=next_step,
         )
+
+
+class CancelOrderResult(BaseModel):
+    order_id: str
+    status: OrderStatus = Field(description="CANCELLED, or the status that kept it from being.")
+    reason: str | None
+
+    @classmethod
+    def of(cls, order_id: str, result: OrderResult) -> "CancelOrderResult":
+        return cls(order_id=order_id, status=result.status, reason=result.reason)
 
 
 class PositionResult(BaseModel):
@@ -397,7 +410,12 @@ class OrderbookEntryResult(BaseModel):
     quantity: int
     product: Product
     order_type: OrderType
-    status: OrderStatus
+    price: float | None = Field(description="Limit price: LIMIT and SL orders.")
+    trigger_price: float | None = Field(description="SL and SL-M orders.")
+    status: OrderStatus = Field(
+        description="PENDING rests until a live price crosses it; CANCELLED includes orders "
+        "that expired at the session's end."
+    )
     fill_price: float | None
     reason: str | None
     triggered_by: str
@@ -413,6 +431,8 @@ class OrderbookEntryResult(BaseModel):
             quantity=order.quantity,
             product=order.product,
             order_type=order.order_type,
+            price=order.price,
+            trigger_price=order.trigger_price,
             status=order.status,
             fill_price=order.fill_price,
             reason=order.reason,

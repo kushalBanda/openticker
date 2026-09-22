@@ -28,6 +28,7 @@ from openticker.adapters.brokers.registry import (
 from openticker.adapters.inbound.mcp_models import (
     AuditLogResult,
     BarsResult,
+    CancelOrderResult,
     ConnectResult,
     FundsResult,
     LoginUrlResult,
@@ -55,9 +56,11 @@ from openticker.events.bus import EventBus
 from openticker.events.types import (
     BrokerSessionExpired,
     InstrumentSyncCompleted,
+    OrderCancelled,
     OrderFailed,
     OrderFilled,
     OrderPlaced,
+    PositionSettled,
     RiskBreached,
 )
 from openticker.ports.errors import BrokerError
@@ -70,6 +73,8 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
+from openticker.use_cases.cancel_order import UnknownOrderError
+from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
 from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
 from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
@@ -104,9 +109,12 @@ Typical flow:
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
    strikes, prices, IV and Greeks around at-the-money.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
-   never sends anything to the broker, and fills only while the exchange is open
-   (get_market_status). evaluate_risk checks stop/target settings first;
-   get_positions, get_funds and get_orderbook show the result.
+   never sends anything to the broker, and works only while the exchange is open
+   (get_market_status). MARKET orders fill at once; LIMIT, SL and SL-M orders
+   rest until a live price crosses them, which needs openticker-serve running.
+   Intraday (MIS) positions are closed 15 minutes before the session ends.
+   evaluate_risk checks stop/target settings first; get_positions, get_funds
+   and get_orderbook show the result; cancel_order withdraws a pending order.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -131,6 +139,8 @@ EVENT_TYPE_NAMES = [
         OrderPlaced,
         OrderFilled,
         OrderFailed,
+        OrderCancelled,
+        PositionSettled,
         RiskBreached,
         InstrumentSyncCompleted,
         BrokerSessionExpired,
@@ -183,6 +193,7 @@ _AGENT_FIXABLE_ERRORS = (
     NoOptionsError,
     SandboxConfigError,
     CalendarError,
+    UnknownOrderError,
 )
 
 
@@ -373,6 +384,12 @@ def get_option_chain(
     return OptionChainResult.of(chain, expiries, now)
 
 
+_NEXT_STEP = {
+    OrderStatus.FILLED: "get_positions shows the position and its P&L.",
+    OrderStatus.PENDING: "Rests until a live price crosses it; openticker-serve must be running "
+    "to fill it. get_orderbook shows its status; cancel_order withdraws it.",
+}
+
 Quantity = Annotated[
     int, Field(ge=1, description="Units, not lots: a multiple of the lot size for F&O.")
 ]
@@ -400,12 +417,26 @@ def place_order(
         ),
     ],
     order_type: Annotated[
-        OrderType, Field(description="Only MARKET is supported for now.")
+        OrderType,
+        Field(
+            description="MARKET fills now. LIMIT rests until the price reaches `price`. "
+            "SL-M fills at the market once the price reaches `trigger_price`. SL, once "
+            "`trigger_price` is reached, rests as a limit at `price`."
+        ),
     ] = OrderType.MARKET,
-    price: Annotated[Price, Field(description="Limit price; leave unset for MARKET.")] = None,
+    price: Annotated[Price, Field(description="Limit price: LIMIT and SL only.")] = None,
+    trigger_price: Annotated[
+        Price,
+        Field(
+            description="SL and SL-M only: a buy triggers when the price rises to it, a sell "
+            "when it falls to it. Must not already be crossed."
+        ),
+    ] = None,
 ) -> PlaceOrderResult:
-    """Paper trade: fill a MARKET order in the local sandbox at the broker's
-    live price. Nothing is sent to the broker. Checks the order shape, the
+    """Paper trade in the local sandbox; nothing is sent to the broker. MARKET
+    fills at the live price. LIMIT/SL/SL-M orders rest as PENDING (margin set
+    aside) and fill in openticker-serve when a live price crosses them; they
+    expire at the session's end. Checks the order shape, market hours, the
     capital cap and virtual funds first; a rejection says why."""
     with _agent_facing_errors():
         request = OrderRequest(
@@ -415,6 +446,7 @@ def place_order(
             product=product,
             order_type=order_type,
             price=price,
+            trigger_price=trigger_price,
             triggered_by="mcp",
         )
         result = place_order_use_case(
@@ -428,9 +460,7 @@ def place_order(
     return PlaceOrderResult.of(
         request,
         result,
-        "get_positions shows the position and its P&L."
-        if result.status is OrderStatus.FILLED
-        else "Fix what the reason says and place the order again.",
+        _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
     )
 
 
@@ -447,6 +477,25 @@ def get_market_status(
     with _agent_facing_errors():
         statuses = get_market_status_use_case(exchanges, clock())
     return MarketStatusesResult(exchanges=[MarketStatusResult.of(status) for status in statuses])
+
+
+@mcp.tool(
+    title="Cancel sandbox order",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def cancel_order(
+    broker: Broker,
+    order_id: Annotated[str, Field(description="From place_order or get_orderbook.")],
+) -> CancelOrderResult:
+    """Withdraw a PENDING sandbox order and release the margin it held. An
+    order that already filled or was cancelled is left as it is."""
+    with _agent_facing_errors():
+        result = cancel_order_use_case(
+            order_id, order_broker(broker, os.environ), event_bus(), "mcp"
+        )
+    return CancelOrderResult.of(order_id, result)
 
 
 @mcp.tool(

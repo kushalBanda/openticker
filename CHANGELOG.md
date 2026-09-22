@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Resting LIMIT, SL and SL-M sandbox orders (margin held while pending) filled by `openticker-serve` as live prices cross them; `cancel_order` tool and `DELETE /api/v1/orders/{order_id}`. Pending orders expire at the session's end. Intraday (MIS) positions are squared off 15 minutes before the close.
+- Expiry settlement: positions in expired futures and options are closed at the underlying's closing price on expiry day (options at intrinsic value), including catch-up after the daemon was down. Notified as `PositionSettled`.
+- Existing databases gain new columns automatically on upgrade (additive changes only, ADR 18).
 - Market calendar with the 2026 NSE, BSE and MCX holidays, including MCX evening sessions and special sessions (`get_market_status` tool and route). Sandbox MARKET orders are refused while the exchange is closed.
 - Live prices in `openticker-serve` from Kite's WebSocket ticker, for open sandbox positions and `OPENTICKER_WATCH`. Reconnects with backoff; an expired broker session sends one "log in" notification.
 - REST API (`openticker-serve`) mirroring every MCP tool under `/api/v1`, with API keys (`openticker-serve keys create|list|revoke`) stored as hashes. Binds to `127.0.0.1:8750` by default (`OPENTICKER_BIND`).

@@ -39,6 +39,17 @@ class OrderFailed:
 
 
 @dataclass(frozen=True)
+class OrderCancelled:
+    """A pending order withdrawn by the user, or expired at the session's end."""
+
+    order_id: str
+    symbol: str
+    reason: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class RiskBreached:
     symbol: str
     reason: str
@@ -60,4 +71,17 @@ class BrokerSessionExpired:
 
     broker: str
     detail: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class PositionSettled:
+    """An expired futures or options position closed at its settlement price."""
+
+    symbol: str
+    product: str
+    quantity: int  # signed, as held before settlement
+    price: float
+    realized_pnl: float
+    detail: str  # how the price was reached
     occurred_at: datetime = field(default_factory=_now)

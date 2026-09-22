@@ -85,3 +85,9 @@ class FakeBrokerPort:
 
     def get_orderbook(self, limit: int) -> list[Order]:
         raise NotImplementedError("the live order book is not implemented")
+
+    def get_order(self, order_id: str) -> Order | None:
+        raise NotImplementedError("live order lookup is not implemented")
+
+    def cancel_order(self, order_id: str) -> OrderResult:
+        raise NotImplementedError("live order cancellation is not implemented")

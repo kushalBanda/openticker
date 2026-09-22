@@ -4,12 +4,24 @@ channel never delays the use case that published the event."""
 
 from collections.abc import Callable, Sequence
 
-from openticker.events.types import BrokerSessionExpired, OrderFailed, OrderFilled, RiskBreached
+from openticker.events.types import (
+    BrokerSessionExpired,
+    OrderFailed,
+    OrderFilled,
+    PositionSettled,
+    RiskBreached,
+)
 from openticker.ports.notification_port import NotificationPort
 
 # OrderPlaced is audited, not notified: a market order fills at once, and one
 # message per order is enough.
-NOTIFIED_EVENTS: tuple[type, ...] = (OrderFilled, OrderFailed, RiskBreached, BrokerSessionExpired)
+NOTIFIED_EVENTS: tuple[type, ...] = (
+    OrderFilled,
+    OrderFailed,
+    RiskBreached,
+    BrokerSessionExpired,
+    PositionSettled,
+)
 
 
 def describe(event: object) -> tuple[str, str] | None:
@@ -27,6 +39,12 @@ def describe(event: object) -> tuple[str, str] | None:
             )
         case RiskBreached():
             return f"Risk breached: {event.symbol} ({event.reason})", event.detail
+        case PositionSettled():
+            subject = (
+                f"Expired: {event.symbol} settled at {event.price:,.2f}, "
+                f"P&L {event.realized_pnl:+,.2f}"
+            )
+            return subject, f"{event.quantity} {event.product} closed at expiry. {event.detail}"
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
     return None

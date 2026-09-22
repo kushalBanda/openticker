@@ -25,6 +25,7 @@ from openticker.adapters.brokers.registry import (
 from openticker.adapters.inbound.mcp_models import (
     AuditLogResult,
     BarsResult,
+    CancelOrderResult,
     ConnectResult,
     FundsResult,
     LoginUrlResult,
@@ -56,6 +57,7 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.use_cases.api_keys import authenticate
+from openticker.use_cases.cancel_order import UnknownOrderError, cancel_order
 from openticker.use_cases.connect_broker import connect_broker
 from openticker.use_cases.evaluate_risk import evaluate_risk
 from openticker.use_cases.get_audit_log import get_audit_log
@@ -80,11 +82,18 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownBrokerError, 404),
     (UnsupportedUnderlyingError, 404),
     (NoOptionsError, 404),
+    (UnknownOrderError, 404),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
     (CalendarError, 503),
 )
+
+_NEXT_STEP = {
+    OrderStatus.FILLED: "GET /api/v1/positions shows the position and its P&L.",
+    OrderStatus.PENDING: "Rests until a live price crosses it; fills while openticker-serve "
+    "runs. DELETE /api/v1/orders/{order_id} withdraws it.",
+}
 
 _api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
@@ -123,7 +132,8 @@ class PlaceOrderBody(BaseModel):
     quantity: int = Field(ge=1, description="Units, not lots.")
     product: Product
     order_type: OrderType = OrderType.MARKET
-    price: float | None = Field(default=None, gt=0, description="Leave unset for MARKET.")
+    price: float | None = Field(default=None, gt=0, description="LIMIT and SL only.")
+    trigger_price: float | None = Field(default=None, gt=0, description="SL and SL-M only.")
 
 
 class RiskBody(BaseModel):
@@ -252,6 +262,7 @@ def create_app(
             product=body.product,
             order_type=body.order_type,
             price=body.price,
+            trigger_price=body.trigger_price,
             triggered_by=f"rest:{key.name}",
         )
         result = place_order(
@@ -265,10 +276,14 @@ def create_app(
         return PlaceOrderResult.of(
             request,
             result,
-            "GET /api/v1/positions shows the position and its P&L."
-            if result.status is OrderStatus.FILLED
-            else "Fix what the reason says and place the order again.",
+            _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
         )
+
+    @api.delete("/orders/{order_id}")
+    def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
+        """Withdraws a PENDING order; anything else is left as it is."""
+        result = cancel_order(order_id, order_broker(broker, env), events, f"rest:{key.name}")
+        return CancelOrderResult.of(order_id, result)
 
     @api.get("/market-status")
     def market_status(exchange: Exchange | None = None) -> MarketStatusesResult:

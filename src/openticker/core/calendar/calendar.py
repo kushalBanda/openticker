@@ -26,6 +26,7 @@ _MCX_CLOSE_US_SUMMER = time(23, 30)
 _MCX_CLOSE_US_WINTER = time(23, 55)
 _NEW_YORK = ZoneInfo("America/New_York")
 _LOOKAHEAD_DAYS = 31
+SQUARE_OFF_BEFORE_CLOSE = timedelta(minutes=15)
 
 
 class CalendarError(Exception):
@@ -65,6 +66,19 @@ def next_session(after: datetime, exchange: Exchange, calendar: MarketCalendar) 
         if hours is not None and hours.closes_at > after:
             return hours
     raise CalendarError(f"no {exchange} session in the {_LOOKAHEAD_DAYS} days after {after}")
+
+
+def square_off_at(hours: SessionHours) -> datetime:
+    """When intraday (MIS) positions are closed: 15 minutes before the close,
+    as brokers do, so they exit while the market is still liquid."""
+    return hours.closes_at - SQUARE_OFF_BEFORE_CLOSE
+
+
+def intraday_allowed(now: datetime, exchange: Exchange, calendar: MarketCalendar) -> bool:
+    """Whether an MIS position may be open now: inside today's session and
+    before its square-off. At any other time one left open is overdue."""
+    hours = session_hours(now.astimezone(EXCHANGE_TIMEZONE).date(), exchange, calendar)
+    return hours is not None and hours.opens_at <= now < square_off_at(hours)
 
 
 def market_status(now: datetime, exchange: Exchange, calendar: MarketCalendar) -> MarketStatus:

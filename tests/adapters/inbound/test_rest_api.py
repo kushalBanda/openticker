@@ -35,6 +35,7 @@ ROUTE_FOR_TOOL = {
     "evaluate_risk": ("POST", "/api/v1/risk/evaluate"),
     "get_audit_log": ("GET", "/api/v1/audit"),
     "get_market_status": ("GET", "/api/v1/market-status"),
+    "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
 }
 
 
@@ -95,7 +96,9 @@ def test_every_route_but_health_needs_a_key(events: EventBus) -> None:
 
     assert len(routes) == len(ROUTE_FOR_TOOL)
     for method, path in routes:
-        response = anonymous.request(method, path.replace("{broker}", "fake"))
+        response = anonymous.request(
+            method, path.replace("{broker}", "fake").replace("{order_id}", "SB1")
+        )
         assert response.status_code == 401, path
 
 
@@ -191,3 +194,27 @@ def test_market_status_route(client: TestClient) -> None:
     [nse] = client.get("/api/v1/market-status", params={"exchange": "NSE"}).json()["exchanges"]
 
     assert nse["is_open"] and nse["session_closes_at"] == "2026-09-22T15:30:00+05:30"
+
+
+def test_resting_order_and_cancel_over_rest(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    placed = client.post(
+        "/api/v1/orders",
+        json={
+            "broker": "fake",
+            "symbol": "RELIANCE",
+            "exchange": "NSE",
+            "side": "SELL",
+            "quantity": 1,
+            "product": "MIS",
+            "order_type": "SL-M",
+            "trigger_price": FAKE_LAST_PRICE - 50,
+        },
+    ).json()
+
+    cancelled = client.delete(f"/api/v1/orders/{placed['order_id']}", params={"broker": "fake"})
+    missing = client.delete("/api/v1/orders/SBNOPE", params={"broker": "fake"})
+
+    assert placed["status"] == "PENDING"
+    assert cancelled.json()["status"] == "CANCELLED"
+    assert missing.status_code == 404

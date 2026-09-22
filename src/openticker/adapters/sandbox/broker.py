@@ -3,17 +3,29 @@ docs/adr). Prices come from the real broker adapter it wraps; orders, fills,
 positions and funds live only in the local sandbox tables. No order ever
 reaches the broker.
 
-MARKET orders fill at once at a fresh quote. Resting orders (LIMIT, SL) wait
-for the always-on daemon's execution engine and are rejected until then by
-`validate_order`.
+MARKET orders fill at once at a fresh quote. LIMIT, SL and SL-M orders rest
+as PENDING, with margin set aside for the part that would open a position,
+until the daemon's execution engine sees a live price cross them
+(`fill_pending`). A LIMIT the market is already through fills at once, as on
+an exchange; an SL or SL-M whose trigger is already crossed is refused, as
+exchanges refuse it.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 
-from openticker.core.orders.models import Order, OrderRequest, OrderResult, OrderStatus
+from sqlalchemy.orm import Session
+
+from openticker.core.orders.matching import limit_crossed, trigger_crossed
+from openticker.core.orders.models import (
+    Order,
+    OrderRequest,
+    OrderResult,
+    OrderStatus,
+    OrderType,
+)
 from openticker.core.orders.sandbox import (
     Leverage,
     apply_fill,
@@ -29,10 +41,11 @@ from openticker.ports.models import (
     Position,
     Product,
     Quote,
+    Side,
 )
 from openticker.storage.sqlite import sandbox_repo
 from openticker.storage.sqlite.instruments_repo import get_instrument
-from openticker.storage.sqlite.sandbox_repo import StoredOrder
+from openticker.storage.sqlite.sandbox_repo import FundsState, StoredOrder
 
 
 @dataclass(frozen=True)
@@ -42,10 +55,17 @@ class SandboxSettings:
 
 
 class SandboxBroker:
-    def __init__(self, name: str, market: BrokerPort, settings: SandboxSettings) -> None:
+    def __init__(
+        self,
+        name: str,
+        market: BrokerPort,
+        settings: SandboxSettings,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._name = name
         self._market = market
         self._settings = settings
+        self._clock = clock
 
     # Market data and login pass straight through to the real broker.
 
@@ -70,10 +90,9 @@ class SandboxBroker:
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         quote = self._market.get_quote(request.instrument)
-        placed_at = datetime.now(UTC)
         order = StoredOrder(
             order_id=f"SB{uuid.uuid4().hex[:12].upper()}",
-            placed_at=placed_at,
+            placed_at=self._clock(),
             exchange=request.instrument.exchange.value,
             symbol=request.instrument.symbol,
             side=request.side,
@@ -86,59 +105,172 @@ class SandboxBroker:
             triggered_by=request.triggered_by,
             strategy_id=request.strategy_id,
             run_id=request.run_id,
+            price=request.price,
+            trigger_price=request.trigger_price,
         )
+        fresh = quote_is_fillable(quote)
+        price = quote.last_price
         with sandbox_repo.fill_transaction() as session:
-            reason = self._rejection(request, quote)
-            if reason is None:
-                price = quote.last_price
-                funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
-                held = sandbox_repo.load_position(
-                    session, order.exchange, order.symbol, request.product
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            if request.order_type is OrderType.MARKET or (
+                request.order_type is OrderType.LIMIT
+                and fresh
+                and request.price is not None
+                and limit_crossed(request.side, request.price, price)
+            ):
+                reason = (
+                    self._fill(session, request.instrument, order, price, funds)
+                    if fresh
+                    else f"no fresh price for {order.symbol} (last {price}); not filled"
                 )
-                outcome = apply_fill(
-                    held,
-                    request.side,
-                    request.quantity,
-                    price,
-                    leverage_for(
-                        request.instrument, request.product, request.side, self._settings.leverage
-                    ),
+                order = replace(
+                    order,
+                    status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
+                    fill_price=None if reason else price,
+                    reason=reason,
                 )
-                if request.product is Product.CNC and outcome.position.quantity < 0:
-                    reason = "delivery (CNC) shares can't be sold short; use MIS to short intraday"
-                elif outcome.opened_quantity and outcome.margin_required > (
-                    funds.available_cash + outcome.margin_released + outcome.realized_pnl
-                ):
-                    # Closing is never refused for lack of funds; only the part
-                    # that opens a position needs margin.
-                    reason = (
-                        f"insufficient sandbox funds: needs {outcome.margin_required:,.2f} margin, "
-                        f"{funds.available_cash:,.2f} available"
-                    )
-                else:
-                    sandbox_repo.save_position(
-                        session, order.exchange, order.symbol, request.product, outcome.position
-                    )
-                    sandbox_repo.save_funds(
-                        session,
-                        replace(
-                            funds,
-                            used_margin=funds.used_margin
-                            - outcome.margin_released
-                            + outcome.margin_required,
-                            realized_pnl=funds.realized_pnl + outcome.realized_pnl,
-                        ),
-                    )
-                    order = replace(order, status=OrderStatus.FILLED, fill_price=price)
-            if reason is not None:
-                order = replace(order, reason=reason)
+            elif (
+                fresh
+                and request.trigger_price is not None
+                and trigger_crossed(request.side, request.trigger_price, price)
+            ):
+                order = replace(
+                    order,
+                    reason=f"trigger_price {request.trigger_price} is already crossed "
+                    f"(last {price}); use a MARKET or LIMIT order",
+                )
+            else:
+                order = self._rest(session, request.instrument, order, funds)
             sandbox_repo.record_order(session, order)
-        return OrderResult(
-            status=order.status,
-            broker_order_id=order.order_id,
-            reason=order.reason,
-            fill_price=order.fill_price,
-        )
+        return _result(order)
+
+    def get_order(self, order_id: str) -> Order | None:
+        stored = sandbox_repo.find_order(order_id)
+        if stored is None:
+            return None
+        instrument = get_instrument(stored.symbol, stored.exchange)
+        return stored.to_order(instrument) if instrument is not None else None
+
+    def cancel_order(self, order_id: str) -> OrderResult:
+        return self.expire_order(order_id, "cancelled", self._clock())
+
+    def pending_orders(self) -> list[Order]:
+        return [
+            stored.to_order(instrument)
+            for stored in sandbox_repo.list_pending_orders()
+            if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
+        ]
+
+    def fill_pending(self, order_id: str, price: float, now: datetime) -> OrderResult:
+        with sandbox_repo.fill_transaction() as session:
+            order = sandbox_repo.load_order(session, order_id)
+            if order is None or order.status is not OrderStatus.PENDING:
+                return _not_pending(order_id, order)
+            instrument = get_instrument(order.symbol, order.exchange)
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            funds = replace(funds, used_margin=funds.used_margin - order.reserved_margin)
+            reason = (
+                self._fill(session, instrument, order, price, funds)
+                if instrument is not None
+                else f"{order.symbol} is no longer in the instrument master"
+            )
+            if reason is not None:
+                sandbox_repo.save_funds(session, funds)
+            order = replace(
+                order,
+                status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
+                fill_price=None if reason else price,
+                reason=reason,
+                reserved_margin=0.0,
+            )
+            sandbox_repo.update_order(session, order, now)
+        return _result(order)
+
+    def arm_pending(self, order_id: str, now: datetime) -> None:
+        with sandbox_repo.fill_transaction() as session:
+            order = sandbox_repo.load_order(session, order_id)
+            if order is not None and order.status is OrderStatus.PENDING:
+                sandbox_repo.update_order(session, replace(order, triggered=True), now)
+
+    def expire_order(self, order_id: str, reason: str, now: datetime) -> OrderResult:
+        with sandbox_repo.fill_transaction() as session:
+            order = sandbox_repo.load_order(session, order_id)
+            if order is None or order.status is not OrderStatus.PENDING:
+                return _not_pending(order_id, order)
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            sandbox_repo.save_funds(
+                session, replace(funds, used_margin=funds.used_margin - order.reserved_margin)
+            )
+            order = replace(order, status=OrderStatus.CANCELLED, reason=reason, reserved_margin=0.0)
+            sandbox_repo.update_order(session, order, now)
+        return _result(order)
+
+    def open_positions(self) -> list[Position]:
+        return [
+            Position(
+                instrument=instrument,
+                product=item.product,
+                quantity=item.position.quantity,
+                average_price=item.position.average_price,
+                last_price=None,
+                realized_pnl=item.position.realized_pnl,
+                unrealized_pnl=None,
+            )
+            for item in sandbox_repo.list_positions()
+            if item.position.quantity
+            and (instrument := get_instrument(item.symbol, item.exchange)) is not None
+        ]
+
+    def settle_position(
+        self, instrument: Instrument, product: Product, price: float, reason: str, now: datetime
+    ) -> OrderResult:
+        with sandbox_repo.fill_transaction() as session:
+            exchange = instrument.exchange.value
+            held = sandbox_repo.load_position(session, exchange, instrument.symbol, product)
+            if held.quantity == 0:
+                return OrderResult(
+                    status=OrderStatus.REJECTED,
+                    broker_order_id=None,
+                    reason=f"no open {product} position in {instrument.symbol}",
+                )
+            side = Side.SELL if held.quantity > 0 else Side.BUY
+            order = StoredOrder(
+                order_id=f"SB{uuid.uuid4().hex[:12].upper()}",
+                placed_at=now,
+                exchange=exchange,
+                symbol=instrument.symbol,
+                side=side,
+                quantity=abs(held.quantity),
+                product=product,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+                fill_price=price,
+                reason=reason,
+                triggered_by=SETTLEMENT_TRIGGER,
+                strategy_id=None,
+                run_id=None,
+            )
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            outcome = apply_fill(
+                held,
+                side,
+                order.quantity,
+                price,
+                leverage_for(instrument, product, side, self._settings.leverage),
+            )
+            sandbox_repo.save_position(
+                session, exchange, instrument.symbol, product, outcome.position
+            )
+            sandbox_repo.save_funds(
+                session,
+                replace(
+                    funds,
+                    used_margin=funds.used_margin - outcome.margin_released,
+                    realized_pnl=funds.realized_pnl + outcome.realized_pnl,
+                ),
+            )
+            sandbox_repo.record_order(session, order)
+        return _result(order)
 
     def get_positions(self) -> list[Position]:
         stored = [
@@ -192,11 +324,95 @@ class SandboxBroker:
             if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
         ]
 
-    @staticmethod
-    def _rejection(request: OrderRequest, quote: Quote) -> str | None:
-        if not quote_is_fillable(quote):
-            return (
-                f"no fresh price for {request.instrument.symbol} (last {quote.last_price}); "
-                "not filled"
-            )
+    def _fill(
+        self,
+        session: Session,
+        instrument: Instrument,
+        order: StoredOrder,
+        price: float,
+        funds: FundsState,
+    ) -> str | None:
+        """Applies the fill to position and funds, or says why it can't."""
+        held = sandbox_repo.load_position(session, order.exchange, order.symbol, order.product)
+        outcome = apply_fill(
+            held,
+            order.side,
+            order.quantity,
+            price,
+            leverage_for(instrument, order.product, order.side, self._settings.leverage),
+        )
+        if order.product is Product.CNC and outcome.position.quantity < 0:
+            return _CNC_SHORT
+        # Closing is never refused for lack of funds; only the part that opens
+        # a position needs margin.
+        if outcome.opened_quantity and outcome.margin_required > (
+            funds.available_cash + outcome.margin_released + outcome.realized_pnl
+        ):
+            return _insufficient(outcome.margin_required, funds.available_cash)
+        sandbox_repo.save_position(
+            session, order.exchange, order.symbol, order.product, outcome.position
+        )
+        sandbox_repo.save_funds(
+            session,
+            replace(
+                funds,
+                used_margin=funds.used_margin - outcome.margin_released + outcome.margin_required,
+                realized_pnl=funds.realized_pnl + outcome.realized_pnl,
+            ),
+        )
         return None
+
+    def _rest(
+        self, session: Session, instrument: Instrument, order: StoredOrder, funds: FundsState
+    ) -> StoredOrder:
+        """A PENDING order holding margin for what it would open, valued at
+        its limit (or trigger, for SL-M)."""
+        reference = order.price if order.price is not None else order.trigger_price
+        assert reference is not None  # validate_order: every resting type has one
+        held = sandbox_repo.load_position(session, order.exchange, order.symbol, order.product)
+        outcome = apply_fill(
+            held,
+            order.side,
+            order.quantity,
+            reference,
+            leverage_for(instrument, order.product, order.side, self._settings.leverage),
+        )
+        if order.product is Product.CNC and outcome.position.quantity < 0:
+            return replace(order, reason=_CNC_SHORT)
+        reserve = outcome.margin_required
+        if reserve > funds.available_cash:
+            return replace(order, reason=_insufficient(reserve, funds.available_cash))
+        sandbox_repo.save_funds(session, replace(funds, used_margin=funds.used_margin + reserve))
+        return replace(order, status=OrderStatus.PENDING, reserved_margin=reserve)
+
+
+SETTLEMENT_TRIGGER = "expiry-settlement"
+_CNC_SHORT = "delivery (CNC) shares can't be sold short; use MIS to short intraday"
+
+
+def _insufficient(needed: float, available: float) -> str:
+    return f"insufficient sandbox funds: needs {needed:,.2f} margin, {available:,.2f} available"
+
+
+def _result(order: StoredOrder) -> OrderResult:
+    return OrderResult(
+        status=order.status,
+        broker_order_id=order.order_id,
+        reason=order.reason,
+        fill_price=order.fill_price,
+    )
+
+
+def _not_pending(order_id: str, order: StoredOrder | None) -> OrderResult:
+    if order is None:
+        return OrderResult(
+            status=OrderStatus.REJECTED,
+            broker_order_id=order_id,
+            reason=f"no sandbox order {order_id}",
+        )
+    return OrderResult(
+        status=order.status,
+        broker_order_id=order_id,
+        reason=f"order {order_id} is already {order.status}; nothing to change",
+        fill_price=order.fill_price,
+    )

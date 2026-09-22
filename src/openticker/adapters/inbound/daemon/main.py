@@ -1,7 +1,7 @@
 """`openticker-serve`: the long-running server (ADR 12 in docs/adr), and the
 commands that manage its API keys (ADR 17 in docs/adr).
 
-    openticker-serve                     run the REST API and the live-price feed
+    openticker-serve                     run the REST API, live prices and sandbox execution
     openticker-serve keys create <name>  print a new key, once
     openticker-serve keys list
     openticker-serve keys revoke <name>
@@ -21,11 +21,13 @@ import uvicorn
 from dotenv import load_dotenv
 
 from openticker.adapters.brokers.registry import FEED_REGISTRY, get_feed
+from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.rest_api import API_KEY_HEADER, create_app
-from openticker.composition import build_event_bus, watch_list
+from openticker.composition import build_event_bus, order_broker, watch_list
 from openticker.ports.models import EXCHANGE_TIMEZONE
+from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
 from openticker.use_cases.api_keys import (
     InvalidApiKeyNameError,
@@ -147,6 +149,16 @@ def _serve(env: Mapping[str, str]) -> None:
             ).run,
             args=(stop,),
             name=f"feed-{broker}",
+        )
+        for broker in FEED_REGISTRY
+    ]
+    feeds += [
+        threading.Thread(
+            target=ExecutionLoop(
+                partial(order_broker, broker, env), prices, events, load_calendar
+            ).run,
+            args=(stop,),
+            name=f"execution-{broker}",
         )
         for broker in FEED_REGISTRY
     ]

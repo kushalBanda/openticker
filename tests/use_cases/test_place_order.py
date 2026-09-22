@@ -142,3 +142,43 @@ def test_market_order_is_refused_while_the_exchange_is_closed() -> None:
     assert evening.reason == "NSE is closed (after the session); it next opens Wed 23 Sep 09:15 IST"
     assert sandbox.orders_placed == 0
     assert [type(event) for event in events.events] == [OrderFailed, OrderFailed]
+
+
+def test_a_resting_order_is_audited_as_placed_not_filled() -> None:
+    sandbox = _CountingSandbox(PricedBroker(100.0))
+    events = _Recorder()
+    limit = replace(_order(), order_type=OrderType.LIMIT, price=95.0)
+
+    result = place_order(limit, sandbox, events, None, NO_HOLIDAYS, NOW)
+
+    assert result.status is OrderStatus.PENDING
+    assert [type(event) for event in events.events] == [OrderPlaced]
+
+
+def test_intraday_orders_stop_at_the_square_off() -> None:
+    sandbox = _CountingSandbox(PricedBroker(100.0))
+    at_1520 = datetime(2026, 9, 22, 9, 50, tzinfo=UTC)
+
+    intraday = place_order(_order(), sandbox, _Recorder(), None, NO_HOLIDAYS, at_1520)
+    delivery = place_order(
+        replace(_order(), product=Product.CNC), sandbox, _Recorder(), None, NO_HOLIDAYS, at_1520
+    )
+
+    assert intraday.status is OrderStatus.REJECTED
+    assert intraday.reason == (
+        "after the 15:15 square-off, intraday (MIS) orders on NSE may only reduce a position; "
+        "use NRML or CNC to open one"
+    )
+    assert delivery.status is OrderStatus.FILLED
+
+
+def test_an_mis_position_can_still_be_closed_by_hand_after_the_square_off() -> None:
+    sandbox = _CountingSandbox(PricedBroker(100.0))
+    place_order(_order(quantity=10), sandbox, _Recorder(), None, NO_HOLIDAYS, NOW)
+    at_1520 = datetime(2026, 9, 22, 9, 50, tzinfo=UTC)
+
+    close = place_order(_order(Side.SELL, 10), sandbox, _Recorder(), None, NO_HOLIDAYS, at_1520)
+    flip = place_order(_order(Side.SELL, 20), sandbox, _Recorder(), None, NO_HOLIDAYS, at_1520)
+
+    assert close.status is OrderStatus.FILLED
+    assert flip.status is OrderStatus.REJECTED

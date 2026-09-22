@@ -68,6 +68,12 @@ class SandboxOrderRow(Base):
     triggered_by: Mapped[str]
     strategy_id: Mapped[str | None] = mapped_column(index=True)
     run_id: Mapped[str | None] = mapped_column(index=True)
+    # Resting orders. Nullable, so they can be added to an existing table (ADR 18 in docs/adr).
+    price: Mapped[float | None]
+    trigger_price: Mapped[float | None]
+    triggered: Mapped[bool | None]  # SL: trigger crossed, now resting as a limit
+    reserved_margin: Mapped[float | None]  # held in used_margin while pending
+    updated_at: Mapped[datetime | None]  # UTC, stored naive: filled, cancelled or expired
 
 
 class SandboxTradeRow(Base):

@@ -17,7 +17,8 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `get_quote` | Live last traded price. |
 | `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
 | `get_option_chain` | Calls and puts around at-the-money for an index or stock: price, open interest, implied volatility, Greeks. |
-| `place_order` | Paper trade: fill a MARKET order in the local sandbox at the live price, while the exchange is open. Nothing reaches the broker. |
+| `place_order` | Paper trade in the local sandbox while the exchange is open: MARKET fills at the live price; LIMIT, SL and SL-M orders wait and fill when the price reaches them. Nothing reaches the broker. |
+| `cancel_order` | Withdraw a waiting order. |
 | `get_market_status` | Whether NSE, BSE, NFO, BFO and MCX are open now, and the next session. Knows weekends, exchange holidays and special sessions. |
 | `get_positions`, `get_funds`, `get_orderbook` | Sandbox positions with live P&L, virtual capital and margin, order history. |
 | `evaluate_risk` | Check stop loss, target and capital cap settings against the live price before acting. |
@@ -75,7 +76,7 @@ curl -H "X-API-Key: otk_..." "http://127.0.0.1:8750/api/v1/quote?broker=zerodha&
 
 Every route except `/health` needs a key. `keys list` and `keys revoke <name>` manage them. The server listens on this machine only unless `OPENTICKER_BIND` says otherwise.
 
-The server also streams live prices from the broker (Kite's WebSocket ticker) for every open sandbox position and anything listed in `OPENTICKER_WATCH`. If the broker session expires, it notifies you to log in again.
+The server also streams live prices from the broker (Kite's WebSocket ticker) for every open sandbox position, every waiting order and anything listed in `OPENTICKER_WATCH`. It fills waiting LIMIT/SL/SL-M orders as prices cross them, closes intraday (MIS) positions 15 minutes before the session ends, and settles expired futures and options at the underlying's closing price on expiry day. If the broker session expires, it notifies you to log in again.
 
 ### Notifications (optional)
 

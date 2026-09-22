@@ -202,3 +202,31 @@ def test_market_status_and_closed_market_orders(monkeypatch: pytest.MonkeyPatch)
     assert len(mcp_server.get_market_status().exchanges) == 5
     assert placed.status == "REJECTED" and placed.reason is not None
     assert "Mahatma Gandhi Jayanti" in placed.reason
+
+
+def test_a_limit_order_rests_and_can_be_cancelled() -> None:
+    from openticker.core.orders.models import OrderType
+
+    mcp_server.sync_instruments(broker="fake")
+
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=2,
+        product=Product.CNC,
+        order_type=OrderType.LIMIT,
+        price=FAKE_LAST_PRICE - 100,
+    )
+    assert placed.status == "PENDING" and placed.order_id is not None
+    assert "openticker-serve" in placed.next_step
+    [entry] = mcp_server.get_orderbook(broker="fake").orders
+    assert (entry.status, entry.price) == ("PENDING", FAKE_LAST_PRICE - 100)
+
+    cancelled = mcp_server.cancel_order(broker="fake", order_id=placed.order_id)
+
+    assert cancelled.status == "CANCELLED"
+    assert mcp_server.get_funds(broker="fake").used_margin == 0.0
+    with pytest.raises(ToolError, match="no order"):
+        mcp_server.cancel_order(broker="fake", order_id="SBNOPE")
