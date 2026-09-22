@@ -118,3 +118,12 @@ class Funds:
     used_margin: float
     total_capital: float
     realized_pnl: float
+
+
+@dataclass(frozen=True)
+class Tick:
+    """One streamed price (ADR 13 in docs/adr)."""
+
+    instrument: Instrument
+    last_price: float
+    received_at: datetime  # tz-aware UTC, our clock: an LTP tick carries no time of its own

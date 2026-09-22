@@ -62,3 +62,17 @@ def test_sandbox_settings_read_positive_numbers_and_reject_the_rest() -> None:
     for bad in ("-1", "lots", "nan"):
         with pytest.raises(SandboxConfigError, match="OPENTICKER_CAPITAL_CAP"):
             capital_cap({"OPENTICKER_CAPITAL_CAP": bad})
+
+
+def test_watch_list_reads_exchange_symbol_pairs() -> None:
+    from openticker.composition import WatchConfigError, watch_list
+    from openticker.ports.models import Exchange
+
+    assert watch_list({}) == []
+    assert watch_list({"OPENTICKER_WATCH": "NSE:NIFTY 50, NFO:NIFTY29SEP26FUT,"}) == [
+        ("NIFTY 50", Exchange.NSE),
+        ("NIFTY29SEP26FUT", Exchange.NFO),
+    ]
+    for bad in ("NIFTY 50", "NYSE:IBM", "NSE:"):
+        with pytest.raises(WatchConfigError, match="EXCHANGE:SYMBOL"):
+            watch_list({"OPENTICKER_WATCH": bad})

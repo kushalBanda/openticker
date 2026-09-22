@@ -3,6 +3,8 @@ adapter -> events. The adapter is the sandbox (ADR 11 in docs/adr)."""
 
 from datetime import datetime
 
+from openticker.core.calendar.calendar import market_status
+from openticker.core.calendar.models import MarketCalendar
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus
 from openticker.core.orders.validation import validate_order
 from openticker.core.risk.models import BreachReason, PositionRisk
@@ -19,15 +21,20 @@ def place_order(
     broker: BrokerPort,
     events: EventPublisher,
     capital_cap: float | None,
+    calendar: MarketCalendar,
     now: datetime,
 ) -> OrderResult:
     """`capital_cap` is the most one position may be worth after this order.
     It never blocks an order that only reduces a position: a cap must not trap
-    anyone in a trade."""
+    anyone in a trade. A MARKET order needs its exchange open: outside the
+    session the last price is yesterday's, not one anyone could trade at."""
     symbol = request.instrument.symbol
     validation = validate_order(request, now.astimezone(EXCHANGE_TIMEZONE).date())
     if not validation.valid:
         return _failed(events, request, OrderStatus.REJECTED, validation.reason or "invalid order")
+    closed = _market_closed(request, calendar, now)
+    if closed is not None:
+        return _failed(events, request, OrderStatus.REJECTED, closed)
 
     try:
         if capital_cap is not None:
@@ -71,6 +78,15 @@ def place_order(
             )
         )
     return result
+
+
+def _market_closed(request: OrderRequest, calendar: MarketCalendar, now: datetime) -> str | None:
+    exchange = request.instrument.exchange
+    status = market_status(now, exchange, calendar)
+    if status.is_open:
+        return None
+    opens = status.session.opens_at.strftime("%a %d %b %H:%M")
+    return f"{exchange} is closed ({status.closed_reason}); it next opens {opens} IST"
 
 
 def _capital_cap_breach(

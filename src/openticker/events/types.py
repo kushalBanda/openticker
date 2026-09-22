@@ -51,3 +51,13 @@ class InstrumentSyncCompleted:
     broker: str
     count: int
     occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class BrokerSessionExpired:
+    """The broker refused the stored session: live prices have stopped until
+    the user logs in again."""
+
+    broker: str
+    detail: str
+    occurred_at: datetime = field(default_factory=_now)

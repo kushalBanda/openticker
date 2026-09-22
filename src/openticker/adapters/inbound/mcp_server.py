@@ -4,10 +4,9 @@ broker by name. Tool design conventions: ADR 8 in docs/adr.
 """
 
 import atexit
-import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from importlib.metadata import version
@@ -27,36 +26,34 @@ from openticker.adapters.brokers.registry import (
     get_login_url,
 )
 from openticker.adapters.inbound.mcp_models import (
-    AuditEntryResult,
     AuditLogResult,
-    BarResult,
     BarsResult,
     ConnectResult,
     FundsResult,
-    InstrumentResult,
     LoginUrlResult,
+    MarketStatusesResult,
+    MarketStatusResult,
     OptionChainResult,
-    OrderbookEntryResult,
     OrderbookResult,
     PlaceOrderResult,
-    PositionResult,
     PositionsResult,
     QuoteResult,
     RiskCheckResult,
     SearchResult,
     SyncResult,
 )
-from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.composition import (
     SandboxConfigError,
     build_event_bus,
     capital_cap,
-    sandbox_settings,
+    order_broker,
 )
+from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.events.bus import EventBus
 from openticker.events.types import (
+    BrokerSessionExpired,
     InstrumentSyncCompleted,
     OrderFailed,
     OrderFilled,
@@ -72,12 +69,16 @@ from openticker.ports.models import (
     Product,
     Side,
 )
+from openticker.storage.calendar_file import load_calendar
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
 from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
 from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
 from openticker.use_cases.get_funds import get_funds as get_funds_use_case
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
+)
+from openticker.use_cases.get_market_status import (
+    get_market_status as get_market_status_use_case,
 )
 from openticker.use_cases.get_option_chain import NoOptionsError
 from openticker.use_cases.get_option_chain import get_option_chain as get_option_chain_use_case
@@ -103,8 +104,9 @@ Typical flow:
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
    strikes, prices, IV and Greeks around at-the-money.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
-   never sends anything to the broker. evaluate_risk checks stop/target settings
-   first; get_positions, get_funds and get_orderbook show the result.
+   never sends anything to the broker, and fills only while the exchange is open
+   (get_market_status). evaluate_risk checks stop/target settings first;
+   get_positions, get_funds and get_orderbook show the result.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -125,8 +127,18 @@ DEFAULT_STRIKE_COUNT = 10
 DEFAULT_ORDERBOOK_LIMIT = 20
 EVENT_TYPE_NAMES = [
     event.__name__
-    for event in (OrderPlaced, OrderFilled, OrderFailed, RiskBreached, InstrumentSyncCompleted)
+    for event in (
+        OrderPlaced,
+        OrderFilled,
+        OrderFailed,
+        RiskBreached,
+        InstrumentSyncCompleted,
+        BrokerSessionExpired,
+    )
 ]
+
+# The tools' clock; tests replace it to run at a fixed market time.
+clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 _event_bus: EventBus | None = None
 _event_bus_lock = threading.Lock()
@@ -170,6 +182,7 @@ _AGENT_FIXABLE_ERRORS = (
     UnsupportedUnderlyingError,
     NoOptionsError,
     SandboxConfigError,
+    CalendarError,
 )
 
 
@@ -271,10 +284,7 @@ def search_instruments(
         today=datetime.now(EXCHANGE_TIMEZONE).date(),
         limit=limit + 1,
     )
-    return SearchResult(
-        instruments=[InstrumentResult.of(instrument) for instrument in found[:limit]],
-        truncated=len(found) > limit,
-    )
+    return SearchResult.of(found, limit)
 
 
 @mcp.tool(
@@ -314,20 +324,7 @@ def get_historical_bars(
         bars = get_historical_bars_use_case(
             get_adapter(broker), symbol, exchange.value, interval.value, start_date, end_date
         )
-    returned = bars[-max_bars:]
-    return BarsResult(
-        symbol=symbol,
-        exchange=exchange,
-        interval=interval,
-        total_bars=len(bars),
-        bars=[BarResult.of(bar) for bar in returned],
-        note=(
-            f"Returned the last {len(returned)} of {len(bars)} bars. Narrow the date "
-            "range, use a coarser interval, or raise max_bars."
-            if len(returned) < len(bars)
-            else None
-        ),
-    )
+    return BarsResult.of(symbol, exchange, interval, bars, max_bars)
 
 
 @mcp.tool(
@@ -376,11 +373,6 @@ def get_option_chain(
     return OptionChainResult.of(chain, expiries, now)
 
 
-def order_broker(broker: str) -> SandboxBroker:
-    """The sandbox, pricing through the named broker (ADR 11 in docs/adr)."""
-    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(os.environ))
-
-
 Quantity = Annotated[
     int, Field(ge=1, description="Units, not lots: a multiple of the lot size for F&O.")
 ]
@@ -415,41 +407,46 @@ def place_order(
     """Paper trade: fill a MARKET order in the local sandbox at the broker's
     live price. Nothing is sent to the broker. Checks the order shape, the
     capital cap and virtual funds first; a rejection says why."""
-    now = datetime.now(UTC)
     with _agent_facing_errors():
-        instrument = resolve_instrument(symbol, exchange.value)
+        request = OrderRequest(
+            instrument=resolve_instrument(symbol, exchange.value),
+            side=side,
+            quantity=quantity,
+            product=product,
+            order_type=order_type,
+            price=price,
+            triggered_by="mcp",
+        )
         result = place_order_use_case(
-            OrderRequest(
-                instrument=instrument,
-                side=side,
-                quantity=quantity,
-                product=product,
-                order_type=order_type,
-                price=price,
-                triggered_by="mcp",
-            ),
-            order_broker(broker),
+            request,
+            order_broker(broker, os.environ),
             event_bus(),
             capital_cap(os.environ),
-            now,
+            load_calendar(),
+            clock(),
         )
-    filled = result.status is OrderStatus.FILLED
-    return PlaceOrderResult(
-        order_id=result.broker_order_id,
-        status=result.status,
-        symbol=symbol,
-        exchange=exchange,
-        side=side,
-        quantity=quantity,
-        product=product,
-        fill_price=result.fill_price,
-        reason=result.reason,
-        next_step=(
-            "get_positions shows the position and its P&L."
-            if filled
-            else "Fix what the reason says and place the order again."
-        ),
+    return PlaceOrderResult.of(
+        request,
+        result,
+        "get_positions shows the position and its P&L."
+        if result.status is OrderStatus.FILLED
+        else "Fix what the reason says and place the order again.",
     )
+
+
+@mcp.tool(
+    title="Get market status",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_market_status(
+    exchange: Annotated[Exchange | None, Field(description="Omit for every exchange.")] = None,
+) -> MarketStatusesResult:
+    """Whether each exchange is open now, and its current or next session's
+    hours. Knows weekends, exchange holidays and special sessions."""
+    exchanges = [exchange] if exchange is not None else list(Exchange)
+    with _agent_facing_errors():
+        statuses = get_market_status_use_case(exchanges, clock())
+    return MarketStatusesResult(exchanges=[MarketStatusResult.of(status) for status in statuses])
 
 
 @mcp.tool(
@@ -464,18 +461,8 @@ def get_positions(
 ) -> PositionsResult:
     """Sandbox net positions valued at the broker's live prices."""
     with _agent_facing_errors():
-        positions = get_positions_use_case(order_broker(broker))
-    shown = [position for position in positions if include_closed or position.quantity]
-    unrealized = [position.unrealized_pnl for position in shown]
-    return PositionsResult(
-        positions=[PositionResult.of(position) for position in shown],
-        total_unrealized_pnl=(
-            None
-            if any(value is None for value in unrealized)
-            else round(sum(value or 0.0 for value in unrealized), 2)
-        ),
-        total_realized_pnl=round(sum(position.realized_pnl for position in positions), 2),
-    )
+        positions = get_positions_use_case(order_broker(broker, os.environ))
+    return PositionsResult.of(positions, include_closed)
 
 
 @mcp.tool(
@@ -485,13 +472,8 @@ def get_positions(
 def get_funds(broker: Broker) -> FundsResult:
     """Virtual capital, margin in use and realized P&L in the sandbox."""
     with _agent_facing_errors():
-        funds = get_funds_use_case(order_broker(broker))
-    return FundsResult(
-        total_capital=funds.total_capital,
-        available_cash=round(funds.available_cash, 2),
-        used_margin=round(funds.used_margin, 2),
-        realized_pnl=round(funds.realized_pnl, 2),
-    )
+        funds = get_funds_use_case(order_broker(broker, os.environ))
+    return FundsResult.of(funds)
 
 
 @mcp.tool(
@@ -506,8 +488,8 @@ def get_orderbook(
 ) -> OrderbookResult:
     """Sandbox orders, filled and rejected, most recent first."""
     with _agent_facing_errors():
-        orders = get_orderbook_use_case(order_broker(broker), limit)
-    return OrderbookResult(orders=[OrderbookEntryResult.of(order) for order in orders])
+        orders = get_orderbook_use_case(order_broker(broker, os.environ), limit)
+    return OrderbookResult.of(orders)
 
 
 @mcp.tool(
@@ -543,17 +525,7 @@ def evaluate_risk(
             target,
             capital_cap,
         )
-    decision = check.decision
-    return RiskCheckResult(
-        last_price=check.last_price,
-        breached=decision.breached,
-        reason=decision.reason,
-        detail=decision.detail,
-        stop_loss=decision.stop_loss,
-        unrealized_pnl=round(decision.unrealized_pnl, 2),
-        exit_side=decision.exit_side,
-        warnings=check.warnings,
-    )
+    return RiskCheckResult.of(check)
 
 
 @mcp.tool(
@@ -571,19 +543,7 @@ def get_audit_log(
 ) -> AuditLogResult:
     """What OpenTicker has done, most recent first: every order, risk breach
     and instrument sync, with who triggered it. Local data only."""
-    entries = get_audit_log_use_case(limit, event_type)
-    return AuditLogResult(
-        entries=[
-            AuditEntryResult(
-                id=entry.id,
-                occurred_at=entry.occurred_at.astimezone(EXCHANGE_TIMEZONE),
-                event_type=entry.event_type,
-                triggered_by=entry.triggered_by,
-                details=json.loads(entry.payload),
-            )
-            for entry in entries
-        ]
-    )
+    return AuditLogResult.of(get_audit_log_use_case(limit, event_type))
 
 
 def main() -> None:

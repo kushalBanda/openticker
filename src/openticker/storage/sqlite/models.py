@@ -110,3 +110,17 @@ class SandboxFundsRow(Base):
     total_capital: Mapped[float]
     used_margin: Mapped[float]
     realized_pnl: Mapped[float]
+
+
+class ApiKeyRow(Base):
+    """REST API keys. Only a hash of each key is stored (ADR 17 in docs/adr)."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    key_hash: Mapped[str] = mapped_column(unique=True)
+    prefix: Mapped[str]  # the key's first characters, to tell keys apart in a listing
+    scope: Mapped[str]  # "full"; narrower scopes come with script hosting
+    created_at: Mapped[datetime]  # UTC, stored naive
+    revoked_at: Mapped[datetime | None]  # UTC, stored naive

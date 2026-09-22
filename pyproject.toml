@@ -26,6 +26,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "duckdb>=1.5.5",
     "pydantic>=2.13.5",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.53",
+    "websockets>=15",
 ]
 
 [project.urls]
@@ -35,6 +38,7 @@ Changelog = "https://github.com/kushalBanda/openticker/blob/main/CHANGELOG.md"
 
 [project.scripts]
 openticker-mcp = "openticker.adapters.inbound.mcp_server:main"
+openticker-serve = "openticker.adapters.inbound.daemon.main:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

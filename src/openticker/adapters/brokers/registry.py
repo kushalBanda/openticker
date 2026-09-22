@@ -8,7 +8,10 @@ from collections.abc import Callable
 
 from openticker.adapters.brokers.zerodha.adapter import ZerodhaAdapter
 from openticker.adapters.brokers.zerodha.auth import build_login_url
+from openticker.adapters.brokers.zerodha.feed import ZerodhaFeed
 from openticker.ports.broker_port import BrokerPort
+from openticker.ports.errors import BrokerSessionError
+from openticker.ports.market_feed_port import MarketFeedPort
 from openticker.storage.sqlite.credentials_repo import get_credentials
 
 
@@ -40,6 +43,16 @@ def _build_zerodha() -> BrokerPort:
     )
 
 
+def _build_zerodha_feed() -> MarketFeedPort:
+    api_key, _ = _zerodha_credentials()
+    session = get_credentials("zerodha")
+    if session is None:
+        raise BrokerSessionError(
+            "zerodha is not connected: log in with get_broker_login_url, then connect_broker"
+        )
+    return ZerodhaFeed(api_key=api_key, access_token=session.access_token)
+
+
 def _zerodha_login_url() -> str:
     api_key, _ = _zerodha_credentials()
     return build_login_url(api_key)
@@ -47,6 +60,7 @@ def _zerodha_login_url() -> str:
 
 BROKER_REGISTRY: dict[str, Callable[[], BrokerPort]] = {}
 _LOGIN_URL_BUILDERS: dict[str, Callable[[], str]] = {}
+FEED_REGISTRY: dict[str, Callable[[], MarketFeedPort]] = {}
 
 
 def register(name: str, builder: Callable[[], BrokerPort]) -> None:
@@ -64,6 +78,18 @@ def get_adapter(name: str) -> BrokerPort:
     return builder()
 
 
+def register_feed(name: str, builder: Callable[[], MarketFeedPort]) -> None:
+    FEED_REGISTRY[name] = builder
+
+
+def get_feed(name: str) -> MarketFeedPort:
+    """A connected live-price feed for the broker's stored session."""
+    builder = FEED_REGISTRY.get(name)
+    if builder is None:
+        raise UnknownBrokerError(f"no live-price feed registered for {name!r}")
+    return builder()
+
+
 def get_login_url(name: str) -> str:
     builder = _LOGIN_URL_BUILDERS.get(name)
     if builder is None:
@@ -73,3 +99,4 @@ def get_login_url(name: str) -> str:
 
 register("zerodha", _build_zerodha)
 register_login_url_builder("zerodha", _zerodha_login_url)
+register_feed("zerodha", _build_zerodha_feed)

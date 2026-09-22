@@ -4,7 +4,7 @@
 
 OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io) tools. Claude Code, Codex, or any MCP client can connect your broker, find instruments, and pull live quotes and historical candles by calling tools, with no UI in between. It runs on your machine, with your own broker API keys, and stores everything locally.
 
-> **Status: early development.** Market data works end to end with Zerodha. Order placement is not available yet, and will be sandbox-only when it lands. See [Roadmap](#roadmap).
+> **Status: early development.** Market data works end to end with Zerodha. Orders are paper trades in a local sandbox; nothing is sent to the broker. See [Roadmap](#roadmap).
 
 ## What an agent can do today
 
@@ -17,7 +17,8 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `get_quote` | Live last traded price. |
 | `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
 | `get_option_chain` | Calls and puts around at-the-money for an index or stock: price, open interest, implied volatility, Greeks. |
-| `place_order` | Paper trade: fill a MARKET order in the local sandbox at the live price. Nothing reaches the broker. |
+| `place_order` | Paper trade: fill a MARKET order in the local sandbox at the live price, while the exchange is open. Nothing reaches the broker. |
+| `get_market_status` | Whether NSE, BSE, NFO, BFO and MCX are open now, and the next session. Knows weekends, exchange holidays and special sessions. |
 | `get_positions`, `get_funds`, `get_orderbook` | Sandbox positions with live P&L, virtual capital and margin, order history. |
 | `evaluate_risk` | Check stop loss, target and capital cap settings against the live price before acting. |
 | `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
@@ -62,6 +63,20 @@ claude mcp add openticker -- uv --directory /absolute/path/to/openticker run ope
 
 Then ask the agent to connect Zerodha. It walks you through login and instrument sync.
 
+### REST API (optional)
+
+Everything the tools do is also available over HTTP, for scripts and tools that aren't MCP clients:
+
+```bash
+uv run openticker-serve keys create laptop    # prints a key, once
+uv run openticker-serve                       # http://127.0.0.1:8750, docs at /docs
+curl -H "X-API-Key: otk_..." "http://127.0.0.1:8750/api/v1/quote?broker=zerodha&symbol=RELIANCE&exchange=NSE"
+```
+
+Every route except `/health` needs a key. `keys list` and `keys revoke <name>` manage them. The server listens on this machine only unless `OPENTICKER_BIND` says otherwise.
+
+The server also streams live prices from the broker (Kite's WebSocket ticker) for every open sandbox position and anything listed in `OPENTICKER_WATCH`. If the broker session expires, it notifies you to log in again.
+
 ### Notifications (optional)
 
 Orders and risk breaches can be sent to Slack (Incoming Webhook) and/or email (any SMTP server, including Resend and Amazon SES). Set the variables in `.env`; see `.env.example`. Everything is recorded in the local audit log either way.
@@ -69,11 +84,12 @@ Orders and risk breaches can be sent to Slack (Incoming Webhook) and/or email (a
 ## How it works
 
 ```
- MCP client (agent)
-      │  tool calls over stdio
-      ▼
- adapters/inbound/mcp_server.py      tool definitions, result models, agent-facing errors
-      │
+ MCP client (agent)                  HTTP client
+      │  tool calls over stdio          │  X-API-Key
+      ▼                                 ▼
+ adapters/inbound/mcp_server.py      adapters/inbound/rest_api.py (openticker-serve)
+      │                                 │
+      └──────────────┬──────────────────┘
       ▼
  use_cases/                          one function per operation
       │                 │
@@ -90,8 +106,6 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 
 ## Roadmap
 
-- An always-on server with a REST API mirroring the MCP tools
-- Live prices and a market calendar
 - Strategies that run unattended: multi-leg options strategies chosen relative to the market, strategy-wide stop loss, target, profit lock and kill switch, surviving restarts
 - Signal strategies driven by ChartInk or TradingView alerts
 - Hosting your own Python strategy scripts, without handing them your broker keys

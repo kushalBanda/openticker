@@ -83,3 +83,12 @@ def test_a_fill_is_notified_but_the_placement_before_it_is_not() -> None:
         "Order filled: BUY 4 RELIANCE @ 1,374.60",
         "Sandbox order SB1 filled via mcp.",
     )
+
+
+def test_a_refused_broker_session_asks_the_user_to_log_in() -> None:
+    from openticker.events.types import BrokerSessionExpired
+
+    event = BrokerSessionExpired(broker="zerodha", detail="log in again")
+
+    assert BrokerSessionExpired in NOTIFIED_EVENTS
+    assert describe(event) == ("Log in to zerodha: live prices stopped", "log in again")

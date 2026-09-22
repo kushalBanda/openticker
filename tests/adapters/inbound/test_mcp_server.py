@@ -4,7 +4,7 @@ touches Kite."""
 
 import asyncio
 from collections.abc import Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -14,6 +14,13 @@ from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
 from tests.fixtures.fake_broker import FAKE_LAST_PRICE, FakeBrokerPort
+
+TRADING_TIME = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
+
+
+@pytest.fixture(autouse=True)
+def _market_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: TRADING_TIME)
 
 
 @pytest.fixture(autouse=True)
@@ -174,3 +181,24 @@ def test_evaluate_risk_tool_reports_wrong_side_settings() -> None:
     )
 
     assert result.breached and result.reason == "stop_loss" and result.warnings
+
+
+def test_market_status_and_closed_market_orders(monkeypatch: pytest.MonkeyPatch) -> None:
+    mcp_server.sync_instruments(broker="fake")
+    monkeypatch.setattr(mcp_server, "clock", lambda: datetime(2026, 10, 2, 5, 0, tzinfo=UTC))
+
+    [nse] = mcp_server.get_market_status(exchange=Exchange.NSE).exchanges
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=1,
+        product=Product.MIS,
+    )
+
+    assert (nse.is_open, nse.closed_reason) == (False, "Mahatma Gandhi Jayanti")
+    assert nse.session_opens_at.isoformat() == "2026-10-05T09:15:00+05:30"
+    assert len(mcp_server.get_market_status().exchanges) == 5
+    assert placed.status == "REJECTED" and placed.reason is not None
+    assert "Mahatma Gandhi Jayanti" in placed.reason

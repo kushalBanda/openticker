@@ -1,19 +1,30 @@
 """Tool result shapes. Each becomes the tool's `outputSchema`, so every field
 carries a description the agent reads. Times are exchange-local (IST offset
-included), matching the trading dates the tools take as input."""
+included), matching the trading dates the tools take as input. The REST API
+returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 
+import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
-from openticker.core.orders.models import Order, OrderStatus, OrderType
+from openticker.core.orders.models import (
+    Order,
+    OrderRequest,
+    OrderResult,
+    OrderStatus,
+    OrderType,
+)
 from openticker.core.risk.models import BreachReason
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
     Exchange,
+    Funds,
     Instrument,
     InstrumentType,
     Interval,
@@ -22,6 +33,8 @@ from openticker.ports.models import (
     Quote,
     Side,
 )
+from openticker.storage.sqlite.audit_repo import AuditEntry
+from openticker.use_cases.evaluate_risk import RiskCheck
 
 
 class LoginUrlResult(BaseModel):
@@ -66,6 +79,14 @@ class InstrumentResult(BaseModel):
 class SearchResult(BaseModel):
     instruments: list[InstrumentResult]
     truncated: bool = Field(description="More matches exist; narrow the query or filters.")
+
+    @classmethod
+    def of(cls, found: Sequence[Instrument], limit: int) -> "SearchResult":
+        """`found` holds up to `limit + 1` matches; the extra one means more exist."""
+        return cls(
+            instruments=[InstrumentResult.of(instrument) for instrument in found[:limit]],
+            truncated=len(found) > limit,
+        )
 
 
 class QuoteResult(BaseModel):
@@ -112,6 +133,25 @@ class BarsResult(BaseModel):
     bars: list[BarResult] = Field(description="Oldest first; the most recent `max_bars` only.")
     note: str | None = Field(description="Set when `bars` was cut short, with what to do.")
 
+    @classmethod
+    def of(
+        cls, symbol: str, exchange: Exchange, interval: Interval, bars: Sequence[Bar], max_bars: int
+    ) -> "BarsResult":
+        returned = bars[-max_bars:]
+        return cls(
+            symbol=symbol,
+            exchange=exchange,
+            interval=interval,
+            total_bars=len(bars),
+            bars=[BarResult.of(bar) for bar in returned],
+            note=(
+                f"Returned the last {len(returned)} of {len(bars)} bars. Narrow the date "
+                "range, use a coarser interval, or raise max_bars."
+                if len(returned) < len(bars)
+                else None
+            ),
+        )
+
 
 class AuditEntryResult(BaseModel):
     id: int
@@ -120,9 +160,23 @@ class AuditEntryResult(BaseModel):
     triggered_by: str | None = Field(description="Which entry point caused it: mcp, rest, webhook.")
     details: dict[str, Any] = Field(description="The event's own fields.")
 
+    @classmethod
+    def of(cls, entry: AuditEntry) -> "AuditEntryResult":
+        return cls(
+            id=entry.id,
+            occurred_at=entry.occurred_at.astimezone(EXCHANGE_TIMEZONE),
+            event_type=entry.event_type,
+            triggered_by=entry.triggered_by,
+            details=json.loads(entry.payload),
+        )
+
 
 class AuditLogResult(BaseModel):
     entries: list[AuditEntryResult] = Field(description="Most recent first.")
+
+    @classmethod
+    def of(cls, entries: Sequence[AuditEntry]) -> "AuditLogResult":
+        return cls(entries=[AuditEntryResult.of(entry) for entry in entries])
 
 
 class OptionQuoteResult(BaseModel):
@@ -209,6 +263,39 @@ class OptionChainResult(BaseModel):
         )
 
 
+class MarketStatusResult(BaseModel):
+    exchange: Exchange
+    is_open: bool
+    closed_reason: str | None = Field(
+        description="Why it is closed now: weekend, a holiday's name, before or after the session."
+    )
+    session_opens_at: datetime = Field(
+        description="The session in progress, else the next one. Exchange-local."
+    )
+    session_closes_at: datetime
+    session_name: str | None = Field(description="Set for a special session, e.g. Muhurat.")
+    holidays_known: bool = Field(
+        description="False when the holiday list doesn't cover this year: weekdays are then "
+        "assumed open, and a holiday would go unnoticed."
+    )
+
+    @classmethod
+    def of(cls, status: MarketStatus) -> "MarketStatusResult":
+        return cls(
+            exchange=status.exchange,
+            is_open=status.is_open,
+            closed_reason=status.closed_reason,
+            session_opens_at=status.session.opens_at,
+            session_closes_at=status.session.closes_at,
+            session_name=status.session.name,
+            holidays_known=status.holidays_known,
+        )
+
+
+class MarketStatusesResult(BaseModel):
+    exchanges: list[MarketStatusResult]
+
+
 class PlaceOrderResult(BaseModel):
     order_id: str | None = Field(description="Sandbox order id; None when rejected before it.")
     status: OrderStatus = Field(description="FILLED, or REJECTED/FAILED with a reason.")
@@ -220,6 +307,21 @@ class PlaceOrderResult(BaseModel):
     fill_price: float | None
     reason: str | None = Field(description="Why it was not filled.")
     next_step: str
+
+    @classmethod
+    def of(cls, request: OrderRequest, result: OrderResult, next_step: str) -> "PlaceOrderResult":
+        return cls(
+            order_id=result.broker_order_id,
+            status=result.status,
+            symbol=request.instrument.symbol,
+            exchange=request.instrument.exchange,
+            side=request.side,
+            quantity=request.quantity,
+            product=request.product,
+            fill_price=result.fill_price,
+            reason=result.reason,
+            next_step=next_step,
+        )
 
 
 class PositionResult(BaseModel):
@@ -255,12 +357,35 @@ class PositionsResult(BaseModel):
     )
     total_realized_pnl: float
 
+    @classmethod
+    def of(cls, positions: Sequence[Position], include_closed: bool) -> "PositionsResult":
+        shown = [position for position in positions if include_closed or position.quantity]
+        unrealized = [position.unrealized_pnl for position in shown]
+        return cls(
+            positions=[PositionResult.of(position) for position in shown],
+            total_unrealized_pnl=(
+                None
+                if any(value is None for value in unrealized)
+                else round(sum(value or 0.0 for value in unrealized), 2)
+            ),
+            total_realized_pnl=round(sum(position.realized_pnl for position in positions), 2),
+        )
+
 
 class FundsResult(BaseModel):
     total_capital: float = Field(description="Virtual starting capital.")
     available_cash: float = Field(description="Capital - used margin + realized P&L.")
     used_margin: float
     realized_pnl: float
+
+    @classmethod
+    def of(cls, funds: Funds) -> "FundsResult":
+        return cls(
+            total_capital=funds.total_capital,
+            available_cash=round(funds.available_cash, 2),
+            used_margin=round(funds.used_margin, 2),
+            realized_pnl=round(funds.realized_pnl, 2),
+        )
 
 
 class OrderbookEntryResult(BaseModel):
@@ -298,6 +423,10 @@ class OrderbookEntryResult(BaseModel):
 class OrderbookResult(BaseModel):
     orders: list[OrderbookEntryResult] = Field(description="Most recent first.")
 
+    @classmethod
+    def of(cls, orders: Sequence[Order]) -> "OrderbookResult":
+        return cls(orders=[OrderbookEntryResult.of(order) for order in orders])
+
 
 class RiskCheckResult(BaseModel):
     last_price: float
@@ -308,3 +437,17 @@ class RiskCheckResult(BaseModel):
     unrealized_pnl: float = Field(description="At the last price, from the entry price.")
     exit_side: Side | None = Field(description="The order side that would close the position.")
     warnings: list[str] = Field(description="Settings that would exit at once or trail badly.")
+
+    @classmethod
+    def of(cls, check: RiskCheck) -> "RiskCheckResult":
+        decision = check.decision
+        return cls(
+            last_price=check.last_price,
+            breached=decision.breached,
+            reason=decision.reason,
+            detail=decision.detail,
+            stop_loss=decision.stop_loss,
+            unrealized_pnl=round(decision.unrealized_pnl, 2),
+            exit_side=decision.exit_side,
+            warnings=check.warnings,
+        )

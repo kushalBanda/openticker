@@ -20,6 +20,7 @@ htmlcov/
 
 # Local data (market data, databases). OpenTicker's own data lives in ~/.openticker.
 data/
+!src/openticker/data/
 *.db
 *.duckdb
 secret.key
