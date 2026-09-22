@@ -106,6 +106,16 @@ class LegSpec:
                 "a sold leg's target in percent must be below 100: a price can't fall "
                 "further than to zero"
             )
+        if (
+            self.side is Side.BUY
+            and self.stop_loss is not None
+            and self.stop_loss.percent
+            and self.stop_loss.value >= 100
+        ):
+            raise InvalidStrategyError(
+                "a bought leg's stop loss in percent must be below 100: a price can't fall "
+                "further than to zero"
+            )
 
 
 @dataclass(frozen=True)

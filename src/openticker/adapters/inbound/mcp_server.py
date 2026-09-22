@@ -43,9 +43,12 @@ from openticker.adapters.inbound.mcp_models import (
     RiskCheckResult,
     SearchResult,
     StrategiesResult,
+    StrategyCommandResult,
     StrategyDefinition,
     StrategyPreviewResult,
     StrategyResult,
+    StrategyRunResult,
+    StrategyRunsResult,
     StrategySummary,
     SyncResult,
 )
@@ -104,8 +107,14 @@ from openticker.use_cases.resolve_instrument import UnknownInstrumentError, reso
 from openticker.use_cases.search_instruments import (
     search_instruments as search_instruments_use_case,
 )
+from openticker.use_cases.strategies import control
 from openticker.use_cases.strategies import define as strategies
-from openticker.use_cases.strategies.define import UnknownStrategyError
+from openticker.use_cases.strategies.control import (
+    StrategyLockedError,
+    StrategyStateError,
+    UnknownRunError,
+)
+from openticker.use_cases.strategies.define import StrategyRunningError, UnknownStrategyError
 from openticker.use_cases.sync_instruments import sync_instruments as sync_instruments_use_case
 
 INSTRUCTIONS = """\
@@ -129,7 +138,12 @@ Typical flow:
 6. Strategies: create_strategy saves an options strategy whose legs are chosen
    relative to the market (ATM, N strikes in or out of the money, weekly or
    monthly expiry) with strategy-wide limits; preview_strategy shows the real
-   contracts it would trade now. Strategies can't be started yet.
+   contracts it would trade now. start_strategy enters it in the sandbox, and
+   openticker-serve watches it from then on, closing legs on their own stops
+   and targets and the whole run on the strategy's limits, with nobody in the
+   conversation. stop_strategy closes it; kill_strategy also locks it until
+   release_kill_switch. get_strategy_runs and get_strategy_run show what
+   happened. A running strategy can't be edited or deleted; stop it first.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -213,6 +227,10 @@ _AGENT_FIXABLE_ERRORS = (
     LegResolutionError,
     DuplicateStrategyNameError,
     InvalidStrategyError,
+    StrategyRunningError,
+    StrategyLockedError,
+    StrategyStateError,
+    UnknownRunError,
 )
 
 
@@ -623,7 +641,11 @@ Definition = Annotated[
     Field(description="The whole strategy: underlying, legs, schedule and limits."),
 ]
 _STRATEGY_NEXT_STEP = (
-    "preview_strategy shows the contracts it would trade now. Strategies can't be started yet."
+    "preview_strategy shows the contracts it would trade now; start_strategy enters it."
+)
+_COMMAND_NEXT_STEP = (
+    "openticker-serve carries this out within about a second; get_strategy_runs shows the "
+    "outcome. If the command stays pending, openticker-serve isn't running: start it."
 )
 
 
@@ -706,6 +728,112 @@ def preview_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyPreview
     return StrategyPreviewResult.of(
         preview, "Nothing was placed. update_strategy changes the legs."
     )
+
+
+Leg = Annotated[str, Field(description="leg1, leg2, ... in the order the legs were defined.")]
+
+
+@mcp.tool(
+    title="Start strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def start_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyCommandResult:
+    """Enter the strategy now in the sandbox: openticker-serve resolves the
+    legs at the live price (as preview_strategy shows), places a market order
+    per leg, then watches the run until its rules, stop_strategy or the
+    intraday square-off close it. The market must be open. If a leg can't be
+    entered, the legs already entered are closed."""
+    with _agent_facing_errors():
+        command = control.request_start(strategy_id, broker, "mcp", clock())
+    return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Stop strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def stop_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
+    """Close every open leg at the market and end the run. A start not carried
+    out yet is cancelled instead."""
+    with _agent_facing_errors():
+        command = control.request_stop(strategy_id, "mcp", clock())
+    return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Kill strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def kill_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
+    """Lock the strategy at once so nothing can start it, then close every open
+    leg. It stays locked until release_kill_switch."""
+    with _agent_facing_errors():
+        command = control.request_kill(strategy_id, "mcp", clock())
+    return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Release kill switch",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def release_kill_switch(strategy_id: StrategyId) -> StrategyResult:
+    """Unlock a killed strategy so it can be started again. Refused while the
+    kill is still closing positions."""
+    with _agent_facing_errors():
+        stored = control.release_kill_switch(strategy_id)
+    return StrategyResult.of(stored, "Unlocked. start_strategy enters it again.")
+
+
+@mcp.tool(
+    title="Close strategy leg",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def close_strategy_leg(strategy_id: StrategyId, leg_id: Leg) -> StrategyCommandResult:
+    """Close one open leg of the running strategy at the market; the run
+    carries on with the others. Closing a leg by hand never moves the other
+    legs' stops to entry."""
+    with _agent_facing_errors():
+        command = control.request_close_leg(strategy_id, leg_id, "mcp", clock())
+    return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Get strategy runs",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_strategy_runs(
+    strategy_id: StrategyId,
+    limit: Annotated[int, Field(ge=1, le=100, description="Most recent runs to return.")] = 10,
+) -> StrategyRunsResult:
+    """A strategy's latest runs with their stop reasons and realized P&L, and
+    its latest start/stop/kill/close requests with what came of each."""
+    with _agent_facing_errors():
+        stored, runs, commands = control.get_runs(strategy_id, limit)
+    return StrategyRunsResult.of(stored, runs, commands)
+
+
+@mcp.tool(
+    title="Get strategy run",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_strategy_run(
+    run_id: Annotated[str, Field(description="From get_strategy_runs.")],
+) -> StrategyRunResult:
+    """One run in full: each leg's contract, entry, exit, current stop and
+    P&L, every order it placed, and its timeline. Live P&L of open legs is
+    in get_positions."""
+    with _agent_facing_errors():
+        return StrategyRunResult.of_detail(control.get_run(run_id))
 
 
 def main() -> None:

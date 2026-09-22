@@ -141,6 +141,7 @@ class StrategyStopReason(StrEnum):
     TICK_STALE = "tick_stale"
     RECOVERY_FAILED = "recovery_failed"
     ERROR = "error"
+    LEGS_CLOSED = "legs_closed"  # every leg exited on its own rules
 
 
 @dataclass(frozen=True)

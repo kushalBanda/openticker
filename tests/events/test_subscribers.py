@@ -5,7 +5,14 @@ import pytest
 
 from openticker.events.subscribers.audit_log import record_event
 from openticker.events.subscribers.notifications import NOTIFIED_EVENTS, describe, notifier
-from openticker.events.types import InstrumentSyncCompleted, OrderPlaced, RiskBreached
+from openticker.events.types import (
+    InstrumentSyncCompleted,
+    OrderPlaced,
+    RiskBreached,
+    StrategyLegClosed,
+    StrategyStarted,
+    StrategyStopped,
+)
 from openticker.storage.sqlite.audit_repo import list_audit
 
 
@@ -24,7 +31,11 @@ def test_audit_records_type_trigger_time_and_fields() -> None:
     at = datetime(2026, 9, 21, 4, 0, tzinfo=UTC)
     record_event(
         OrderPlaced(
-            order_id="42", symbol="RELIANCE", side="BUY", quantity=5, triggered_by="mcp",
+            order_id="42",
+            symbol="RELIANCE",
+            side="BUY",
+            quantity=5,
+            triggered_by="mcp",
             occurred_at=at,
         )
     )
@@ -35,7 +46,10 @@ def test_audit_records_type_trigger_time_and_fields() -> None:
     assert entry.triggered_by == "mcp"
     assert entry.occurred_at == at
     assert json.loads(entry.payload) == {
-        "order_id": "42", "symbol": "RELIANCE", "side": "BUY", "quantity": 5,
+        "order_id": "42",
+        "symbol": "RELIANCE",
+        "side": "BUY",
+        "quantity": 5,
         "triggered_by": "mcp",
     }
 
@@ -72,7 +86,9 @@ def test_one_failing_channel_does_not_silence_the_others() -> None:
 def test_a_fill_is_notified_but_the_placement_before_it_is_not() -> None:
     from openticker.events.types import OrderFilled
 
-    placed = OrderPlaced(order_id="SB1", symbol="RELIANCE", side="BUY", quantity=4, triggered_by="mcp")
+    placed = OrderPlaced(
+        order_id="SB1", symbol="RELIANCE", side="BUY", quantity=4, triggered_by="mcp"
+    )
     filled = OrderFilled(
         order_id="SB1", symbol="RELIANCE", side="BUY", quantity=4, price=1374.6, triggered_by="mcp"
     )
@@ -92,3 +108,41 @@ def test_a_refused_broker_session_asks_the_user_to_log_in() -> None:
 
     assert BrokerSessionExpired in NOTIFIED_EVENTS
     assert describe(event) == ("Log in to zerodha: live prices stopped", "log in again")
+
+
+def test_a_strategy_start_leg_exit_and_stop_are_notified() -> None:
+    started = StrategyStarted(
+        strategy_id="stg_1",
+        run_id="run_1",
+        name="straddle",
+        legs="SELL 65 X @ 100.0",
+        triggered_by="mcp",
+    )
+    leg = StrategyLegClosed(
+        strategy_id="stg_1",
+        run_id="run_1",
+        leg_id="leg1",
+        symbol="X",
+        reason="stop_loss",
+        detail="stop_loss: exit filled",
+        realized_pnl=-1365.0,
+    )
+    stopped = StrategyStopped(
+        strategy_id="stg_1",
+        run_id="run_1",
+        name="straddle",
+        reason="combined_stop_loss",
+        detail="P&L -3,250.00 reached the combined stop loss -3,000.00",
+        realized_pnl=-3250.0,
+    )
+
+    assert {StrategyStarted, StrategyLegClosed, StrategyStopped} <= set(NOTIFIED_EVENTS)
+    assert describe(started) == ("Strategy started: straddle", "Entered SELL 65 X @ 100.0.")
+    assert describe(leg) == (
+        "Strategy leg closed: X (stop_loss), P&L -1,365.00",
+        "stop_loss: exit filled",
+    )
+    assert describe(stopped) == (
+        "Strategy stopped: straddle (combined_stop_loss), P&L -3,250.00",
+        "P&L -3,250.00 reached the combined stop loss -3,000.00",
+    )

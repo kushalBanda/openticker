@@ -85,3 +85,38 @@ class PositionSettled:
     realized_pnl: float
     detail: str  # how the price was reached
     occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class StrategyStarted:
+    strategy_id: str
+    run_id: str
+    name: str
+    legs: str  # what it entered, e.g. "SELL 75 NIFTY29SEP2623350CE @ 160.05, ..."
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class StrategyLegClosed:
+    strategy_id: str
+    run_id: str
+    leg_id: str
+    symbol: str
+    reason: str
+    detail: str
+    realized_pnl: float
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class StrategyStopped:
+    """A run ended: every leg it opened is closed, or could not be."""
+
+    strategy_id: str
+    run_id: str
+    name: str
+    reason: str
+    detail: str
+    realized_pnl: float
+    occurred_at: datetime = field(default_factory=_now)

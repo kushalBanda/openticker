@@ -1,7 +1,8 @@
 """`openticker-serve`: the long-running server (ADR 12 in docs/adr), and the
 commands that manage its API keys (ADR 17 in docs/adr).
 
-    openticker-serve                     run the REST API, live prices and sandbox execution
+    openticker-serve                     run the REST API, live prices, sandbox execution
+                                         and strategies
     openticker-serve keys create <name>  print a new key, once
     openticker-serve keys list
     openticker-serve keys revoke <name>
@@ -24,8 +25,9 @@ from openticker.adapters.brokers.registry import FEED_REGISTRY, get_feed
 from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
+from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
 from openticker.adapters.inbound.rest_api import API_KEY_HEADER, create_app
-from openticker.composition import build_event_bus, order_broker, watch_list
+from openticker.composition import build_event_bus, capital_cap, order_broker, watch_list
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
@@ -162,6 +164,15 @@ def _serve(env: Mapping[str, str]) -> None:
         )
         for broker in FEED_REGISTRY
     ]
+    feeds.append(
+        threading.Thread(
+            target=StrategyLoop(
+                partial(order_broker, env=env), prices, events, load_calendar, capital_cap(env)
+            ).run,
+            args=(stop,),
+            name="strategies",
+        )
+    )
     for thread in feeds:
         thread.start()
     try:

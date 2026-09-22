@@ -15,7 +15,9 @@ class CredentialRow(Base):
     broker: Mapped[str] = mapped_column(primary_key=True)
     access_token_encrypted: Mapped[bytes]
     refresh_token_encrypted: Mapped[bytes | None]
-    expires_at: Mapped[str | None]  # ISO 8601, tz-aware — stored as text, parsed at the repo boundary
+    expires_at: Mapped[
+        str | None
+    ]  # ISO 8601, tz-aware — stored as text, parsed at the repo boundary
 
 
 class InstrumentRow(Base):
@@ -147,3 +149,75 @@ class StrategyRow(Base):
     created_at: Mapped[datetime]  # UTC, stored naive
     updated_at: Mapped[datetime]  # UTC, stored naive
     deleted_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+# Strategy runs (ADR 21 in docs/adr). The MCP server and the REST API write
+# commands; the daemon's runner carries them out and owns the rest.
+
+
+class StrategyCommandRow(Base):
+    __tablename__ = "strategy_commands"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    strategy_id: Mapped[str] = mapped_column(index=True)
+    kind: Mapped[str]  # start, stop, kill, close_leg
+    leg_id: Mapped[str | None]  # close_leg only
+    broker: Mapped[str | None]  # start only
+    triggered_by: Mapped[str]
+    status: Mapped[str] = mapped_column(index=True)  # pending, done, refused
+    outcome: Mapped[str | None]
+    created_at: Mapped[datetime]  # UTC, stored naive
+    processed_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+class StrategyRunRow(Base):
+    __tablename__ = "strategy_runs"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(index=True)
+    broker: Mapped[str]
+    product: Mapped[str]
+    status: Mapped[str] = mapped_column(index=True)  # open, stopping, ended
+    trigger: Mapped[str]
+    started_at: Mapped[datetime]  # UTC, stored naive
+    ended_at: Mapped[datetime | None]  # UTC, stored naive
+    stop_reason: Mapped[str | None]
+    stop_detail: Mapped[str | None]
+    legs: Mapped[str]  # JSON: each leg's contract, state and ratchets
+    peak_mtm: Mapped[float]
+    lock_floor: Mapped[float | None]
+    stops_at_entry: Mapped[bool]
+    realized_pnl: Mapped[float]
+
+
+class StrategyOrderRow(Base):
+    """Written before the order is sent, so a crash in between leaves a
+    record of what was about to happen."""
+
+    __tablename__ = "strategy_orders"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(index=True)
+    leg_id: Mapped[str]
+    intent: Mapped[str]  # entry, exit
+    symbol: Mapped[str]
+    exchange: Mapped[str]
+    side: Mapped[str]
+    quantity: Mapped[int]
+    status: Mapped[str]  # pending until the sandbox answers, then its order status
+    sandbox_order_id: Mapped[str | None]
+    fill_price: Mapped[float | None]
+    reason: Mapped[str | None]
+    created_at: Mapped[datetime]  # UTC, stored naive
+    updated_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+class StrategyEventRow(Base):
+    """A run's timeline, in the words a user reads."""
+
+    __tablename__ = "strategy_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(index=True)
+    occurred_at: Mapped[datetime]  # UTC, stored naive
+    message: Mapped[str]

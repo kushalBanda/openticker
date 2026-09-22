@@ -2,7 +2,7 @@
 
 import json
 import secrets
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
@@ -47,7 +47,7 @@ class StoredStrategy:
 
 
 def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> StoredStrategy:
-    with _write() as session:
+    with write_transaction() as session:
         _refuse_taken(session, name)
         row = StrategyRow(
             id="stg_" + secrets.token_hex(6),
@@ -66,13 +66,19 @@ def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> Stor
 
 
 def update_strategy(
-    strategy_id: str, name: str, spec: OptionsStrategySpec, now: datetime
+    strategy_id: str,
+    name: str,
+    spec: OptionsStrategySpec,
+    now: datetime,
+    guard: Callable[[Session], None] = lambda session: None,
 ) -> StoredStrategy | None:
-    """None when no strategy has that id."""
-    with _write() as session:
+    """None when no strategy has that id. `guard` runs inside the write lock
+    before anything changes, and refuses by raising."""
+    with write_transaction() as session:
         row = _live(session, strategy_id)
         if row is None:
             return None
+        guard(session)
         if name != row.name:
             _refuse_taken(session, name)
         row.name = name
@@ -84,8 +90,19 @@ def update_strategy(
 
 def find_strategy(strategy_id: str) -> StoredStrategy | None:
     with Session(get_engine()) as session:
-        row = _live(session, strategy_id)
-        return _stored(row) if row else None
+        return load_strategy(session, strategy_id)
+
+
+def load_strategy(session: Session, strategy_id: str) -> StoredStrategy | None:
+    """Inside a caller's transaction. None when deleted or never created."""
+    row = _live(session, strategy_id)
+    return _stored(row) if row else None
+
+
+def set_locked(session: Session, strategy_id: str, locked: bool) -> None:
+    row = _live(session, strategy_id)
+    if row is not None:
+        row.locked = locked
 
 
 def list_strategies() -> list[StoredStrategy]:
@@ -96,20 +113,24 @@ def list_strategies() -> list[StoredStrategy]:
         return [_stored(row) for row in session.scalars(statement).all()]
 
 
-def delete_strategy(strategy_id: str, now: datetime) -> bool:
+def delete_strategy(
+    strategy_id: str, now: datetime, guard: Callable[[Session], None] = lambda session: None
+) -> bool:
     """False when no strategy has that id. The row stays, marked deleted."""
-    with _write() as session:
+    with write_transaction() as session:
         row = _live(session, strategy_id)
         if row is None:
             return False
+        guard(session)
         row.deleted_at = _naive(now)
         return True
 
 
 @contextmanager
-def _write() -> Iterator[Session]:
-    # BEGIN IMMEDIATE: the name check and the write happen under one lock, so
-    # the MCP server and the REST API can't both take the same name.
+def write_transaction() -> Iterator[Session]:
+    """A session holding SQLite's write lock from its first statement until
+    commit: the strategy's checks and its changes happen under one lock, so
+    the MCP server, the REST API and the daemon can't interleave them."""
     with Session(get_engine()) as session:
         session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         yield session

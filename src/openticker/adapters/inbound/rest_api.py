@@ -40,9 +40,12 @@ from openticker.adapters.inbound.mcp_models import (
     RiskCheckResult,
     SearchResult,
     StrategiesResult,
+    StrategyCommandResult,
     StrategyDefinition,
     StrategyPreviewResult,
     StrategyResult,
+    StrategyRunResult,
+    StrategyRunsResult,
     StrategySummary,
     SyncResult,
 )
@@ -80,7 +83,14 @@ from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.search_instruments import search_instruments
+from openticker.use_cases.strategies import control
+from openticker.use_cases.strategies.control import (
+    StrategyLockedError,
+    StrategyStateError,
+    UnknownRunError,
+)
 from openticker.use_cases.strategies.define import (
+    StrategyRunningError,
     UnknownStrategyError,
     create_strategy,
     delete_strategy,
@@ -103,7 +113,11 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownOrderError, 404),
     (UnknownStrategyError, 404),
     (LegResolutionError, 404),
+    (UnknownRunError, 404),
     (DuplicateStrategyNameError, 409),
+    (StrategyRunningError, 409),
+    (StrategyLockedError, 409),
+    (StrategyStateError, 409),
     (InvalidStrategyError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
@@ -118,8 +132,12 @@ _NEXT_STEP = {
 }
 
 _STRATEGY_NEXT_STEP = (
-    "GET /api/v1/strategies/{strategy_id}/preview shows the contracts it would trade now. "
-    "Strategies can't be started yet."
+    "GET /api/v1/strategies/{strategy_id}/preview shows the contracts it would trade now; "
+    "POST /api/v1/strategies/{strategy_id}/start enters it."
+)
+_COMMAND_NEXT_STEP = (
+    "openticker-serve carries this out within about a second; "
+    "GET /api/v1/strategies/{strategy_id}/runs shows the outcome."
 )
 _PREVIEW_NEXT_STEP = (
     "Nothing was placed. Change the legs with PUT /api/v1/strategies/{strategy_id}."
@@ -394,6 +412,45 @@ def create_app(
         return StrategyPreviewResult.of(
             preview_strategy(strategy_id, get_adapter(broker), clock()), _PREVIEW_NEXT_STEP
         )
+
+    @api.post("/strategies/{strategy_id}/start")
+    def start(strategy_id: str, body: BrokerBody, key: ApiKey) -> StrategyCommandResult:
+        """Enters the strategy now in the sandbox; openticker-serve watches it from then on."""
+        command = control.request_start(strategy_id, body.broker, f"rest:{key.name}", clock())
+        return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+    @api.post("/strategies/{strategy_id}/stop")
+    def stop(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+        """Closes every open leg and ends the run."""
+        command = control.request_stop(strategy_id, f"rest:{key.name}", clock())
+        return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+    @api.post("/strategies/{strategy_id}/kill")
+    def kill(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+        """Locks the strategy, then closes every open leg."""
+        command = control.request_kill(strategy_id, f"rest:{key.name}", clock())
+        return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
+
+    @api.post("/strategies/{strategy_id}/release")
+    def release(strategy_id: str) -> StrategyResult:
+        """Unlocks a killed strategy."""
+        return StrategyResult.of(control.release_kill_switch(strategy_id))
+
+    @api.post("/strategies/{strategy_id}/legs/{leg_id}/close")
+    def close_leg(strategy_id: str, leg_id: str, key: ApiKey) -> StrategyCommandResult:
+        """Closes one leg; the run carries on with the others."""
+        command = control.request_close_leg(strategy_id, leg_id, f"rest:{key.name}", clock())
+        return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+    @api.get("/strategies/{strategy_id}/runs")
+    def runs(
+        strategy_id: str, limit: Annotated[int, Query(ge=1, le=100)] = 10
+    ) -> StrategyRunsResult:
+        return StrategyRunsResult.of(*control.get_runs(strategy_id, limit))
+
+    @api.get("/runs/{run_id}")
+    def run(run_id: str) -> StrategyRunResult:
+        return StrategyRunResult.of_detail(control.get_run(run_id))
 
     app.include_router(api)
     return app

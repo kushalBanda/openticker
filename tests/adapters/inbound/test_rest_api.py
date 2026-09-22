@@ -42,6 +42,13 @@ ROUTE_FOR_TOOL = {
     "update_strategy": ("PUT", "/api/v1/strategies/{strategy_id}"),
     "delete_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}"),
     "preview_strategy": ("GET", "/api/v1/strategies/{strategy_id}/preview"),
+    "start_strategy": ("POST", "/api/v1/strategies/{strategy_id}/start"),
+    "stop_strategy": ("POST", "/api/v1/strategies/{strategy_id}/stop"),
+    "kill_strategy": ("POST", "/api/v1/strategies/{strategy_id}/kill"),
+    "release_kill_switch": ("POST", "/api/v1/strategies/{strategy_id}/release"),
+    "close_strategy_leg": ("POST", "/api/v1/strategies/{strategy_id}/legs/{leg_id}/close"),
+    "get_strategy_runs": ("GET", "/api/v1/strategies/{strategy_id}/runs"),
+    "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
 }
 
 
@@ -255,3 +262,37 @@ def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get("/api/v1/strategies").json()["strategies"][0]["name"] == "nifty straddle"
     assert client.delete(f"/api/v1/strategies/{strategy_id}").json()["deleted"] is True
     assert client.get(f"/api/v1/strategies/{strategy_id}").status_code == 404
+
+
+def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
+    from openticker.use_cases.strategies.runner import process_commands
+    from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
+    from tests.fixtures.strategy_desk import Desk
+
+    desk = Desk()
+    body = {"name": "nifty straddle", "definition": STRADDLE_JSON}
+    strategy_id = client.post("/api/v1/strategies", json=body).json()["strategy_id"]
+    base = f"/api/v1/strategies/{strategy_id}"
+
+    started = client.post(f"{base}/start", json={"broker": "fake"})
+    again = client.post(f"{base}/start", json={"broker": "fake"})
+    process_commands(desk.context, desk.now)
+    runs = client.get(f"{base}/runs").json()
+    run_id = runs["runs"][0]["run_id"]
+    busy = client.put(base, json=body)
+    closed = client.post(f"{base}/legs/leg2/close")
+    process_commands(desk.context, desk.now)
+    run = client.get(f"/api/v1/runs/{run_id}").json()
+    stopped = client.post(f"{base}/stop")
+    process_commands(desk.context, desk.now)
+
+    assert started.status_code == 200 and started.json()["status"] == "pending"
+    assert again.status_code == 409 and "already starting" in again.json()["detail"]
+    assert runs["runs"][0]["trigger"] == "rest:tests"
+    assert busy.status_code == 409 and "stop the strategy" in busy.json()["detail"]
+    assert closed.json()["command"] == "close_leg"
+    assert [leg["status"] for leg in run["legs"]] == ["open", "closed"]
+    assert stopped.status_code == 200
+    assert client.get(f"{base}/runs").json()["runs"][0]["stop_reason"] == "manual"
+    assert client.post(f"{base}/stop").status_code == 409
+    assert client.get("/api/v1/runs/run_missing").status_code == 404

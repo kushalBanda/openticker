@@ -11,15 +11,18 @@ from tests.fixtures.fake_broker import FakeBrokerPort
 class PricedBroker(FakeBrokerPort):
     def __init__(self, price: float = 100.0) -> None:
         self.price = price
+        self.prices: dict[str, float] = {}  # per symbol, over `price`
+        self.down_for: set[str] = set()  # symbols whose quotes fail
         self.day_range: tuple[float, float] | None = None
         self.down = False
         self.closes: dict[tuple[str, date], float] = {}  # (symbol, day) -> daily close
 
     def get_quote(self, instrument: Instrument) -> Quote:
-        if self.down:
+        if self.down or instrument.symbol in self.down_for:
             raise BrokerError("broker unreachable")
         low, high = self.day_range or (None, None)
-        return Quote(instrument, self.price, datetime.now(UTC), day_low=low, day_high=high)
+        price = self.prices.get(instrument.symbol, self.price)
+        return Quote(instrument, price, datetime.now(UTC), day_low=low, day_high=high)
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return [self.get_quote(instrument) for instrument in instruments]

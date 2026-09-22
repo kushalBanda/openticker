@@ -10,6 +10,9 @@ from openticker.events.types import (
     OrderFilled,
     PositionSettled,
     RiskBreached,
+    StrategyLegClosed,
+    StrategyStarted,
+    StrategyStopped,
 )
 from openticker.ports.notification_port import NotificationPort
 
@@ -21,6 +24,9 @@ NOTIFIED_EVENTS: tuple[type, ...] = (
     RiskBreached,
     BrokerSessionExpired,
     PositionSettled,
+    StrategyStarted,
+    StrategyLegClosed,
+    StrategyStopped,
 )
 
 
@@ -45,6 +51,19 @@ def describe(event: object) -> tuple[str, str] | None:
                 f"P&L {event.realized_pnl:+,.2f}"
             )
             return subject, f"{event.quantity} {event.product} closed at expiry. {event.detail}"
+        case StrategyStarted():
+            return f"Strategy started: {event.name}", f"Entered {event.legs}."
+        case StrategyLegClosed():
+            subject = (
+                f"Strategy leg closed: {event.symbol} ({event.reason}), "
+                f"P&L {event.realized_pnl:+,.2f}"
+            )
+            return subject, event.detail
+        case StrategyStopped():
+            subject = (
+                f"Strategy stopped: {event.name} ({event.reason}), P&L {event.realized_pnl:+,.2f}"
+            )
+            return subject, event.detail
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
     return None

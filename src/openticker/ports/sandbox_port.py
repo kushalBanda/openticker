@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from openticker.core.orders.models import Order, OrderResult
+from openticker.ports.broker_port import BrokerPort
 from openticker.ports.models import Instrument, Position, Product
 
 
@@ -35,3 +36,7 @@ class SandboxPort(Protocol):
         """Closes a position in an expired contract at `price`, bypassing the
         checks a tradeable order goes through."""
         ...
+
+
+class OrderSandbox(BrokerPort, SandboxPort, Protocol):
+    """The sandbox as the daemon uses it: orders and prices, plus the above."""

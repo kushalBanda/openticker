@@ -19,7 +19,13 @@ from openticker.core.orders.models import (
     OrderStatus,
     OrderType,
 )
-from openticker.core.risk.models import BreachReason, LockMode, ProfitLock, StrategyLimits
+from openticker.core.risk.models import (
+    BreachReason,
+    LockMode,
+    ProfitLock,
+    StrategyLimits,
+    StrategyStopReason,
+)
 from openticker.core.strategies.models import (
     MAX_LEGS,
     MAX_LOTS,
@@ -32,6 +38,15 @@ from openticker.core.strategies.models import (
     RiskValue,
     Schedule,
     StrikeSelector,
+)
+from openticker.core.strategies.runs import (
+    Command,
+    CommandKind,
+    CommandStatus,
+    LegStatus,
+    Run,
+    RunLeg,
+    RunStatus,
 )
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
@@ -49,6 +64,7 @@ from openticker.ports.models import (
 from openticker.storage.sqlite.audit_repo import AuditEntry
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
+from openticker.use_cases.strategies.control import RunDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 
 
@@ -789,4 +805,207 @@ class StrategyPreviewResult(BaseModel):
             ],
             net_premium=preview.net_premium,
             next_step=next_step,
+        )
+
+
+def _local(moment: datetime | None) -> datetime | None:
+    return moment.astimezone(EXCHANGE_TIMEZONE) if moment is not None else None
+
+
+class StrategyCommandResult(BaseModel):
+    strategy_id: str
+    command_id: int
+    command: CommandKind
+    status: CommandStatus = Field(
+        description="pending: openticker-serve carries it out within about a second."
+    )
+    locked: bool = Field(description="True while the kill switch is on.")
+    next_step: str
+
+    @classmethod
+    def of(cls, command: Command, locked: bool, next_step: str) -> "StrategyCommandResult":
+        return cls(
+            strategy_id=command.strategy_id,
+            command_id=command.id,
+            command=command.kind,
+            status=command.status,
+            locked=locked,
+            next_step=next_step,
+        )
+
+
+class CommandResult(BaseModel):
+    command_id: int
+    command: CommandKind
+    leg_id: str | None
+    status: CommandStatus
+    outcome: str | None = Field(description="What happened, or why it was refused.")
+    triggered_by: str
+    created_at: datetime
+    processed_at: datetime | None
+
+    @classmethod
+    def of(cls, command: Command) -> "CommandResult":
+        return cls(
+            command_id=command.id,
+            command=command.kind,
+            leg_id=command.leg_id,
+            status=command.status,
+            outcome=command.outcome,
+            triggered_by=command.triggered_by,
+            created_at=command.created_at.astimezone(EXCHANGE_TIMEZONE),
+            processed_at=_local(command.processed_at),
+        )
+
+
+class RunSummary(BaseModel):
+    run_id: str = Field(description="Pass to get_strategy_run for legs, orders and timeline.")
+    status: RunStatus = Field(
+        description="open: holding legs under watch. stopping: closing them. ended."
+    )
+    trigger: str = Field(description="Who started it.")
+    started_at: datetime
+    ended_at: datetime | None
+    stop_reason: StrategyStopReason | None
+    stop_detail: str | None
+    realized_pnl: float = Field(description="Rupees from legs closed so far.")
+
+    @classmethod
+    def of(cls, run: Run) -> "RunSummary":
+        return cls(
+            run_id=run.id,
+            status=run.status,
+            trigger=run.trigger,
+            started_at=run.started_at.astimezone(EXCHANGE_TIMEZONE),
+            ended_at=_local(run.ended_at),
+            stop_reason=run.stop_reason,
+            stop_detail=run.stop_detail,
+            realized_pnl=run.realized_pnl,
+        )
+
+
+class StrategyRunsResult(BaseModel):
+    strategy_id: str
+    name: str
+    locked: bool = Field(description="True while the kill switch is on.")
+    runs: list[RunSummary] = Field(description="Newest first.")
+    commands: list[CommandResult] = Field(description="Latest requests, newest first.")
+
+    @classmethod
+    def of(
+        cls, stored: StoredStrategy, runs: Sequence[Run], commands: Sequence[Command]
+    ) -> "StrategyRunsResult":
+        return cls(
+            strategy_id=stored.id,
+            name=stored.name,
+            locked=stored.locked,
+            runs=[RunSummary.of(run) for run in runs],
+            commands=[CommandResult.of(command) for command in commands],
+        )
+
+
+class RunLegResult(BaseModel):
+    leg_id: str
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int = Field(description="Units.")
+    status: LegStatus = Field(
+        description="pending, open, closing (exit sent or being retried), closed, or failed "
+        "(never entered)."
+    )
+    entry_price: float | None
+    exit_price: float | None
+    exit_reason: str | None = Field(
+        description="stop_loss, target, manual, or the run's stop reason."
+    )
+    stop_loss: float | None = Field(description="Where the stop is now, after any trailing.")
+    target: float | None
+    realized_pnl: float
+
+    @classmethod
+    def of(cls, leg: RunLeg) -> "RunLegResult":
+        risk = leg.risk
+        return cls(
+            leg_id=leg.leg_id,
+            symbol=leg.symbol,
+            exchange=leg.exchange,
+            side=leg.side,
+            quantity=leg.quantity,
+            status=leg.status,
+            entry_price=leg.entry_price,
+            exit_price=leg.exit_price,
+            exit_reason=leg.exit_reason,
+            stop_loss=(risk.current_sl or risk.initial_sl) if risk else None,
+            target=risk.target if risk else None,
+            realized_pnl=round(leg.realized_pnl, 2),
+        )
+
+
+class RunOrderResult(BaseModel):
+    leg_id: str
+    intent: str = Field(description="entry or exit.")
+    side: Side
+    quantity: int
+    symbol: str
+    status: str = Field(description="pending if the sandbox never answered, else its status.")
+    fill_price: float | None
+    reason: str | None
+    sandbox_order_id: str | None
+    created_at: datetime
+
+
+class TimelineEntry(BaseModel):
+    at: datetime
+    message: str
+
+
+class StrategyRunResult(RunSummary):
+    strategy_id: str
+    name: str
+    broker: str
+    product: Product
+    legs: list[RunLegResult]
+    peak_mtm: float = Field(description="Highest P&L the run has reached, rupees.")
+    lock_floor: float | None = Field(description="Locked profit, once the profit lock arms.")
+    stops_at_entry: bool = Field(
+        description="A leg's stop moved the others to entry; the combined stop loss is off."
+    )
+    orders: list[RunOrderResult]
+    timeline: list[TimelineEntry] = Field(description="Latest 100 events, oldest first.")
+
+    @classmethod
+    def of_detail(cls, detail: RunDetail) -> "StrategyRunResult":
+        run = detail.run
+        return cls(
+            **RunSummary.of(run).model_dump(),
+            strategy_id=run.strategy_id,
+            name=detail.strategy_name,
+            broker=run.broker,
+            product=run.product,
+            legs=[RunLegResult.of(leg) for leg in run.legs],
+            peak_mtm=round(run.peak_mtm, 2),
+            lock_floor=run.lock_floor,
+            stops_at_entry=run.stops_at_entry,
+            orders=[
+                RunOrderResult(
+                    leg_id=order.leg_id,
+                    intent=order.intent,
+                    side=order.side,
+                    quantity=order.quantity,
+                    symbol=order.symbol,
+                    status=order.status,
+                    fill_price=order.fill_price,
+                    reason=order.reason,
+                    sandbox_order_id=order.sandbox_order_id,
+                    created_at=order.created_at.astimezone(EXCHANGE_TIMEZONE),
+                )
+                for order in detail.orders
+            ],
+            timeline=[
+                TimelineEntry(
+                    at=event.occurred_at.astimezone(EXCHANGE_TIMEZONE), message=event.message
+                )
+                for event in detail.events
+            ],
         )

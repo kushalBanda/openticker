@@ -11,14 +11,12 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
 
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.orders.models import OrderStatus
 from openticker.events.bus import EventPublisher
-from openticker.ports.broker_port import BrokerPort
-from openticker.ports.sandbox_port import SandboxPort
+from openticker.ports.sandbox_port import OrderSandbox
 from openticker.use_cases.execute_resting_orders import execute_resting_orders
 from openticker.use_cases.settle_expired import settle_expired_positions
 from openticker.use_cases.square_off import square_off_intraday
@@ -35,14 +33,10 @@ SQUARE_OFF_RETRY_MAX = timedelta(hours=1)
 CALENDAR_RELOAD = timedelta(minutes=10)
 
 
-class Sandbox(BrokerPort, SandboxPort, Protocol):
-    pass
-
-
 class ExecutionLoop:
     def __init__(
         self,
-        sandbox: Callable[[], Sandbox],
+        sandbox: Callable[[], OrderSandbox],
         prices: LatestPrices,
         events: EventPublisher,
         calendar: Callable[[], MarketCalendar],

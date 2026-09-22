@@ -308,3 +308,68 @@ def test_strategy_definition_schema_describes_every_field() -> None:
     ):
         for name, schema in definitions[model]["properties"].items():
             assert schema.get("description"), f"{model}.{name} has no description"
+
+
+def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from openticker.use_cases.strategies.runner import process_commands
+    from tests.fixtures.strategy_desk import Desk
+
+    desk = Desk()
+    desk.now = TRADING_TIME
+    created = mcp_server.create_strategy(
+        name="nifty straddle", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    )
+    strategy_id = created.strategy_id
+
+    started = mcp_server.start_strategy(broker="fake", strategy_id=strategy_id)
+    assert (started.command, started.status) == ("start", "pending")
+    assert "openticker-serve" in started.next_step
+    process_commands(desk.context, desk.now)
+
+    runs = mcp_server.get_strategy_runs(strategy_id=strategy_id)
+    assert [(r.status, r.trigger) for r in runs.runs] == [("open", "mcp")]
+    assert runs.commands[0].status == "done"
+    with pytest.raises(ToolError, match="stop the strategy before editing"):
+        mcp_server.update_strategy(
+            strategy_id=strategy_id, name="renamed", definition=created.definition
+        )
+
+    mcp_server.close_strategy_leg(strategy_id=strategy_id, leg_id="leg1")
+    process_commands(desk.context, desk.now)
+    run = mcp_server.get_strategy_run(run_id=runs.runs[0].run_id)
+    assert [(leg.leg_id, leg.status) for leg in run.legs] == [("leg1", "closed"), ("leg2", "open")]
+    assert [(o.leg_id, o.intent) for o in run.orders] == [
+        ("leg1", "entry"),
+        ("leg2", "entry"),
+        ("leg1", "exit"),
+    ]
+    assert run.timeline[0].at.utcoffset() is not None
+
+    killed = mcp_server.kill_strategy(strategy_id=strategy_id)
+    assert killed.locked
+    process_commands(desk.context, desk.now)
+    ended = mcp_server.get_strategy_runs(strategy_id=strategy_id).runs[0]
+    assert (ended.status, ended.stop_reason) == ("ended", "kill")
+    with pytest.raises(ToolError, match="release_kill_switch"):
+        mcp_server.start_strategy(broker="fake", strategy_id=strategy_id)
+    assert mcp_server.release_kill_switch(strategy_id=strategy_id).locked is False
+
+
+def test_strategy_run_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    created = mcp_server.create_strategy(
+        name="idle", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    )
+
+    with pytest.raises(ToolError, match="not running"):
+        mcp_server.stop_strategy(strategy_id=created.strategy_id)
+    with pytest.raises(ToolError, match="not running"):
+        mcp_server.close_strategy_leg(strategy_id=created.strategy_id, leg_id="leg1")
+    with pytest.raises(ToolError, match="get_strategy_runs"):
+        mcp_server.get_strategy_run(run_id="run_missing")
+    with pytest.raises(ToolError, match="list_strategies"):
+        mcp_server.start_strategy(broker="fake", strategy_id="stg_missing")

@@ -4,7 +4,7 @@ Guidance for Claude Code (and other coding agents) working in this repository. M
 
 ## What this repo is
 
-**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes, historical bars and option chains with Greeks, and paper trade in a local sandbox. The same operations are served over a REST API with API keys (`openticker-serve`, ADR 17), which also streams live prices from the broker. A market calendar keeps orders to open sessions. Risk rules, an audit log and notifications are built. Options strategies can be defined and previewed (ADR 20). Unattended strategies (rule-based, alert-driven, and user Python scripts) running in that server are planned (ADRs 12-15). No web UI yet.
+**OpenTicker**: a self-hosted, agent-operated trading platform for Indian markets. An MCP client (Claude Code, Codex, ...) operates it directly through tool calls: connect a broker, sync instruments, search symbols, fetch quotes, historical bars and option chains with Greeks, and paper trade in a local sandbox. The same operations are served over a REST API with API keys (`openticker-serve`, ADR 17), which also streams live prices from the broker. A market calendar keeps orders to open sessions. Risk rules, an audit log and notifications are built. Options strategies can be defined and previewed (ADR 20), then started: that server enters them in the sandbox and watches them unattended (ADR 21). Scheduled entries, alert-driven strategies and user Python scripts are planned (ADRs 12-15). No web UI yet.
 
 Design decisions and their reasoning live in `docs/adr/` (`1. hexagonal-architecture.md` onward). Read the relevant ADR before changing an area; add a new ADR when making a decision a future contributor would otherwise have to reverse-engineer.
 
@@ -17,10 +17,10 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math, resting-order matching), risk/ (position risk rules, strategy-wide rules over several legs), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13), strategies/ (strategy definitions and leg resolution, ADR 20).
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math, resting-order matching), risk/ (position risk rules, strategy-wide rules over several legs), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13), strategies/ (strategy definitions and leg resolution, ADR 20; runs, their legs and ratchets, ADR 21).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
-adapters/     implementations: brokers/ (registry + zerodha/, including the WebSocket feed), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py, rest_api.py, daemon/: main.py entry point, feed_loop.py, execution_loop.py, prices.py).
-use_cases/    one flat function per operation, not a class. May call storage directly; publish events. strategies/ groups the strategy operations.
+adapters/     implementations: brokers/ (registry + zerodha/, including the WebSocket feed), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py, rest_api.py, daemon/: main.py entry point, feed_loop.py, execution_loop.py, strategy_loop.py, prices.py).
+use_cases/    one flat function per operation, not a class. May call storage directly; publish events. strategies/ groups the strategy operations: define.py (definitions), control.py (commands), runner.py (the daemon's side, ADR 21).
 events/       EventBus, event types, subscribers (audit_log inline, notifications background), ADR 10.
 composition.py  builds the event bus, notification channels and the sandbox (`order_broker`) from env. The only place they're wired.
 storage/      sqlite/ (transactional state), duckdb/ (bars), ADR 3; calendar_file.py (shipped `data/holidays.json`, overridable at `$OPENTICKER_HOME/holidays.json`).
@@ -43,6 +43,7 @@ Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in 
 - **Anything time-dependent takes the clock as a parameter** (`now`, or a `clock` callable at the edges: `mcp_server.clock`, `create_app(clock=...)`). Tests pin it to a trading time; nothing reads the wall clock deep inside.
 - **Live prices come through `MarketFeedPort`** (ADR 13). `ticks()` raises `BrokerSessionError` when the broker refuses the session; `FeedLoop` turns that into one `BrokerSessionExpired` event. Never log the Kite ticker URL: it carries the access token.
 - **Schema changes are additive** (ADR 18): a new column on an existing table must be nullable, and readers treat NULL as its default. `get_engine()` adds it to old databases. Anything else needs a real migration.
+- **Strategy control is a command** (ADR 12, ADR 21): MCP and REST write `strategy_commands` rows; only the daemon's runner places strategy orders, recording each in `strategy_orders` before sending it. A running strategy is never edited or deleted.
 - **Order placement is sandbox-only** (ADR 6, ADR 11): `SandboxBroker` wraps the real broker adapter for prices; broker adapters' order methods raise `NotImplementedError`. Sandbox fills go through `sandbox_repo.fill_transaction()` (`BEGIN IMMEDIATE`). Resting orders are filled by the daemon through `SandboxPort` (`use_cases/execute_resting_orders.py`); intraday square-off is `use_cases/square_off.py`; expiry settlement is `use_cases/settle_expired.py` (price rules in `core/orders/settlement.py`).
 - **Code comments reference ADRs, never internal planning docs.** This repo is public.
 

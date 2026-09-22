@@ -83,3 +83,17 @@ def test_intraday_may_exit_at_the_cutoff() -> None:
 
 def test_legs_are_named_by_position() -> None:
     assert [leg_id(index) for index in range(3)] == ["leg1", "leg2", "leg3"]
+
+
+def test_a_bought_legs_percent_stop_must_be_below_100() -> None:
+    with pytest.raises(InvalidStrategyError, match="bought leg's stop loss"):
+        LegSpec(
+            Side.BUY,
+            1,
+            InstrumentType.CE,
+            RelativeExpiry.WEEKLY,
+            stop_loss=RiskValue(100.0, percent=True),
+        )
+    LegSpec(
+        Side.SELL, 1, InstrumentType.CE, RelativeExpiry.WEEKLY, stop_loss=RiskValue(100.0, True)
+    )

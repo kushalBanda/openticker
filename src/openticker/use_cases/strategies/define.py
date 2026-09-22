@@ -1,9 +1,13 @@
 """Create, change, read, delete and preview strategy definitions (ADR 20 in
-docs/adr). Nothing here places an order or starts a run."""
+docs/adr). Nothing here places an order or starts a run. A strategy is
+edited or deleted only while it isn't running (ADR 21 in docs/adr)."""
 
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import partial
+
+from sqlalchemy.orm import Session
 
 from openticker.core.options.chain import expires_at
 from openticker.core.options.underlyings import options_of
@@ -14,10 +18,11 @@ from openticker.core.strategies.models import (
     OptionsStrategySpec,
     leg_id,
 )
+from openticker.core.strategies.runs import CommandKind
 from openticker.ports.broker_port import BrokerPort
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import EXCHANGE_TIMEZONE, Instrument, InstrumentType, Side
-from openticker.storage.sqlite import strategies_repo
+from openticker.storage.sqlite import runs_repo, strategies_repo
 from openticker.storage.sqlite.instruments_repo import (
     future_contracts,
     option_contracts,
@@ -31,6 +36,10 @@ _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}")
 
 class UnknownStrategyError(LookupError):
     pass
+
+
+class StrategyRunningError(Exception):
+    """The strategy has a run open, or one about to start."""
 
 
 @dataclass(frozen=True)
@@ -62,7 +71,9 @@ def update_strategy(
 ) -> StoredStrategy:
     """Replaces the whole definition."""
     _check(name, spec)
-    stored = strategies_repo.update_strategy(strategy_id, name, spec, now)
+    stored = strategies_repo.update_strategy(
+        strategy_id, name, spec, now, partial(_refuse_while_running, strategy_id, "editing")
+    )
     if stored is None:
         raise _unknown(strategy_id)
     return stored
@@ -80,7 +91,9 @@ def list_strategies() -> list[StoredStrategy]:
 
 
 def delete_strategy(strategy_id: str, now: datetime) -> None:
-    if not strategies_repo.delete_strategy(strategy_id, now):
+    if not strategies_repo.delete_strategy(
+        strategy_id, now, partial(_refuse_while_running, strategy_id, "deleting")
+    ):
         raise _unknown(strategy_id)
 
 
@@ -88,7 +101,14 @@ def preview_strategy(strategy_id: str, broker: BrokerPort, now: datetime) -> Str
     """The contracts each leg would trade if the strategy started now, at the
     underlying's current price. Places nothing."""
     stored = get_strategy(strategy_id)
-    spec = stored.spec
+    underlying, price, legs = resolve_legs(stored.spec, broker, now)
+    return StrategyPreview(stored, underlying, price, legs, _net_premium(legs))
+
+
+def resolve_legs(
+    spec: OptionsStrategySpec, broker: BrokerPort, now: datetime
+) -> tuple[Instrument, float, tuple[PreviewLeg, ...]]:
+    """The underlying, its price, and the contract each leg resolves to now."""
     underlying = resolve_instrument(spec.underlying, spec.exchange.value)
     name, derivatives_exchange = options_of(underlying)
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
@@ -139,7 +159,7 @@ def preview_strategy(strategy_id: str, broker: BrokerPort, now: datetime) -> Str
         )
         for index, leg, result in resolved
     )
-    return StrategyPreview(stored, underlying, price, legs, _net_premium(legs))
+    return underlying, price, legs
 
 
 def _check(name: str, spec: OptionsStrategySpec) -> None:
@@ -159,6 +179,17 @@ def _net_premium(legs: tuple[PreviewLeg, ...]) -> float | None:
         sign = 1 if leg.spec.side is Side.SELL else -1
         total += sign * leg.last_price * leg.quantity
     return round(total, 2)
+
+
+def _refuse_while_running(strategy_id: str, doing: str, session: Session) -> None:
+    if runs_repo.active_run_of(session, strategy_id) is not None or any(
+        command.kind is CommandKind.START
+        for command in runs_repo.pending_commands_of(session, strategy_id)
+    ):
+        raise StrategyRunningError(
+            f"stop the strategy before {doing} it: it is running (stop_strategy, then "
+            "try again once get_strategy_runs shows the run ended)"
+        )
 
 
 def _unknown(strategy_id: str) -> UnknownStrategyError:

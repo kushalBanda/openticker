@@ -25,6 +25,9 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
 | `create_strategy`, `update_strategy`, `get_strategy`, `list_strategies`, `delete_strategy` | Save options strategies of up to 10 legs chosen relative to the market (ATM, N strikes in or out of the money, weekly or monthly expiry), with a schedule and strategy-wide limits. |
 | `preview_strategy` | The real contracts a strategy would trade right now, with prices and net premium. Places nothing. |
+| `start_strategy`, `stop_strategy`, `close_strategy_leg` | Enter a strategy in the sandbox; `openticker-serve` then watches it on live prices and closes legs on their own stops and targets, and the whole run on the strategy's limits, with nobody in the conversation. |
+| `kill_strategy`, `release_kill_switch` | Lock a strategy and close everything it holds; unlock it. |
+| `get_strategy_runs`, `get_strategy_run` | A strategy's runs: legs, fills, stop reason, P&L and a timeline of what happened. |
 
 Example session, in plain language to your agent:
 
@@ -109,7 +112,7 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 
 ## Roadmap
 
-- Strategies that run unattended: multi-leg options strategies chosen relative to the market, strategy-wide stop loss, target, profit lock and kill switch, surviving restarts
+- Scheduled strategy entries and exits, closing on expiry day, and full recovery after a restart
 - Signal strategies driven by ChartInk or TradingView alerts
 - Hosting your own Python strategy scripts, without handing them your broker keys
 - More brokers, added on demand
