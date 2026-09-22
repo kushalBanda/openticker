@@ -17,7 +17,7 @@ Key libraries: `mcp` (the SDK is 2.x: `FastMCP` was renamed `MCPServer`, import 
 ## Architecture (hexagonal, ADR 1)
 
 ```
-core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math, resting-order matching), risk/ (position risk rules), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13).
+core/         domain logic. Zero I/O, zero framework imports. orders/ (order shapes, validation, sandbox fill and margin math, resting-order matching), risk/ (position risk rules, strategy-wide rules over several legs), options/ (Black-76 Greeks, chains, ADR 16), calendar/ (trading days and session hours, ADR 13).
 ports/        Protocol interfaces, shared DTOs (models.py), shared errors (errors.py).
 adapters/     implementations: brokers/ (registry + zerodha/, including the WebSocket feed), sandbox/ (paper trading, ADR 11), notifications/ (slack, email), inbound/ (mcp_server.py, mcp_models.py, rest_api.py, daemon/: main.py entry point, feed_loop.py, execution_loop.py, prices.py).
 use_cases/    one flat function per operation, not a class. May call storage directly; publish events.
@@ -38,7 +38,7 @@ Dependencies point inward: `adapters -> ports <- use_cases -> core`. Nothing in 
 - **MCP tools follow ADR 8**: title, annotations, every parameter described, Pydantic result model, bounded responses. `test_every_tool_is_fully_described_for_agents` fails any tool that doesn't.
 - **Times**: stored and passed around as tz-aware UTC; returned to agents exchange-local (`+05:30`). Input dates are exchange-local trading dates (ADR 3).
 - **Importing a module must be side-effect-free.** `load_dotenv()` runs only in the entry points' `main()` (`mcp_server`, `daemon/main`).
-- **Risk rules are pure functions** in `core/risk/` (ADR 9): absent prices are `None`/0 and never defaulted, direction is `side` never a signed quantity, stop loss beats target.
+- **Risk rules are pure functions** in `core/risk/` (ADR 9 per position, ADR 19 per strategy): absent prices are `None`/0 and never defaulted, direction is `side` never a signed quantity, stop loss beats target.
 - **Side effects go through events** (ADR 10): use cases publish, subscribers audit and notify. Never call a notification channel from a use case.
 - **Anything time-dependent takes the clock as a parameter** (`now`, or a `clock` callable at the edges: `mcp_server.clock`, `create_app(clock=...)`). Tests pin it to a trading time; nothing reads the wall clock deep inside.
 - **Live prices come through `MarketFeedPort`** (ADR 13). `ticks()` raises `BrokerSessionError` when the broker refuses the session; `FeedLoop` turns that into one `BrokerSessionExpired` event. Never log the Kite ticker URL: it carries the access token.
