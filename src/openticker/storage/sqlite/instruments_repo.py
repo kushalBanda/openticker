@@ -1,5 +1,5 @@
 """get_instrument, search_instruments, upsert_instruments, option_expiries,
-option_contracts — the broker-agnostic instrument master.
+option_contracts, future_contracts — the broker-agnostic instrument master.
 
 Upsert, not replace: rows for contracts that have since expired stay in the
 table until something prunes them (nothing does yet).
@@ -94,6 +94,21 @@ def option_contracts(name: str, exchange: str, expiry: date) -> list[Instrument]
     return [
         _to_instrument(row) for row in sorted(rows, key=lambda row: (row.strike or 0.0, row.symbol))
     ]
+
+
+def future_contracts(name: str, exchange: str, live_on: date) -> list[Instrument]:
+    """Futures on exactly `name` expiring from `live_on` onwards, earliest first."""
+    shape = re.compile(rf"{re.escape(name)}\d{{2}}[A-Z]{{3}}\d{{2}}FUT")
+    statement = select(InstrumentRow).where(
+        InstrumentRow.exchange == exchange,
+        InstrumentRow.instrument_type == InstrumentType.FUT.value,
+        InstrumentRow.symbol.startswith(name, autoescape=True),
+        InstrumentRow.expiry >= live_on,
+    )
+    with Session(get_engine()) as session:
+        rows = session.scalars(statement).all()
+    matching = [row for row in rows if shape.fullmatch(row.symbol)]
+    return [_to_instrument(row) for row in sorted(matching, key=lambda row: row.expiry or live_on)]
 
 
 def _options(name: str, exchange: str, live_on: date) -> list[InstrumentRow]:

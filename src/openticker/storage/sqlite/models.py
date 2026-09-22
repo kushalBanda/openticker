@@ -130,3 +130,20 @@ class ApiKeyRow(Base):
     scope: Mapped[str]  # "full"; narrower scopes come with script hosting
     created_at: Mapped[datetime]  # UTC, stored naive
     revoked_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+class StrategyRow(Base):
+    """Strategy definitions (ADR 20 in docs/adr). `definition` is versioned
+    JSON; a deleted strategy keeps its row, so orders it placed still name it."""
+
+    __tablename__ = "strategies"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(index=True)  # unique among strategies not deleted
+    kind: Mapped[str]  # "options"; "signal" comes with alert strategies
+    definition: Mapped[str]
+    mode: Mapped[str]  # "sandbox"; live trading has no design yet (ADR 6)
+    locked: Mapped[bool]  # the kill switch
+    created_at: Mapped[datetime]  # UTC, stored naive
+    updated_at: Mapped[datetime]  # UTC, stored naive
+    deleted_at: Mapped[datetime | None]  # UTC, stored naive

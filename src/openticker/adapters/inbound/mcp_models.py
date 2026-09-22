@@ -5,8 +5,8 @@ returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 
 import json
 from collections.abc import Sequence
-from datetime import date, datetime
-from typing import Any
+from datetime import date, datetime, time
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,20 @@ from openticker.core.orders.models import (
     OrderStatus,
     OrderType,
 )
-from openticker.core.risk.models import BreachReason
+from openticker.core.risk.models import BreachReason, LockMode, ProfitLock, StrategyLimits
+from openticker.core.strategies.models import (
+    MAX_LEGS,
+    MAX_LOTS,
+    MAX_STRIKE_OFFSET,
+    Horizon,
+    InvalidStrategyError,
+    LegSpec,
+    OptionsStrategySpec,
+    RelativeExpiry,
+    RiskValue,
+    Schedule,
+    StrikeSelector,
+)
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -34,7 +47,9 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.sqlite.audit_repo import AuditEntry
+from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
+from openticker.use_cases.strategies.define import StrategyPreview
 
 
 class LoginUrlResult(BaseModel):
@@ -470,4 +485,308 @@ class RiskCheckResult(BaseModel):
             unrealized_pnl=round(decision.unrealized_pnl, 2),
             exit_side=decision.exit_side,
             warnings=check.warnings,
+        )
+
+
+class RiskValueInput(BaseModel):
+    value: float = Field(gt=0, description="Distance from the leg's entry price.")
+    percent: bool = Field(
+        default=False, description="True: percent of the entry price. False: price points."
+    )
+
+    def to_core(self) -> RiskValue:
+        return RiskValue(value=self.value, percent=self.percent)
+
+    @classmethod
+    def of(cls, value: RiskValue | None) -> "RiskValueInput | None":
+        return None if value is None else cls(value=value.value, percent=value.percent)
+
+
+class LegDefinition(BaseModel):
+    side: Side = Field(description="BUY or SELL.")
+    lots: int = Field(ge=1, le=MAX_LOTS, description="Lots; units are this times the lot size.")
+    option_type: Literal["CE", "PE", "FUT"] = Field(description="Call, put or future.")
+    expiry: RelativeExpiry = Field(
+        description="weekly: nearest expiry (needs weekly contracts, e.g. NIFTY, SENSEX). "
+        "next_week: the one after. monthly: last expiry of the nearest month. next_month: "
+        "last expiry of the month after. Futures take monthly or next_month."
+    )
+    strike_offset: int = Field(
+        default=0,
+        ge=-MAX_STRIKE_OFFSET,
+        le=MAX_STRIKE_OFFSET,
+        description="Listed strikes from at the money (ATM is the strike nearest the "
+        "underlying's price): 0 ATM, +2 two strikes out of the money, -1 one strike in the "
+        "money, for this leg's option type. Options only.",
+    )
+    fixed_strike: float | None = Field(
+        default=None, gt=0, description="A specific strike instead of an offset. Options only."
+    )
+    stop_loss: RiskValueInput | None = Field(default=None, description="This leg's own stop.")
+    target: RiskValueInput | None = Field(default=None, description="This leg's own target.")
+    trailing: RiskValueInput | None = Field(
+        default=None, description="Trailing stop distance; trails from the entry price."
+    )
+
+    def to_core(self) -> LegSpec:
+        option_type = InstrumentType(self.option_type)
+        options = option_type is not InstrumentType.FUT
+        strike = (
+            StrikeSelector(offset=self.strike_offset, fixed_strike=self.fixed_strike)
+            if options
+            else None
+        )
+        if not options and (self.strike_offset or self.fixed_strike is not None):
+            raise InvalidStrategyError("a futures leg has no strike")
+        return LegSpec(
+            side=self.side,
+            lots=self.lots,
+            option_type=option_type,
+            expiry=self.expiry,
+            strike=strike,
+            stop_loss=self.stop_loss.to_core() if self.stop_loss else None,
+            target=self.target.to_core() if self.target else None,
+            trailing=self.trailing.to_core() if self.trailing else None,
+        )
+
+    @classmethod
+    def of(cls, leg: LegSpec) -> "LegDefinition":
+        return cls(
+            side=leg.side,
+            lots=leg.lots,
+            option_type=leg.option_type.value,  # type: ignore[arg-type]
+            expiry=leg.expiry,
+            strike_offset=leg.strike.offset if leg.strike else 0,
+            fixed_strike=leg.strike.fixed_strike if leg.strike else None,
+            stop_loss=RiskValueInput.of(leg.stop_loss),
+            target=RiskValueInput.of(leg.target),
+            trailing=RiskValueInput.of(leg.trailing),
+        )
+
+
+class ProfitLockDefinition(BaseModel):
+    arm_at: float = Field(gt=0, description="Strategy P&L, in rupees, that arms the lock.")
+    lock: float = Field(
+        ge=0,
+        description="Once armed, exit everything if P&L falls back to this. Below arm_at; "
+        "0 locks breakeven.",
+    )
+    mode: LockMode = Field(
+        default=LockMode.LOCK,
+        description="lock: the floor stays at `lock`. lock_and_trail: the floor rises by "
+        "trail_step for every trail_step the peak P&L climbs beyond arm_at.",
+    )
+    trail_step: float | None = Field(default=None, gt=0, description="lock_and_trail only.")
+
+
+class StrategyDefinition(BaseModel):
+    """An options strategy whose legs are chosen relative to the market, so the
+    same definition trades the right contracts on any day."""
+
+    underlying: str = Field(description="Index or stock, e.g. NIFTY 50, NIFTY BANK, SENSEX.")
+    exchange: Literal["NSE", "BSE"] = Field(description="The underlying's exchange.")
+    horizon: Horizon = Field(
+        description="intraday: MIS, closed by exit_time or the 15:15 square-off. "
+        "positional: NRML, carried overnight."
+    )
+    legs: list[LegDefinition] = Field(
+        min_length=1,
+        max_length=MAX_LEGS,
+        description=f"1 to {MAX_LEGS} legs, named leg1, leg2, ... in this order.",
+    )
+    entry_time: time | None = Field(
+        default=None,
+        description="HH:MM exchange time to enter on scheduled days; omit to enter only on "
+        "start_strategy.",
+    )
+    exit_time: time | None = Field(default=None, description="HH:MM exchange time to exit.")
+    weekdays: list[int] = Field(
+        default=[0, 1, 2, 3, 4],
+        description="Days to run, 0 Monday to 4 Friday. Market holidays are always skipped.",
+    )
+    exit_on_expiry: bool = Field(
+        default=True, description="Exit on the expiry day of the nearest leg."
+    )
+    combined_stop_loss: float | None = Field(
+        default=None, gt=0, description="Exit everything at this total loss, in rupees."
+    )
+    combined_target: float | None = Field(
+        default=None, gt=0, description="Exit everything at this total profit, in rupees."
+    )
+    lock_profit: ProfitLockDefinition | None = Field(
+        default=None, description="Lock in profit once the strategy is up enough."
+    )
+    stops_to_entry_on_leg_stop: bool = Field(
+        default=False,
+        description="When one leg's stop loss fires, move every other open leg's stop to its "
+        "entry (where that tightens it) and stop applying combined_stop_loss.",
+    )
+    daily_loss_limit: float | None = Field(
+        default=None,
+        gt=0,
+        description="Stop for the day once today's runs have lost this much, in rupees.",
+    )
+
+    def to_spec(self) -> OptionsStrategySpec:
+        try:
+            lock = self.lock_profit
+            return OptionsStrategySpec(
+                underlying=self.underlying,
+                exchange=Exchange(self.exchange),
+                legs=tuple(leg.to_core() for leg in self.legs),
+                horizon=self.horizon,
+                schedule=Schedule(
+                    entry_time=self.entry_time,
+                    exit_time=self.exit_time,
+                    weekdays=frozenset(self.weekdays),
+                    exit_on_expiry=self.exit_on_expiry,
+                ),
+                limits=StrategyLimits(
+                    combined_stop_loss=self.combined_stop_loss,
+                    combined_target=self.combined_target,
+                    lock_profit=None
+                    if lock is None
+                    else ProfitLock(
+                        arm_at=lock.arm_at,
+                        lock=lock.lock,
+                        mode=lock.mode,
+                        trail_step=lock.trail_step,
+                    ),
+                    stops_to_entry_on_leg_stop=self.stops_to_entry_on_leg_stop,
+                    daily_loss_limit=self.daily_loss_limit,
+                ),
+            )
+        except InvalidStrategyError:
+            raise
+        except ValueError as exc:
+            raise InvalidStrategyError(str(exc)) from exc
+
+    @classmethod
+    def of(cls, spec: OptionsStrategySpec) -> "StrategyDefinition":
+        schedule, limits, lock = spec.schedule, spec.limits, spec.limits.lock_profit
+        return cls(
+            underlying=spec.underlying,
+            exchange=spec.exchange.value,  # type: ignore[arg-type]
+            horizon=spec.horizon,
+            legs=[LegDefinition.of(leg) for leg in spec.legs],
+            entry_time=schedule.entry_time,
+            exit_time=schedule.exit_time,
+            weekdays=sorted(schedule.weekdays),
+            exit_on_expiry=schedule.exit_on_expiry,
+            combined_stop_loss=limits.combined_stop_loss,
+            combined_target=limits.combined_target,
+            lock_profit=None
+            if lock is None
+            else ProfitLockDefinition(
+                arm_at=lock.arm_at, lock=lock.lock, mode=lock.mode, trail_step=lock.trail_step
+            ),
+            stops_to_entry_on_leg_stop=limits.stops_to_entry_on_leg_stop,
+            daily_loss_limit=limits.daily_loss_limit,
+        )
+
+
+class StrategyResult(BaseModel):
+    strategy_id: str = Field(description="Pass this to the other strategy tools.")
+    name: str
+    mode: str = Field(description="sandbox: every order is paper traded.")
+    locked: bool = Field(description="True while the kill switch is on.")
+    definition: StrategyDefinition
+    created_at: datetime
+    updated_at: datetime
+    next_step: str | None = None
+
+    @classmethod
+    def of(cls, stored: StoredStrategy, next_step: str | None = None) -> "StrategyResult":
+        return cls(
+            strategy_id=stored.id,
+            name=stored.name,
+            mode=stored.mode,
+            locked=stored.locked,
+            definition=StrategyDefinition.of(stored.spec),
+            created_at=stored.created_at.astimezone(EXCHANGE_TIMEZONE),
+            updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
+            next_step=next_step,
+        )
+
+
+class StrategySummary(BaseModel):
+    strategy_id: str
+    name: str
+    underlying: str
+    legs: int
+    horizon: Horizon
+    locked: bool
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, stored: StoredStrategy) -> "StrategySummary":
+        return cls(
+            strategy_id=stored.id,
+            name=stored.name,
+            underlying=stored.spec.underlying,
+            legs=len(stored.spec.legs),
+            horizon=stored.spec.horizon,
+            locked=stored.locked,
+            updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+class StrategiesResult(BaseModel):
+    strategies: list[StrategySummary] = Field(description="By name.")
+
+
+class DeleteStrategyResult(BaseModel):
+    strategy_id: str
+    deleted: bool
+
+
+class PreviewLegResult(BaseModel):
+    leg_id: str
+    side: Side
+    lots: int
+    quantity: int = Field(description="Units: lots times the lot size.")
+    symbol: str
+    exchange: Exchange
+    expiry: date | None
+    strike: float | None
+    label: str = Field(description="ATM, ITM<n> or OTM<n> in listed strikes, or FUT.")
+    last_price: float | None
+
+
+class StrategyPreviewResult(BaseModel):
+    strategy_id: str
+    name: str
+    underlying: str
+    underlying_price: float = Field(description="ATM is the listed strike nearest this.")
+    legs: list[PreviewLegResult]
+    net_premium: float | None = Field(
+        description="Rupees received minus paid at last prices: positive is a credit. None "
+        "when a leg has no price."
+    )
+    next_step: str
+
+    @classmethod
+    def of(cls, preview: StrategyPreview, next_step: str) -> "StrategyPreviewResult":
+        return cls(
+            strategy_id=preview.strategy.id,
+            name=preview.strategy.name,
+            underlying=preview.underlying.symbol,
+            underlying_price=preview.underlying_price,
+            legs=[
+                PreviewLegResult(
+                    leg_id=leg.leg_id,
+                    side=leg.spec.side,
+                    lots=leg.spec.lots,
+                    quantity=leg.quantity,
+                    symbol=leg.instrument.symbol,
+                    exchange=leg.instrument.exchange,
+                    expiry=leg.instrument.expiry,
+                    strike=leg.instrument.strike,
+                    label=leg.label,
+                    last_price=leg.last_price,
+                )
+                for leg in preview.legs
+            ],
+            net_premium=preview.net_premium,
+            next_step=next_step,
         )

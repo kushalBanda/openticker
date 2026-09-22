@@ -20,7 +20,7 @@ from openticker.core.calendar.models import (
 )
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 
-_EQUITY_HOURS = (time(9, 15), time(15, 30))
+EQUITY_HOURS = (time(9, 15), time(15, 30))
 _MCX_OPEN = time(9, 0)
 _MCX_CLOSE_US_SUMMER = time(23, 30)
 _MCX_CLOSE_US_WINTER = time(23, 55)
@@ -35,7 +35,7 @@ class CalendarError(Exception):
 
 def regular_hours(day: date, exchange: Exchange) -> tuple[time, time]:
     if exchange is not Exchange.MCX:
-        return _EQUITY_HOURS
+        return EQUITY_HOURS
     noon_in_new_york = datetime.combine(day, time(12), _NEW_YORK)
     us_summer = bool(noon_in_new_york.dst())
     return _MCX_OPEN, _MCX_CLOSE_US_SUMMER if us_summer else _MCX_CLOSE_US_WINTER

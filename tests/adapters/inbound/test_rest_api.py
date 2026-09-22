@@ -36,6 +36,12 @@ ROUTE_FOR_TOOL = {
     "get_audit_log": ("GET", "/api/v1/audit"),
     "get_market_status": ("GET", "/api/v1/market-status"),
     "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
+    "create_strategy": ("POST", "/api/v1/strategies"),
+    "list_strategies": ("GET", "/api/v1/strategies"),
+    "get_strategy": ("GET", "/api/v1/strategies/{strategy_id}"),
+    "update_strategy": ("PUT", "/api/v1/strategies/{strategy_id}"),
+    "delete_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}"),
+    "preview_strategy": ("GET", "/api/v1/strategies/{strategy_id}/preview"),
 }
 
 
@@ -97,7 +103,10 @@ def test_every_route_but_health_needs_a_key(events: EventBus) -> None:
     assert len(routes) == len(ROUTE_FOR_TOOL)
     for method, path in routes:
         response = anonymous.request(
-            method, path.replace("{broker}", "fake").replace("{order_id}", "SB1")
+            method,
+            path.replace("{broker}", "fake")
+            .replace("{order_id}", "SB1")
+            .replace("{strategy_id}", "stg_1"),
         )
         assert response.status_code == 401, path
 
@@ -218,3 +227,31 @@ def test_resting_order_and_cancel_over_rest(client: TestClient) -> None:
     assert placed["status"] == "PENDING"
     assert cancelled.json()["status"] == "CANCELLED"
     assert missing.status_code == 404
+
+
+def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
+    from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    body = {"name": "nifty straddle", "definition": STRADDLE_JSON}
+
+    created = client.post("/api/v1/strategies", json=body)
+    strategy_id = created.json()["strategy_id"]
+    duplicate = client.post("/api/v1/strategies", json=body)
+    preview = client.get(f"/api/v1/strategies/{strategy_id}/preview", params={"broker": "fake"})
+    late = client.put(
+        f"/api/v1/strategies/{strategy_id}",
+        json={**body, "definition": {**STRADDLE_JSON, "exit_time": "15:25"}},
+    )
+    malformed = client.post("/api/v1/strategies", json={"name": "x", "definition": {}})
+
+    assert created.status_code == 200
+    assert created.json()["definition"]["exit_time"] == "15:15:00"
+    assert duplicate.status_code == 409 and "already exists" in duplicate.json()["detail"]
+    assert [leg["label"] for leg in preview.json()["legs"]] == ["ATM", "ATM"]
+    assert late.status_code == 422 and "15:15" in late.json()["detail"]
+    assert malformed.status_code == 422
+    assert client.get("/api/v1/strategies").json()["strategies"][0]["name"] == "nifty straddle"
+    assert client.delete(f"/api/v1/strategies/{strategy_id}").json()["deleted"] is True
+    assert client.get(f"/api/v1/strategies/{strategy_id}").status_code == 404

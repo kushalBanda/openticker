@@ -30,6 +30,7 @@ from openticker.adapters.inbound.mcp_models import (
     BarsResult,
     CancelOrderResult,
     ConnectResult,
+    DeleteStrategyResult,
     FundsResult,
     LoginUrlResult,
     MarketStatusesResult,
@@ -41,6 +42,11 @@ from openticker.adapters.inbound.mcp_models import (
     QuoteResult,
     RiskCheckResult,
     SearchResult,
+    StrategiesResult,
+    StrategyDefinition,
+    StrategyPreviewResult,
+    StrategyResult,
+    StrategySummary,
     SyncResult,
 )
 from openticker.composition import (
@@ -52,6 +58,8 @@ from openticker.composition import (
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.strategies.legs import LegResolutionError
+from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
 from openticker.events.types import (
     BrokerSessionExpired,
@@ -73,6 +81,7 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
+from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.cancel_order import UnknownOrderError
 from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
@@ -95,6 +104,8 @@ from openticker.use_cases.resolve_instrument import UnknownInstrumentError, reso
 from openticker.use_cases.search_instruments import (
     search_instruments as search_instruments_use_case,
 )
+from openticker.use_cases.strategies import define as strategies
+from openticker.use_cases.strategies.define import UnknownStrategyError
 from openticker.use_cases.sync_instruments import sync_instruments as sync_instruments_use_case
 
 INSTRUCTIONS = """\
@@ -115,6 +126,10 @@ Typical flow:
    Intraday (MIS) positions are closed 15 minutes before the session ends.
    evaluate_risk checks stop/target settings first; get_positions, get_funds
    and get_orderbook show the result; cancel_order withdraws a pending order.
+6. Strategies: create_strategy saves an options strategy whose legs are chosen
+   relative to the market (ATM, N strikes in or out of the money, weekly or
+   monthly expiry) with strategy-wide limits; preview_strategy shows the real
+   contracts it would trade now. Strategies can't be started yet.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -194,6 +209,10 @@ _AGENT_FIXABLE_ERRORS = (
     SandboxConfigError,
     CalendarError,
     UnknownOrderError,
+    UnknownStrategyError,
+    LegResolutionError,
+    DuplicateStrategyNameError,
+    InvalidStrategyError,
 )
 
 
@@ -593,6 +612,100 @@ def get_audit_log(
     """What OpenTicker has done, most recent first: every order, risk breach
     and instrument sync, with who triggered it. Local data only."""
     return AuditLogResult.of(get_audit_log_use_case(limit, event_type))
+
+
+StrategyId = Annotated[str, Field(description="From create_strategy or list_strategies.")]
+StrategyName = Annotated[
+    str, Field(description="Unique among your strategies: letters, digits, spaces, . - _")
+]
+Definition = Annotated[
+    StrategyDefinition,
+    Field(description="The whole strategy: underlying, legs, schedule and limits."),
+]
+_STRATEGY_NEXT_STEP = (
+    "preview_strategy shows the contracts it would trade now. Strategies can't be started yet."
+)
+
+
+@mcp.tool(
+    title="Create strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def create_strategy(name: StrategyName, definition: Definition) -> StrategyResult:
+    """Save an options strategy of 1 to 10 legs, each chosen relative to the
+    market so the same definition works every day, with an optional schedule
+    and strategy-wide limits (combined stop loss and target, profit lock,
+    stops to entry, daily loss limit). Places nothing."""
+    with _agent_facing_errors():
+        stored = strategies.create_strategy(name, definition.to_spec(), clock())
+    return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Update strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def update_strategy(
+    strategy_id: StrategyId, name: StrategyName, definition: Definition
+) -> StrategyResult:
+    """Replace a strategy's name and whole definition; get_strategy returns
+    the current one in the same shape, to edit and send back."""
+    with _agent_facing_errors():
+        stored = strategies.update_strategy(strategy_id, name, definition.to_spec(), clock())
+    return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Get strategy",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_strategy(strategy_id: StrategyId) -> StrategyResult:
+    """One strategy's full definition."""
+    with _agent_facing_errors():
+        return StrategyResult.of(strategies.get_strategy(strategy_id))
+
+
+@mcp.tool(
+    title="List strategies",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def list_strategies() -> StrategiesResult:
+    """Every saved strategy, by name."""
+    return StrategiesResult(
+        strategies=[StrategySummary.of(stored) for stored in strategies.list_strategies()]
+    )
+
+
+@mcp.tool(
+    title="Delete strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def delete_strategy(strategy_id: StrategyId) -> DeleteStrategyResult:
+    """Remove a strategy. Orders it placed keep naming it."""
+    with _agent_facing_errors():
+        strategies.delete_strategy(strategy_id, clock())
+    return DeleteStrategyResult(strategy_id=strategy_id, deleted=True)
+
+
+@mcp.tool(
+    title="Preview strategy",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def preview_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyPreviewResult:
+    """The real contracts each leg would trade if the strategy started now,
+    from the underlying's live price, with their last prices and the net
+    premium. Places nothing."""
+    with _agent_facing_errors():
+        preview = strategies.preview_strategy(strategy_id, get_adapter(broker), clock())
+    return StrategyPreviewResult.of(
+        preview, "Nothing was placed. update_strategy changes the legs."
+    )
 
 
 def main() -> None:

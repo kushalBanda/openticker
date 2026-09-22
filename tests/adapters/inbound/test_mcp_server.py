@@ -230,3 +230,81 @@ def test_a_limit_order_rests_and_can_be_cancelled() -> None:
     assert mcp_server.get_funds(broker="fake").used_margin == 0.0
     with pytest.raises(ToolError, match="no order"):
         mcp_server.cancel_order(broker="fake", order_id="SBNOPE")
+
+
+STRADDLE_JSON = {
+    "underlying": "NIFTY 50",
+    "exchange": "NSE",
+    "horizon": "intraday",
+    "legs": [
+        {"side": "SELL", "lots": 1, "option_type": "CE", "expiry": "weekly"},
+        {"side": "SELL", "lots": 1, "option_type": "PE", "expiry": "weekly"},
+    ],
+    "entry_time": "09:20",
+    "exit_time": "15:15",
+    "combined_stop_loss": 3000,
+    "lock_profit": {"arm_at": 2000, "lock": 1500},
+}
+
+
+def test_strategy_tools_round_trip_and_preview() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    definition = StrategyDefinition.model_validate(STRADDLE_JSON)
+
+    created = mcp_server.create_strategy(name="nifty straddle", definition=definition)
+    fetched = mcp_server.get_strategy(strategy_id=created.strategy_id)
+    preview = mcp_server.preview_strategy(broker="fake", strategy_id=created.strategy_id)
+
+    assert fetched.definition == definition
+    assert fetched.definition.lock_profit is not None
+    assert fetched.definition.lock_profit.mode == "lock"
+    assert "preview_strategy" in (created.next_step or "")
+    assert [leg.symbol for leg in preview.legs] == ["NIFTY22SEP262500CE", "NIFTY22SEP262500PE"]
+    assert [s.name for s in mcp_server.list_strategies().strategies] == ["nifty straddle"]
+
+    changed = definition.model_copy(update={"combined_stop_loss": 2500.0})
+    updated = mcp_server.update_strategy(
+        strategy_id=created.strategy_id, name="nifty straddle", definition=changed
+    )
+    assert updated.definition.combined_stop_loss == 2500.0
+    assert mcp_server.delete_strategy(strategy_id=created.strategy_id).deleted is True
+    assert mcp_server.list_strategies().strategies == []
+
+
+def test_strategy_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    late = StrategyDefinition.model_validate({**STRADDLE_JSON, "exit_time": "15:25"})
+    bad_lock = StrategyDefinition.model_validate(
+        {**STRADDLE_JSON, "lock_profit": {"arm_at": 1000, "lock": 1500}}
+    )
+    good = StrategyDefinition.model_validate(STRADDLE_JSON)
+
+    with pytest.raises(ToolError, match="squared off at 15:15"):
+        mcp_server.create_strategy(name="late", definition=late)
+    with pytest.raises(ToolError, match="below 1000"):
+        mcp_server.create_strategy(name="bad lock", definition=bad_lock)
+    mcp_server.create_strategy(name="taken", definition=good)
+    with pytest.raises(ToolError, match="already exists"):
+        mcp_server.create_strategy(name="taken", definition=good)
+    with pytest.raises(ToolError, match="list_strategies"):
+        mcp_server.get_strategy(strategy_id="stg_missing")
+
+
+def test_strategy_definition_schema_describes_every_field() -> None:
+    tool = next(tool for tool in _tools() if tool.name == "create_strategy")
+    definitions = tool.input_schema["$defs"]
+
+    for model in (
+        "StrategyDefinition",
+        "LegDefinition",
+        "ProfitLockDefinition",
+        "RiskValueInput",
+    ):
+        for name, schema in definitions[model]["properties"].items():
+            assert schema.get("description"), f"{model}.{name} has no description"

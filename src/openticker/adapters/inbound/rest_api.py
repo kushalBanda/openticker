@@ -27,6 +27,7 @@ from openticker.adapters.inbound.mcp_models import (
     BarsResult,
     CancelOrderResult,
     ConnectResult,
+    DeleteStrategyResult,
     FundsResult,
     LoginUrlResult,
     MarketStatusesResult,
@@ -38,12 +39,19 @@ from openticker.adapters.inbound.mcp_models import (
     QuoteResult,
     RiskCheckResult,
     SearchResult,
+    StrategiesResult,
+    StrategyDefinition,
+    StrategyPreviewResult,
+    StrategyResult,
+    StrategySummary,
     SyncResult,
 )
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.strategies.legs import LegResolutionError
+from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import (
@@ -56,6 +64,7 @@ from openticker.ports.models import (
 )
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
+from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.api_keys import authenticate
 from openticker.use_cases.cancel_order import UnknownOrderError, cancel_order
 from openticker.use_cases.connect_broker import connect_broker
@@ -71,6 +80,15 @@ from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.search_instruments import search_instruments
+from openticker.use_cases.strategies.define import (
+    UnknownStrategyError,
+    create_strategy,
+    delete_strategy,
+    get_strategy,
+    list_strategies,
+    preview_strategy,
+    update_strategy,
+)
 from openticker.use_cases.sync_instruments import sync_instruments
 
 API_KEY_HEADER = "X-API-Key"
@@ -83,6 +101,10 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnsupportedUnderlyingError, 404),
     (NoOptionsError, 404),
     (UnknownOrderError, 404),
+    (UnknownStrategyError, 404),
+    (LegResolutionError, 404),
+    (DuplicateStrategyNameError, 409),
+    (InvalidStrategyError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
@@ -94,6 +116,14 @@ _NEXT_STEP = {
     OrderStatus.PENDING: "Rests until a live price crosses it; fills while openticker-serve "
     "runs. DELETE /api/v1/orders/{order_id} withdraws it.",
 }
+
+_STRATEGY_NEXT_STEP = (
+    "GET /api/v1/strategies/{strategy_id}/preview shows the contracts it would trade now. "
+    "Strategies can't be started yet."
+)
+_PREVIEW_NEXT_STEP = (
+    "Nothing was placed. Change the legs with PUT /api/v1/strategies/{strategy_id}."
+)
 
 _api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
@@ -122,6 +152,11 @@ class BrokerBody(BaseModel):
 class ConnectBody(BaseModel):
     broker: str
     request_token: str = Field(description="From the redirect URL after login.")
+
+
+class StrategyBody(BaseModel):
+    name: str = Field(description="Unique among your strategies.")
+    definition: StrategyDefinition
 
 
 class PlaceOrderBody(BaseModel):
@@ -327,6 +362,38 @@ def create_app(
         event_type: str | None = None, limit: Annotated[int, Query(ge=1, le=200)] = 20
     ) -> AuditLogResult:
         return AuditLogResult.of(get_audit_log(limit, event_type))
+
+    @api.post("/strategies")
+    def new_strategy(body: StrategyBody) -> StrategyResult:
+        """Saves a definition. Places nothing."""
+        stored = create_strategy(body.name, body.definition.to_spec(), clock())
+        return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
+
+    @api.get("/strategies")
+    def strategies() -> StrategiesResult:
+        return StrategiesResult(strategies=[StrategySummary.of(s) for s in list_strategies()])
+
+    @api.get("/strategies/{strategy_id}")
+    def strategy(strategy_id: str) -> StrategyResult:
+        return StrategyResult.of(get_strategy(strategy_id))
+
+    @api.put("/strategies/{strategy_id}")
+    def change_strategy(strategy_id: str, body: StrategyBody) -> StrategyResult:
+        """Replaces the whole definition."""
+        stored = update_strategy(strategy_id, body.name, body.definition.to_spec(), clock())
+        return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
+
+    @api.delete("/strategies/{strategy_id}")
+    def remove_strategy(strategy_id: str) -> DeleteStrategyResult:
+        delete_strategy(strategy_id, clock())
+        return DeleteStrategyResult(strategy_id=strategy_id, deleted=True)
+
+    @api.get("/strategies/{strategy_id}/preview")
+    def preview(strategy_id: str, broker: Broker) -> StrategyPreviewResult:
+        """The contracts each leg would trade now. Places nothing."""
+        return StrategyPreviewResult.of(
+            preview_strategy(strategy_id, get_adapter(broker), clock()), _PREVIEW_NEXT_STEP
+        )
 
     app.include_router(api)
     return app

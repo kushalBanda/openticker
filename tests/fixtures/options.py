@@ -49,3 +49,19 @@ def chain_contracts(
         for strike in strikes
         for option_type in (InstrumentType.CE, InstrumentType.PE)
     ]
+
+
+def future(name: str, expiry: date, exchange: Exchange = Exchange.NFO) -> Instrument:
+    symbol = f"{name}{expiry.strftime('%d%b%y').upper()}FUT"
+    return Instrument(
+        symbol=symbol,
+        broker_symbol=symbol,
+        exchange=exchange,
+        broker_exchange=exchange.value,
+        token=f"token-{symbol}",
+        expiry=expiry,
+        strike=None,
+        lot_size=65,
+        instrument_type=InstrumentType.FUT,
+        tick_size=0.05,
+    )

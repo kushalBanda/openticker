@@ -23,6 +23,8 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `get_positions`, `get_funds`, `get_orderbook` | Sandbox positions with live P&L, virtual capital and margin, order history. |
 | `evaluate_risk` | Check stop loss, target and capital cap settings against the live price before acting. |
 | `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
+| `create_strategy`, `update_strategy`, `get_strategy`, `list_strategies`, `delete_strategy` | Save options strategies of up to 10 legs chosen relative to the market (ATM, N strikes in or out of the money, weekly or monthly expiry), with a schedule and strategy-wide limits. |
+| `preview_strategy` | The real contracts a strategy would trade right now, with prices and net premium. Places nothing. |
 
 Example session, in plain language to your agent:
 
