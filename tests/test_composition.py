@@ -76,3 +76,19 @@ def test_watch_list_reads_exchange_symbol_pairs() -> None:
     for bad in ("NIFTY 50", "NYSE:IBM", "NSE:"):
         with pytest.raises(WatchConfigError, match="EXCHANGE:SYMBOL"):
             watch_list({"OPENTICKER_WATCH": bad})
+
+
+def test_price_timeouts_come_from_the_environment() -> None:
+    from datetime import timedelta
+
+    from openticker.composition import SandboxConfigError, price_timeouts
+    from openticker.core.strategies.prices import PriceTimeouts
+
+    assert price_timeouts({}) == PriceTimeouts()
+    assert price_timeouts(
+        {"STRATEGY_TICK_FALLBACK_SECONDS": "5", "STRATEGY_TICK_STALE_SECONDS": "30"}
+    ) == PriceTimeouts(timedelta(seconds=5), timedelta(seconds=30))
+    with pytest.raises(SandboxConfigError, match="less than"):
+        price_timeouts({"STRATEGY_TICK_FALLBACK_SECONDS": "90"})
+    with pytest.raises(SandboxConfigError, match="positive"):
+        price_timeouts({"STRATEGY_TICK_STALE_SECONDS": "-1"})

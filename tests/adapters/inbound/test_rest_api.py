@@ -46,6 +46,8 @@ ROUTE_FOR_TOOL = {
     "stop_strategy": ("POST", "/api/v1/strategies/{strategy_id}/stop"),
     "kill_strategy": ("POST", "/api/v1/strategies/{strategy_id}/kill"),
     "release_kill_switch": ("POST", "/api/v1/strategies/{strategy_id}/release"),
+    "schedule_strategy": ("POST", "/api/v1/strategies/{strategy_id}/schedule"),
+    "unschedule_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}/schedule"),
     "close_strategy_leg": ("POST", "/api/v1/strategies/{strategy_id}/legs/{leg_id}/close"),
     "get_strategy_runs": ("GET", "/api/v1/strategies/{strategy_id}/runs"),
     "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
@@ -262,6 +264,26 @@ def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get("/api/v1/strategies").json()["strategies"][0]["name"] == "nifty straddle"
     assert client.delete(f"/api/v1/strategies/{strategy_id}").json()["deleted"] is True
     assert client.get(f"/api/v1/strategies/{strategy_id}").status_code == 404
+
+
+def test_schedule_routes_mirror_the_tools(client: TestClient) -> None:
+    from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    body = {"name": "scheduled", "definition": STRADDLE_JSON}
+    strategy_id = client.post("/api/v1/strategies", json=body).json()["strategy_id"]
+    base = f"/api/v1/strategies/{strategy_id}/schedule"
+
+    scheduled = client.post(base, json={"broker": "fake"})
+    unknown = client.post(base, json={"broker": "nope"})
+    unscheduled = client.delete(base)
+
+    assert scheduled.status_code == 200 and scheduled.json()["scheduled_broker"] == "fake"
+    assert unknown.status_code == 404
+    assert unscheduled.json()["scheduled_broker"] is None
+    client.post(f"/api/v1/strategies/{strategy_id}/kill")
+    assert client.post(base, json={"broker": "fake"}).status_code == 409
 
 
 def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:

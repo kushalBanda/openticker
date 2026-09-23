@@ -44,6 +44,7 @@ class StoredStrategy:
     locked: bool
     created_at: datetime  # tz-aware UTC
     updated_at: datetime  # tz-aware UTC
+    scheduled_broker: str | None = None  # None: enters only on start_strategy
 
 
 def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> StoredStrategy:
@@ -59,6 +60,7 @@ def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> Stor
             created_at=_naive(now),
             updated_at=_naive(now),
             deleted_at=None,
+            scheduled_broker=None,
         )
         session.add(row)
         session.flush()
@@ -103,6 +105,20 @@ def set_locked(session: Session, strategy_id: str, locked: bool) -> None:
     row = _live(session, strategy_id)
     if row is not None:
         row.locked = locked
+
+
+def set_scheduled(session: Session, strategy_id: str, broker: str | None) -> None:
+    row = _live(session, strategy_id)
+    if row is not None:
+        row.scheduled_broker = broker
+
+
+def list_scheduled() -> list[StoredStrategy]:
+    statement = select(StrategyRow).where(
+        StrategyRow.deleted_at.is_(None), StrategyRow.scheduled_broker.is_not(None)
+    )
+    with Session(get_engine()) as session:
+        return [_stored(row) for row in session.scalars(statement).all()]
 
 
 def list_strategies() -> list[StoredStrategy]:
@@ -162,6 +178,7 @@ def _stored(row: StrategyRow) -> StoredStrategy:
         locked=row.locked,
         created_at=row.created_at.replace(tzinfo=UTC),
         updated_at=row.updated_at.replace(tzinfo=UTC),
+        scheduled_broker=row.scheduled_broker,
     )
 
 

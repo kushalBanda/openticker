@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from openticker.adapters.brokers.zerodha.auth import KITE_BASE_URL
-from openticker.ports.errors import BrokerError, BrokerSessionError
+from openticker.ports.errors import BrokerError, BrokerRateLimitError, BrokerSessionError
 from openticker.ports.models import Bar, Instrument, Interval, Quote
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -38,6 +38,10 @@ _SECONDS_BETWEEN_CHUNKS = 0.35
 
 class KiteApiError(BrokerError):
     """Kite returned an error for a market-data call."""
+
+
+class KiteRateLimitError(KiteApiError, BrokerRateLimitError):
+    """Kite answered 429."""
 
 
 class KiteSessionError(KiteApiError, BrokerSessionError):
@@ -175,6 +179,8 @@ def _get(
             "Kite rejected the session token (expired or revoked) — "
             "reconnect with get_broker_login_url + connect_broker"
         )
+    if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+        raise KiteRateLimitError(f"Kite {path} is rate limited (HTTP 429); wait before retrying")
     if response.status_code >= HTTPStatus.BAD_REQUEST:
         raise KiteApiError(f"Kite {path} failed: HTTP {response.status_code} - {response.text}")
     payload: dict[str, Any] = response.json()

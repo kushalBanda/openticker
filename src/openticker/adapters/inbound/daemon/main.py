@@ -27,7 +27,13 @@ from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
 from openticker.adapters.inbound.rest_api import API_KEY_HEADER, create_app
-from openticker.composition import build_event_bus, capital_cap, order_broker, watch_list
+from openticker.composition import (
+    build_event_bus,
+    capital_cap,
+    order_broker,
+    price_timeouts,
+    watch_list,
+)
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
@@ -167,7 +173,12 @@ def _serve(env: Mapping[str, str]) -> None:
     feeds.append(
         threading.Thread(
             target=StrategyLoop(
-                partial(order_broker, env=env), prices, events, load_calendar, capital_cap(env)
+                partial(order_broker, env=env),
+                prices,
+                events,
+                load_calendar,
+                capital_cap(env),
+                timeouts=price_timeouts(env),
             ).run,
             args=(stop,),
             name="strategies",

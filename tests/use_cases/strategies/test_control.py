@@ -1,7 +1,10 @@
+from dataclasses import replace
+
 import pytest
 
+from openticker.core.strategies.models import Schedule
 from openticker.core.strategies.runs import CommandKind, CommandStatus, LegStatus
-from openticker.storage.sqlite import runs_repo
+from openticker.storage.sqlite import runs_repo, strategies_repo
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
     StrategyStateError,
@@ -12,6 +15,8 @@ from openticker.use_cases.strategies.control import (
     request_kill,
     request_start,
     request_stop,
+    schedule_strategy,
+    unschedule_strategy,
 )
 from openticker.use_cases.strategies.define import (
     StrategyRunningError,
@@ -29,6 +34,22 @@ from tests.fixtures.strategy_desk import Desk
 @pytest.fixture(autouse=True)
 def _market() -> None:
     list_nifty_market()
+
+
+def test_scheduling_needs_an_entry_time_and_no_kill_switch() -> None:
+    stored = create_strategy("straddle", STRADDLE, NOW)
+    manual = create_strategy("manual", replace(STRADDLE, schedule=Schedule()), NOW)
+
+    assert schedule_strategy(stored.id, "zerodha").scheduled_broker == "zerodha"
+    assert [s.id for s in strategies_repo.list_scheduled()] == [stored.id]
+    with pytest.raises(StrategyStateError, match="no entry_time"):
+        schedule_strategy(manual.id, "zerodha")
+    request_kill(stored.id, "mcp", NOW)
+    with pytest.raises(StrategyLockedError):
+        schedule_strategy(stored.id, "zerodha")
+
+    assert unschedule_strategy(stored.id).scheduled_broker is None
+    assert strategies_repo.list_scheduled() == []
 
 
 def test_start_is_queued_for_the_daemon() -> None:

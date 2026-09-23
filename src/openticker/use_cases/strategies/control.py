@@ -86,6 +86,32 @@ def release_kill_switch(strategy_id: str) -> StoredStrategy:
     return strategies_repo.find_strategy(strategy_id) or stored
 
 
+def schedule_strategy(strategy_id: str, broker: str) -> StoredStrategy:
+    """Enters the strategy at its entry_time on its weekdays, skipping market
+    holidays, through `broker`, until `unschedule_strategy`."""
+    with write_transaction() as session:
+        stored = _strategy(session, strategy_id)
+        if stored.spec.schedule.entry_time is None:
+            raise StrategyStateError(
+                f"{stored.name!r} has no entry_time; set one with update_strategy first"
+            )
+        if stored.locked:
+            raise StrategyLockedError(
+                f"{stored.name!r} is locked by its kill switch; release_kill_switch first"
+            )
+        strategies_repo.set_scheduled(session, strategy_id, broker)
+    return strategies_repo.find_strategy(strategy_id) or stored
+
+
+def unschedule_strategy(strategy_id: str) -> StoredStrategy:
+    """No more scheduled entries. A run already open carries on, and its
+    exit_time still closes it."""
+    with write_transaction() as session:
+        stored = _strategy(session, strategy_id)
+        strategies_repo.set_scheduled(session, strategy_id, None)
+    return strategies_repo.find_strategy(strategy_id) or stored
+
+
 def request_close_leg(strategy_id: str, leg_id: str, triggered_by: str, now: datetime) -> Command:
     """Closes one leg; the run carries on with the rest."""
     with write_transaction() as session:

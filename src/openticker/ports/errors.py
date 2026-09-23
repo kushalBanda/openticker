@@ -6,5 +6,9 @@ class BrokerError(Exception):
     """A broker call failed in a way the caller can act on; the message says how."""
 
 
+class BrokerRateLimitError(BrokerError):
+    """The broker refused the call for asking too often; wait before the next."""
+
+
 class BrokerSessionError(BrokerError):
     """No session, or the broker rejected it (expired, revoked) — reconnect the broker."""

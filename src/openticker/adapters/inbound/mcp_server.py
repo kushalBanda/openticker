@@ -24,6 +24,7 @@ from openticker.adapters.brokers.registry import (
     UnknownBrokerError,
     get_adapter,
     get_login_url,
+    require_broker,
 )
 from openticker.adapters.inbound.mcp_models import (
     AuditLogResult,
@@ -643,6 +644,10 @@ Definition = Annotated[
 _STRATEGY_NEXT_STEP = (
     "preview_strategy shows the contracts it would trade now; start_strategy enters it."
 )
+_SCHEDULE_NEXT_STEP = (
+    "openticker-serve enters it at its entry_time; get_strategy_runs shows each scheduled "
+    "start and its outcome. Keep openticker-serve running."
+)
 _COMMAND_NEXT_STEP = (
     "openticker-serve carries this out within about a second; get_strategy_runs shows the "
     "outcome. If the command stays pending, openticker-serve isn't running: start it."
@@ -790,6 +795,38 @@ def release_kill_switch(strategy_id: StrategyId) -> StrategyResult:
     with _agent_facing_errors():
         stored = control.release_kill_switch(strategy_id)
     return StrategyResult.of(stored, "Unlocked. start_strategy enters it again.")
+
+
+@mcp.tool(
+    title="Schedule strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def schedule_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyResult:
+    """Enter the strategy automatically at its entry_time on its weekdays,
+    skipping market holidays, until unschedule_strategy. openticker-serve
+    enters it as start_strategy would; an entry it misses by more than a
+    minute (because it wasn't running) is skipped for the day. The
+    strategy's exit_time and expiry-day exit close every run, scheduled or
+    not."""
+    with _agent_facing_errors():
+        stored = control.schedule_strategy(strategy_id, require_broker(broker))
+    return StrategyResult.of(stored, _SCHEDULE_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Unschedule strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def unschedule_strategy(strategy_id: StrategyId) -> StrategyResult:
+    """Stop entering the strategy on its schedule. A run already open
+    carries on; stop_strategy ends it."""
+    with _agent_facing_errors():
+        stored = control.unschedule_strategy(strategy_id)
+    return StrategyResult.of(stored)
 
 
 @mcp.tool(

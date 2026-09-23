@@ -71,6 +71,13 @@ def register_login_url_builder(name: str, builder: Callable[[], str]) -> None:
     _LOGIN_URL_BUILDERS[name] = builder
 
 
+def require_broker(name: str) -> str:
+    """`name`, if a broker is registered under it."""
+    if name not in BROKER_REGISTRY:
+        raise UnknownBrokerError(f"no broker adapter registered for {name!r}")
+    return name
+
+
 def get_adapter(name: str) -> BrokerPort:
     builder = BROKER_REGISTRY.get(name)
     if builder is None:

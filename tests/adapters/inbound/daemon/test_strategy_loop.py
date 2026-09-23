@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
 from openticker.core.risk.models import StrategyStopReason
 from openticker.core.strategies.runs import RunStatus
@@ -40,3 +41,38 @@ def test_one_pass_starts_a_run_and_the_next_exits_it_on_its_limits() -> None:
     run = runs_repo.list_runs(stored.id, 1)[0]
     assert run.status is RunStatus.ENDED
     assert run.stop_reason is StrategyStopReason.COMBINED_STOP_LOSS
+
+
+def test_the_first_pass_notes_runs_left_open_and_quotes_quiet_legs() -> None:
+    desk = Desk()
+    stored = create_strategy("straddle", STRADDLE, desk.now)
+    request_start(stored.id, "fake", "mcp", desk.now)
+    StrategyLoop(
+        lambda broker: desk.sandbox,
+        desk.prices,
+        desk.events,
+        lambda: NO_HOLIDAYS,
+        None,
+        lambda: desk.now,
+    ).step()
+
+    restarted = LatestPrices()
+    loop = StrategyLoop(
+        lambda broker: desk.sandbox,
+        restarted,
+        desk.events,
+        lambda: NO_HOLIDAYS,
+        None,
+        lambda: desk.now,
+    )
+    desk.now += timedelta(seconds=30)
+    loop.step()
+    desk.now += timedelta(seconds=10)  # no streamed price since the restart: quoted
+    loop.step()
+
+    run = runs_repo.list_runs(stored.id, 1)[0]
+    assert run.status is RunStatus.OPEN  # priced by quotes, not stale
+    events = [e.message for e in runs_repo.list_events(run.id, 20)]
+    assert events.count("openticker-serve started: watching this run again") == 1
+    ce = get_instrument(CE, "NFO")
+    assert ce is not None and restarted.get(ce) is not None

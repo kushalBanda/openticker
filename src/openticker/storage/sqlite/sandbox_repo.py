@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import literal_column, select
 from sqlalchemy.orm import Session
 
 from openticker.core.orders.models import Order, OrderStatus, OrderType
@@ -250,6 +250,17 @@ def find_order(order_id: str) -> StoredOrder | None:
     with Session(get_engine()) as session:
         row = session.get(SandboxOrderRow, order_id)
         return _stored(row) if row is not None else None
+
+
+def list_run_orders(run_id: str) -> list[StoredOrder]:
+    """Every order tagged with the strategy run, in the order they were placed."""
+    with Session(get_engine()) as session:
+        rows = session.scalars(
+            select(SandboxOrderRow)
+            .where(SandboxOrderRow.run_id == run_id)
+            .order_by(literal_column("rowid"))
+        ).all()
+    return [_stored(row) for row in rows]
 
 
 def list_pending_orders() -> list[StoredOrder]:

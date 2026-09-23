@@ -5,11 +5,13 @@ nothing else does."""
 
 import math
 from collections.abc import Mapping
+from datetime import timedelta
 
 from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.core.strategies.prices import PriceTimeouts
 from openticker.events.bus import EventBus
 from openticker.events.subscribers.audit_log import record_event
 from openticker.events.subscribers.notifications import NOTIFIED_EVENTS, notifier
@@ -95,6 +97,24 @@ def order_broker(broker: str, env: Mapping[str, str]) -> SandboxBroker:
 def capital_cap(env: Mapping[str, str]) -> float | None:
     """`OPENTICKER_CAPITAL_CAP`: the most one position may be worth. Unset means no cap."""
     return _positive_number(env, "OPENTICKER_CAPITAL_CAP")
+
+
+def price_timeouts(env: Mapping[str, str]) -> PriceTimeouts:
+    """`STRATEGY_TICK_FALLBACK_SECONDS` (default 10): no streamed price for this
+    long and a strategy leg is priced by quotes. `STRATEGY_TICK_STALE_SECONDS`
+    (default 60): no price from either and its run stops (ADR 23 in docs/adr)."""
+    defaults = PriceTimeouts()
+    poll = _positive_number(env, "STRATEGY_TICK_FALLBACK_SECONDS")
+    stale = _positive_number(env, "STRATEGY_TICK_STALE_SECONDS")
+    try:
+        return PriceTimeouts(
+            poll_after=timedelta(seconds=poll) if poll else defaults.poll_after,
+            stale_after=timedelta(seconds=stale) if stale else defaults.stale_after,
+        )
+    except ValueError as exc:
+        raise SandboxConfigError(
+            f"STRATEGY_TICK_FALLBACK_SECONDS must be less than STRATEGY_TICK_STALE_SECONDS: {exc}"
+        ) from exc
 
 
 def watch_list(env: Mapping[str, str]) -> list[tuple[str, Exchange]]:

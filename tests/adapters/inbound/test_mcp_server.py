@@ -356,6 +356,34 @@ def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
     assert mcp_server.release_kill_switch(strategy_id=strategy_id).locked is False
 
 
+def test_schedule_tools_arm_and_disarm_scheduled_entries() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    created = mcp_server.create_strategy(
+        name="scheduled", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    )
+    strategy_id = created.strategy_id
+    assert created.scheduled_broker is None
+
+    scheduled = mcp_server.schedule_strategy(broker="fake", strategy_id=strategy_id)
+    assert scheduled.scheduled_broker == "fake" and "entry_time" in (scheduled.next_step or "")
+    assert [s.scheduled for s in mcp_server.list_strategies().strategies] == [True]
+    with pytest.raises(ToolError, match="no broker adapter registered"):
+        mcp_server.schedule_strategy(broker="nope", strategy_id=strategy_id)
+
+    assert mcp_server.unschedule_strategy(strategy_id=strategy_id).scheduled_broker is None
+    unscheduled = dict(STRADDLE_JSON, entry_time=None)
+    mcp_server.update_strategy(
+        strategy_id=strategy_id,
+        name="scheduled",
+        definition=StrategyDefinition.model_validate(unscheduled),
+    )
+    with pytest.raises(ToolError, match="no entry_time"):
+        mcp_server.schedule_strategy(broker="fake", strategy_id=strategy_id)
+
+
 def test_strategy_run_tools_turn_mistakes_into_agent_facing_errors() -> None:
     from openticker.adapters.inbound.mcp_models import StrategyDefinition
     from tests.fixtures.strategies import list_nifty_market

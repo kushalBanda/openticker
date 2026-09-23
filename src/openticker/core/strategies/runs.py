@@ -95,10 +95,11 @@ class Run:
     broker: str
     product: Product
     status: RunStatus
-    trigger: str  # who started it: "mcp", "rest"
+    trigger: str  # who started it: "mcp", "rest:<key>", "schedule"
     started_at: datetime  # tz-aware UTC
     legs: tuple[RunLeg, ...]
     peak_mtm: float = 0.0
+    trough_mtm: float = 0.0
     lock_floor: float | None = None
     stops_at_entry: bool = False
     stop_reason: StrategyStopReason | None = None

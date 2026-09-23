@@ -1,6 +1,8 @@
-"""The daemon's strategy loop (ADR 21 in docs/adr): every second, carries out
-the start, stop, kill and close-leg commands the MCP server and the REST API
-wrote, then judges every open run at the latest live prices.
+"""The daemon's strategy loop (ADR 21 in docs/adr): every second, writes the
+starts strategies' schedules ask for (ADR 22), carries out the start, stop,
+kill and close-leg commands, fetches quotes for legs the feed has gone quiet
+on, then judges every open run at the latest prices (ADR 23). Its first pass
+notes on every run left open that it is watched again.
 
 `step()` does one pass and is what the tests drive; `run()` repeats it and
 keeps going through errors, logging each distinct one once.
@@ -12,10 +14,19 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from openticker.adapters.inbound.daemon.prices import LatestPrices
+from openticker.adapters.inbound.daemon.quote_poller import QuotePoller
 from openticker.core.calendar.models import MarketCalendar
+from openticker.core.strategies.prices import PriceTimeouts
 from openticker.events.bus import EventPublisher
 from openticker.ports.sandbox_port import OrderSandbox
-from openticker.use_cases.strategies.runner import RunnerContext, process_commands, step_runs
+from openticker.use_cases.strategies.runner import (
+    RunnerContext,
+    process_commands,
+    recover_runs,
+    start_scheduled,
+    step_runs,
+    watched_legs,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +42,17 @@ class StrategyLoop:
         calendar: Callable[[], MarketCalendar],
         capital_cap: float | None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        timeouts: PriceTimeouts | None = None,
     ) -> None:
         self._sandbox = sandbox
+        self._timeouts = timeouts or PriceTimeouts()
+        self._poller = QuotePoller(
+            lambda broker, instruments: sandbox(broker).get_quotes(instruments),
+            prices,
+            self._timeouts,
+        )
+        self._recovered = False
+        self._started_at: datetime | None = None
         self._prices = prices
         self._events = events
         self._load_calendar = calendar
@@ -65,6 +85,15 @@ class StrategyLoop:
             events=self._events,
             calendar=self._calendar,
             capital_cap=self._capital_cap,
+            timeouts=self._timeouts,
+            watching_from=self._started_at or now,
         )
+        if not self._recovered:
+            if count := recover_runs(context, now):
+                log.info("watching %d strategy run(s) left open by the last run", count)
+            self._recovered = True
+            self._started_at = now
+        start_scheduled(context, now)
         process_commands(context, now)
+        self._poller.poll(watched_legs(context, now), now)
         step_runs(context, now)

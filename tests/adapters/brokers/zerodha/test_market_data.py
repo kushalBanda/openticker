@@ -7,6 +7,7 @@ import pytest
 
 from openticker.adapters.brokers.zerodha import market_data
 from openticker.adapters.brokers.zerodha.adapter import ZerodhaAdapter
+from openticker.ports.errors import BrokerRateLimitError
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 
 
@@ -84,6 +85,13 @@ def test_expired_session_raises_session_error(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(market_data.KiteSessionError):
         market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+
+
+def test_rate_limit_raises_a_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, [httpx.Response(429, json={"error_type": "NetworkException"})])
+
+    with pytest.raises(BrokerRateLimitError, match="429"):
+        market_data.fetch_quotes("key", "token", [FAKE_INSTRUMENT])
 
 
 def test_fetch_candles_converts_to_utc_bars(monkeypatch: pytest.MonkeyPatch) -> None:

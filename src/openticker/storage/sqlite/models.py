@@ -149,6 +149,9 @@ class StrategyRow(Base):
     created_at: Mapped[datetime]  # UTC, stored naive
     updated_at: Mapped[datetime]  # UTC, stored naive
     deleted_at: Mapped[datetime | None]  # UTC, stored naive
+    # The broker scheduled entries go through; NULL: not scheduled (ADR 22 in
+    # docs/adr). Nullable, so it can be added to an existing table (ADR 18).
+    scheduled_broker: Mapped[str | None]
 
 
 # Strategy runs (ADR 21 in docs/adr). The MCP server and the REST API write
@@ -185,6 +188,7 @@ class StrategyRunRow(Base):
     stop_detail: Mapped[str | None]
     legs: Mapped[str]  # JSON: each leg's contract, state and ratchets
     peak_mtm: Mapped[float]
+    trough_mtm: Mapped[float | None]  # nullable: added after the table (ADR 18); NULL is 0
     lock_floor: Mapped[float | None]
     stops_at_entry: Mapped[bool]
     realized_pnl: Mapped[float]

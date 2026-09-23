@@ -26,6 +26,11 @@ class SandboxPort(Protocol):
 
     def expire_order(self, order_id: str, reason: str, now: datetime) -> OrderResult: ...
 
+    def orders_of_run(self, run_id: str) -> list[Order]:
+        """Every order a strategy run placed, oldest first: what it holds
+        even when the run never recorded the fill."""
+        ...
+
     def open_positions(self) -> list[Position]:
         """Every non-zero position, without prices: cheap enough to check often."""
         ...

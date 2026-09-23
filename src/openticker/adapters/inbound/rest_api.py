@@ -21,6 +21,7 @@ from openticker.adapters.brokers.registry import (
     UnknownBrokerError,
     get_adapter,
     get_login_url,
+    require_broker,
 )
 from openticker.adapters.inbound.mcp_models import (
     AuditLogResult,
@@ -435,6 +436,18 @@ def create_app(
     def release(strategy_id: str) -> StrategyResult:
         """Unlocks a killed strategy."""
         return StrategyResult.of(control.release_kill_switch(strategy_id))
+
+    @api.post("/strategies/{strategy_id}/schedule")
+    def schedule(strategy_id: str, body: BrokerBody) -> StrategyResult:
+        """Enters the strategy at its entry_time on its weekdays, skipping holidays."""
+        return StrategyResult.of(
+            control.schedule_strategy(strategy_id, require_broker(body.broker))
+        )
+
+    @api.delete("/strategies/{strategy_id}/schedule")
+    def unschedule(strategy_id: str) -> StrategyResult:
+        """No more scheduled entries; a run already open carries on."""
+        return StrategyResult.of(control.unschedule_strategy(strategy_id))
 
     @api.post("/strategies/{strategy_id}/legs/{leg_id}/close")
     def close_leg(strategy_id: str, leg_id: str, key: ApiKey) -> StrategyCommandResult:

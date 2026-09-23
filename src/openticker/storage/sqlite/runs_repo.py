@@ -34,6 +34,8 @@ from openticker.storage.sqlite.models import (
 )
 from openticker.storage.sqlite.strategies_repo import write_transaction
 
+SCHEDULE_TRIGGER = "schedule"  # who sends a scheduled start
+
 
 @dataclass(frozen=True)
 class RunOrder:
@@ -45,7 +47,9 @@ class RunOrder:
     exchange: str
     side: Side
     quantity: int
-    status: str  # pending until the sandbox answers, then its order status
+    # pending until the sandbox answers, then its order status; not_sent if it
+    # never reached the sandbox
+    status: str
     sandbox_order_id: str | None
     fill_price: float | None
     reason: str | None
@@ -96,6 +100,17 @@ def pending_commands_of(session: Session, strategy_id: str) -> list[Command]:
         .order_by(StrategyCommandRow.id)
     )
     return [_command(row) for row in session.scalars(statement).all()]
+
+
+def scheduled_start_since(session: Session, strategy_id: str, since: datetime) -> bool:
+    """Whether the schedule already sent a start at or after `since`."""
+    statement = select(StrategyCommandRow.id).where(
+        StrategyCommandRow.strategy_id == strategy_id,
+        StrategyCommandRow.kind == CommandKind.START.value,
+        StrategyCommandRow.triggered_by == SCHEDULE_TRIGGER,
+        StrategyCommandRow.created_at >= _naive(since),
+    )
+    return session.scalars(statement).first() is not None
 
 
 def settle_command(
@@ -330,6 +345,7 @@ def _run_fields(run: Run) -> dict[str, Any]:
         "stop_detail": run.stop_detail,
         "legs": json.dumps([_encode_leg(leg) for leg in run.legs]),
         "peak_mtm": run.peak_mtm,
+        "trough_mtm": run.trough_mtm,
         "lock_floor": run.lock_floor,
         "stops_at_entry": run.stops_at_entry,
         "realized_pnl": run.realized_pnl,
@@ -347,6 +363,7 @@ def _run(row: StrategyRunRow) -> Run:
         started_at=row.started_at.replace(tzinfo=UTC),
         legs=tuple(_decode_leg(leg) for leg in json.loads(row.legs)),
         peak_mtm=row.peak_mtm,
+        trough_mtm=row.trough_mtm or 0.0,
         lock_floor=row.lock_floor,
         stops_at_entry=row.stops_at_entry,
         stop_reason=StrategyStopReason(row.stop_reason) if row.stop_reason else None,

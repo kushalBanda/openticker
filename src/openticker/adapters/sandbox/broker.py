@@ -205,6 +205,13 @@ class SandboxBroker:
             sandbox_repo.update_order(session, order, now)
         return _result(order)
 
+    def orders_of_run(self, run_id: str) -> list[Order]:
+        return [
+            stored.to_order(instrument)
+            for stored in sandbox_repo.list_run_orders(run_id)
+            if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
+        ]
+
     def open_positions(self) -> list[Position]:
         return [
             Position(

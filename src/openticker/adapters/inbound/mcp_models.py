@@ -612,16 +612,23 @@ class StrategyDefinition(BaseModel):
     )
     entry_time: time | None = Field(
         default=None,
-        description="HH:MM exchange time to enter on scheduled days; omit to enter only on "
-        "start_strategy.",
+        description="HH:MM exchange time to enter on scheduled days, once schedule_strategy "
+        "arms it; omit to enter only on start_strategy.",
     )
-    exit_time: time | None = Field(default=None, description="HH:MM exchange time to exit.")
+    exit_time: time | None = Field(
+        default=None,
+        description="HH:MM exchange time to close every run, each trading day, scheduled or "
+        "not. Omit to hold a positional strategy across days.",
+    )
     weekdays: list[int] = Field(
         default=[0, 1, 2, 3, 4],
-        description="Days to run, 0 Monday to 4 Friday. Market holidays are always skipped.",
+        description="Days scheduled entries run, 0 Monday to 4 Friday. Market holidays are "
+        "always skipped.",
     )
     exit_on_expiry: bool = Field(
-        default=True, description="Exit on the expiry day of the nearest leg."
+        default=True,
+        description="On the expiry day of any contract held, close at exit_time (or the 15:15 "
+        "square-off) instead of being settled at expiry.",
     )
     combined_stop_loss: float | None = Field(
         default=None, gt=0, description="Exit everything at this total loss, in rupees."
@@ -706,6 +713,10 @@ class StrategyResult(BaseModel):
     name: str
     mode: str = Field(description="sandbox: every order is paper traded.")
     locked: bool = Field(description="True while the kill switch is on.")
+    scheduled_broker: str | None = Field(
+        description="The broker its scheduled entries go through; null when it enters only "
+        "on start_strategy."
+    )
     definition: StrategyDefinition
     created_at: datetime
     updated_at: datetime
@@ -718,6 +729,7 @@ class StrategyResult(BaseModel):
             name=stored.name,
             mode=stored.mode,
             locked=stored.locked,
+            scheduled_broker=stored.scheduled_broker,
             definition=StrategyDefinition.of(stored.spec),
             created_at=stored.created_at.astimezone(EXCHANGE_TIMEZONE),
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
@@ -732,6 +744,7 @@ class StrategySummary(BaseModel):
     legs: int
     horizon: Horizon
     locked: bool
+    scheduled: bool = Field(description="True when it enters on its schedule.")
     updated_at: datetime
 
     @classmethod
@@ -743,6 +756,7 @@ class StrategySummary(BaseModel):
             legs=len(stored.spec.legs),
             horizon=stored.spec.horizon,
             locked=stored.locked,
+            scheduled=stored.scheduled_broker is not None,
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
         )
 
@@ -967,6 +981,7 @@ class StrategyRunResult(RunSummary):
     product: Product
     legs: list[RunLegResult]
     peak_mtm: float = Field(description="Highest P&L the run has reached, rupees.")
+    trough_mtm: float = Field(description="Lowest P&L the run has reached, rupees.")
     lock_floor: float | None = Field(description="Locked profit, once the profit lock arms.")
     stops_at_entry: bool = Field(
         description="A leg's stop moved the others to entry; the combined stop loss is off."
@@ -985,6 +1000,7 @@ class StrategyRunResult(RunSummary):
             product=run.product,
             legs=[RunLegResult.of(leg) for leg in run.legs],
             peak_mtm=round(run.peak_mtm, 2),
+            trough_mtm=round(run.trough_mtm, 2),
             lock_floor=run.lock_floor,
             stops_at_entry=run.stops_at_entry,
             orders=[
