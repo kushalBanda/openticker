@@ -33,3 +33,5 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - `openticker-serve` stopped by SIGTERM now shuts down its loops before exiting. uvicorn raises the signal again after its own shutdown, which ended the process before they were stopped.
+- MCP tools that take a whole object (`create_strategy`, `update_strategy`, `create_signal_strategy`, `update_signal_strategy`, `schedule_script`) now describe it inline. As a bare `$ref` it had no type, so MCP Inspector offered a text box and sent a string, which was refused.
+- Times in tool schemas (strategies' `entry_time` and `exit_time`, scripts' `start_time` and `stop_time`) are described as `HH:MM` or `HH:MM:SS` by a pattern. JSON Schema's `time` format requires a UTC offset, so clients that check formats refused a plain `09:20`.

@@ -3,8 +3,11 @@ response — with `FakeBrokerPort` registered under its own name, so nothing
 touches Kite."""
 
 import asyncio
+import json
+import re
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -93,6 +96,51 @@ def test_every_tool_is_fully_described_for_agents() -> None:
         assert tool.output_schema is not None, tool.name
         for name, schema in tool.input_schema["properties"].items():
             assert schema.get("description"), f"{tool.name}.{name} has no description"
+
+
+def test_object_parameters_are_inline_so_every_client_sees_an_object() -> None:
+    """A parameter that is only a `$ref` has no `type`; MCP Inspector then
+    offers a text box and sends a string, which validation refuses."""
+    for tool in _tools():
+        defs = tool.input_schema.get("$defs", {})
+        for name, schema in tool.input_schema["properties"].items():
+            for option in schema.get("anyOf", [schema]):
+                ref = option.get("$ref", "")
+                target = defs.get(ref.removeprefix("#/$defs/"), {})
+                assert target.get("type") != "object", f"{tool.name}.{name} is a $ref to an object"
+
+
+def test_times_are_plain_hh_mm_in_every_schema() -> None:
+    """JSON Schema's "time" format requires a UTC offset; clients that check
+    formats would refuse "09:20", the exchange-local time these fields take."""
+    for tool in _tools():
+        for schema in (tool.input_schema, tool.output_schema):
+            assert '"format": "time"' not in json.dumps(schema), tool.name
+    tool = next(tool for tool in _tools() if tool.name == "schedule_script")
+    pattern = re.compile(
+        tool.input_schema["properties"]["schedule"]["properties"]["start_time"]["pattern"]
+    )
+    assert [bool(pattern.match(t)) for t in ("09:20", "15:15:00", "9:20", "24:00", "09:20Z")] == [
+        True,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_an_inlined_parameter_still_validates_as_its_model() -> None:
+    call = mcp_server.mcp.call_tool(
+        "schedule_script",
+        {"script_id": "scr_missing", "schedule": {"start_time": "09:20"}},
+    )
+    with pytest.raises(ToolError, match="no script 'scr_missing'"):
+        asyncio.run(call)
+    bad = mcp_server.mcp.call_tool(
+        "schedule_script", {"script_id": "scr_missing", "schedule": "long_only"}
+    )
+    with pytest.raises(ToolError, match="schedule"):
+        asyncio.run(bad)
 
 
 def test_server_tells_the_agent_the_workflow() -> None:
@@ -296,18 +344,36 @@ def test_strategy_tools_turn_mistakes_into_agent_facing_errors() -> None:
         mcp_server.get_strategy(strategy_id="stg_missing")
 
 
-def test_strategy_definition_schema_describes_every_field() -> None:
-    tool = next(tool for tool in _tools() if tool.name == "create_strategy")
-    definitions = tool.input_schema["$defs"]
+def test_every_nested_field_of_every_tool_is_described() -> None:
+    """Strategy definitions, their legs and limits, script schedules: every
+    field an agent fills in says what it is."""
 
-    for model in (
+    def objects(node: object) -> Iterator[dict[str, Any]]:
+        if isinstance(node, dict):
+            if isinstance(node.get("properties"), dict):
+                yield node
+            for value in node.values():
+                yield from objects(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from objects(value)
+
+    checked = set()
+    for tool in _tools():
+        for name, schema in tool.input_schema["properties"].items():
+            for nested in objects(schema):
+                checked.add(nested.get("title"))
+                for field, field_schema in nested["properties"].items():
+                    assert field_schema.get("description"), f"{tool.name}.{name}: {field}"
+    assert {
         "StrategyDefinition",
         "LegDefinition",
         "ProfitLockDefinition",
         "RiskValueInput",
-    ):
-        for name, schema in definitions[model]["properties"].items():
-            assert schema.get("description"), f"{model}.{name} has no description"
+        "SignalStrategyDefinition",
+        "SignalLegDefinition",
+        "ScriptScheduleDefinition",
+    } <= checked
 
 
 def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
@@ -506,15 +572,6 @@ def test_signal_strategy_tools_turn_mistakes_into_agent_facing_errors() -> None:
         )
 
 
-def test_signal_strategy_schema_describes_every_field() -> None:
-    tool = next(tool for tool in _tools() if tool.name == "create_signal_strategy")
-    definitions = tool.input_schema["$defs"]
-
-    for model in ("SignalStrategyDefinition", "SignalLegDefinition"):
-        for name, schema in definitions[model]["properties"].items():
-            assert schema.get("description"), f"{model}.{name} has no description"
-
-
 def test_script_tools_upload_run_and_read_a_script() -> None:
     from openticker.adapters.inbound.mcp_models import ScriptScheduleDefinition
     from openticker.core.scripts.models import ScriptLimits
@@ -590,11 +647,3 @@ def test_script_tools_turn_mistakes_into_agent_facing_errors() -> None:
                 {"start_time": "10:00", "stop_time": "09:00"}
             ),
         )
-
-
-def test_script_schedule_schema_describes_every_field() -> None:
-    tool = next(tool for tool in _tools() if tool.name == "schedule_script")
-    for name, schema in tool.input_schema["$defs"]["ScriptScheduleDefinition"][
-        "properties"
-    ].items():
-        assert schema.get("description"), f"ScriptScheduleDefinition.{name} has no description"

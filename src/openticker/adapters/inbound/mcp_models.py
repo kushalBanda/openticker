@@ -6,9 +6,9 @@ returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 import json
 from collections.abc import Sequence
 from datetime import date, datetime, time
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
@@ -83,6 +83,14 @@ from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
+
+# Exchange-local wall-clock time, "09:20" or "09:20:00". JSON Schema's "time"
+# format (RFC 3339) requires a UTC offset, so clients that check formats,
+# MCP Inspector among them, would refuse the plain times these fields take.
+ExchangeTime = Annotated[
+    time,
+    WithJsonSchema({"type": "string", "pattern": r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$"}),
+]
 
 
 class LoginUrlResult(BaseModel):
@@ -680,12 +688,12 @@ class StrategyDefinition(_LimitFields):
         max_length=MAX_LEGS,
         description=f"1 to {MAX_LEGS} legs, named leg1, leg2, ... in this order.",
     )
-    entry_time: time | None = Field(
+    entry_time: ExchangeTime | None = Field(
         default=None,
         description="HH:MM exchange time to enter on scheduled days, once schedule_strategy "
         "arms it; omit to enter only on start_strategy.",
     )
-    exit_time: time | None = Field(
+    exit_time: ExchangeTime | None = Field(
         default=None,
         description="HH:MM exchange time to close every run, each trading day, scheduled or "
         "not. Omit to hold a positional strategy across days.",
@@ -801,10 +809,10 @@ class SignalStrategyDefinition(_LimitFields):
         description=f"1 to {MAX_LEGS} contracts, named leg1, leg2, ... in this order; each "
         "trades a different contract.",
     )
-    entry_time: time | None = Field(
+    entry_time: ExchangeTime | None = Field(
         default=None, description="HH:MM exchange time entry alerts are taken from each day."
     )
-    exit_time: time | None = Field(
+    exit_time: ExchangeTime | None = Field(
         default=None,
         description="HH:MM exchange time that closes whatever is held each trading day; no "
         "alert is taken after it.",
@@ -1305,8 +1313,8 @@ class AlertResult(BaseModel):
 
 
 class ScriptScheduleDefinition(BaseModel):
-    start_time: time = Field(description="HH:MM exchange time the script is started.")
-    stop_time: time | None = Field(
+    start_time: ExchangeTime = Field(description="HH:MM exchange time the script is started.")
+    stop_time: ExchangeTime | None = Field(
         default=None,
         description="HH:MM exchange time it is stopped, whether it was started by hand or by "
         "the schedule. Omit to let it run until it exits by itself.",

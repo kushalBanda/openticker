@@ -10,13 +10,13 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from importlib.metadata import version
-from typing import Annotated
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from openticker.adapters.brokers.registry import (
     BROKER_REGISTRY,
@@ -230,6 +230,29 @@ def event_bus() -> EventBus:
         if _event_bus is None:
             _event_bus = build_event_bus(os.environ)
         return _event_bus
+
+
+def _inline_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """`model`'s JSON schema with every `$ref` replaced by what it names. A
+    parameter that is only a `$ref` has no `type`, and some clients (MCP
+    Inspector among them) then offer a text box and send what is typed as a
+    string. Inlined, it is plainly an object."""
+    schema = model.model_json_schema()
+    defs: dict[str, Any] = schema.pop("$defs", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                rest = {k: v for k, v in node.items() if k != "$ref"}
+                return resolve({**defs[ref.removeprefix("#/$defs/")], **rest})
+            return {k: resolve(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [resolve(v) for v in node]
+        return node
+
+    inlined: dict[str, Any] = resolve(schema)
+    return inlined
 
 
 Broker = Annotated[
@@ -682,6 +705,7 @@ StrategyName = Annotated[
 ]
 Definition = Annotated[
     StrategyDefinition,
+    WithJsonSchema(_inline_schema(StrategyDefinition)),
     Field(description="The whole strategy: underlying, legs, schedule and limits."),
 ]
 _STRATEGY_NEXT_STEP = (
@@ -734,6 +758,7 @@ def update_strategy(
 
 SignalDefinition = Annotated[
     SignalStrategyDefinition,
+    WithJsonSchema(_inline_schema(SignalStrategyDefinition)),
     Field(description="The whole strategy: its contracts, direction, schedule and limits."),
 ]
 
@@ -1140,7 +1165,11 @@ def stop_script(script_id: ScriptId) -> ScriptCommandResult:
 )
 def schedule_script(
     script_id: ScriptId,
-    schedule: Annotated[ScriptScheduleDefinition, Field(description="When it runs.")],
+    schedule: Annotated[
+        ScriptScheduleDefinition,
+        WithJsonSchema(_inline_schema(ScriptScheduleDefinition)),
+        Field(description="When it runs."),
+    ],
 ) -> ScriptResult:
     """Run the script from start_time on its weekdays, skipping days its
     exchange doesn't trade, until stop_time or until it exits: once a day.
