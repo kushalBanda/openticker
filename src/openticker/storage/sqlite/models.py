@@ -260,3 +260,50 @@ class StrategySignalRow(Base):
     alert_format: Mapped[str | None]  # chartink or json, once the body was read
     payload: Mapped[str | None]  # the body, with the token and secrets removed, capped
     command_ids: Mapped[str | None]  # JSON list: the signal commands it wrote
+
+
+# Hosted Python scripts (ADR 25 in docs/adr). The MCP server and the REST API
+# write commands; the daemon's supervisor starts and stops the processes and
+# owns the runs. The source and each run's output are files under
+# $OPENTICKER_HOME/scripts/<id>/.
+
+
+class ScriptRow(Base):
+    __tablename__ = "scripts"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    source_sha256: Mapped[str]
+    source_bytes: Mapped[int]
+    schedule: Mapped[str | None]  # JSON; NULL: runs only on start_script
+    created_at: Mapped[datetime]  # UTC, stored naive
+    updated_at: Mapped[datetime]  # UTC, stored naive
+
+
+class ScriptCommandRow(Base):
+    __tablename__ = "script_commands"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    script_id: Mapped[str] = mapped_column(index=True)
+    kind: Mapped[str]  # start, stop
+    triggered_by: Mapped[str]
+    status: Mapped[str] = mapped_column(index=True)  # pending, done, refused
+    outcome: Mapped[str | None]
+    created_at: Mapped[datetime]  # UTC, stored naive
+    processed_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+class ScriptRunRow(Base):
+    __tablename__ = "script_runs"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    script_id: Mapped[str] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(index=True)  # running, stopping, ended
+    trigger: Mapped[str]
+    started_at: Mapped[datetime]  # UTC, stored naive
+    pid: Mapped[int | None]  # NULL until the process exists
+    stop_reason: Mapped[str | None]  # while stopping, the reason it was asked to
+    stop_detail: Mapped[str | None]
+    stop_requested_at: Mapped[datetime | None]  # UTC, stored naive
+    exit_code: Mapped[int | None]
+    ended_at: Mapped[datetime | None]  # UTC, stored naive

@@ -1,6 +1,7 @@
 """REST API: the MCP tools as HTTP routes, each a thin call into use_cases,
 returning the same result shapes. Every route under /api/v1 needs an API key
-in the `X-API-Key` header (ADR 17 in docs/adr). Signal strategies' alert URLs,
+in the `X-API-Key` header (ADR 17 in docs/adr). A hosted script's key reaches
+only prices, orders and positions (ADR 25). Signal strategies' alert URLs,
 under /webhooks, are authenticated by the token in the URL instead (ADR 24).
 
 Routes are plain `def`: FastAPI runs them on its thread pool, which keeps the
@@ -34,6 +35,7 @@ from openticker.adapters.inbound.mcp_models import (
     BarsResult,
     CancelOrderResult,
     ConnectResult,
+    DeleteScriptResult,
     DeleteStrategyResult,
     FundsResult,
     LoginUrlResult,
@@ -45,6 +47,12 @@ from openticker.adapters.inbound.mcp_models import (
     PositionsResult,
     QuoteResult,
     RiskCheckResult,
+    ScriptCommandResult,
+    ScriptDetailResult,
+    ScriptLogsResult,
+    ScriptResult,
+    ScriptScheduleDefinition,
+    ScriptsResult,
     SearchResult,
     SignalStrategyDefinition,
     StrategiesResult,
@@ -63,6 +71,7 @@ from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.scripts.models import InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
@@ -77,8 +86,9 @@ from openticker.ports.models import (
 )
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
+from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
-from openticker.use_cases.api_keys import authenticate
+from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
 from openticker.use_cases.cancel_order import UnknownOrderError, cancel_order
 from openticker.use_cases.connect_broker import connect_broker
 from openticker.use_cases.evaluate_risk import evaluate_risk
@@ -92,6 +102,12 @@ from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
+from openticker.use_cases.scripts import manage as scripts
+from openticker.use_cases.scripts.manage import (
+    ScriptRunningError,
+    ScriptStateError,
+    UnknownScriptError,
+)
 from openticker.use_cases.search_instruments import search_instruments
 from openticker.use_cases.strategies import control
 from openticker.use_cases.strategies.control import (
@@ -126,12 +142,17 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownStrategyError, 404),
     (LegResolutionError, 404),
     (UnknownRunError, 404),
+    (UnknownScriptError, 404),
     (DuplicateStrategyNameError, 409),
     (StrategyRunningError, 409),
     (StrategyLockedError, 409),
     (StrategyStateError, 409),
     (StrategyKindError, 409),
+    (DuplicateScriptNameError, 409),
+    (ScriptRunningError, 409),
+    (ScriptStateError, 409),
     (InvalidStrategyError, 422),
+    (InvalidScriptError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
@@ -152,6 +173,10 @@ _COMMAND_NEXT_STEP = (
     "openticker-serve carries this out within about a second; "
     "GET /api/v1/strategies/{strategy_id}/runs shows the outcome."
 )
+_SCRIPT_COMMAND_NEXT_STEP = (
+    "openticker-serve carries this out within about a second; "
+    "GET /api/v1/scripts/{script_id}/logs shows its output."
+)
 _PREVIEW_NEXT_STEP = (
     "Nothing was placed. Change the legs with PUT /api/v1/strategies/{strategy_id}."
 )
@@ -171,6 +196,41 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 
 
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
+
+# What a hosted script's key reaches (ADR 25 in docs/adr): prices, and placing,
+# reading and cancelling orders. Never broker login, strategies or scripts.
+_SCRIPT_ROUTES = frozenset(
+    {
+        ("GET", "/api/v1/instruments"),
+        ("GET", "/api/v1/quote"),
+        ("GET", "/api/v1/bars"),
+        ("GET", "/api/v1/option-chain"),
+        ("GET", "/api/v1/market-status"),
+        ("POST", "/api/v1/risk/evaluate"),
+        ("POST", "/api/v1/orders"),
+        ("GET", "/api/v1/orders"),
+        ("DELETE", "/api/v1/orders/{order_id}"),
+        ("GET", "/api/v1/positions"),
+        ("GET", "/api/v1/funds"),
+    }
+)
+
+
+def require_scope(request: Request, key: ApiKey) -> StoredApiKey:
+    if key.scope.startswith(SCRIPT_SCOPE_PREFIX):
+        path = getattr(request.scope.get("route"), "path", None)
+        if (request.method, path) not in _SCRIPT_ROUTES:
+            raise HTTPException(
+                status_code=403,
+                detail="a script's key reaches prices, orders and positions only",
+            )
+    return key
+
+
+def _caller(key: StoredApiKey) -> str:
+    """Who an order came from, as the audit log records it: script:<id> for
+    a hosted script, rest:<key name> otherwise."""
+    return key.scope if key.scope.startswith(SCRIPT_SCOPE_PREFIX) else f"rest:{key.name}"
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
@@ -193,6 +253,11 @@ class StrategyBody(BaseModel):
 class SignalStrategyBody(BaseModel):
     name: str = Field(description="Unique among your strategies.")
     definition: SignalStrategyDefinition
+
+
+class ScriptBody(BaseModel):
+    name: str = Field(description="Unique among your scripts.")
+    source: str = Field(description="The whole Python file.")
 
 
 class WebhookBody(BaseModel):
@@ -295,7 +360,7 @@ def create_app(
             content=AlertResult(status=outcome.result.value, message=outcome.message).model_dump(),
         )
 
-    api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
+    api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_scope)])
 
     @api.get("/brokers/{broker}/login-url")
     def login_url(broker: str) -> LoginUrlResult:
@@ -389,7 +454,7 @@ def create_app(
             order_type=body.order_type,
             price=body.price,
             trigger_price=body.trigger_price,
-            triggered_by=f"rest:{key.name}",
+            triggered_by=_caller(key),
         )
         result = place_order(
             request,
@@ -408,7 +473,7 @@ def create_app(
     @api.delete("/orders/{order_id}")
     def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
         """Withdraws a PENDING order; anything else is left as it is."""
-        result = cancel_order(order_id, order_broker(broker, env), events, f"rest:{key.name}")
+        result = cancel_order(order_id, order_broker(broker, env), events, _caller(key))
         return CancelOrderResult.of(order_id, result)
 
     @api.get("/market-status")
@@ -570,6 +635,64 @@ def create_app(
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:
         return StrategyRunResult.of_detail(control.get_run(run_id))
+
+    @api.post("/scripts")
+    def new_script(body: ScriptBody) -> ScriptResult:
+        """Saves a Python script; runs nothing."""
+        return ScriptResult.of_stored(
+            scripts.upload_script(body.name, body.source, clock()),
+            "POST /api/v1/scripts/{script_id}/start runs it.",
+        )
+
+    @api.get("/scripts")
+    def all_scripts() -> ScriptsResult:
+        return ScriptsResult(scripts=[ScriptResult.of(s) for s in scripts.list_scripts()])
+
+    @api.get("/scripts/{script_id}")
+    def script(
+        script_id: str,
+        runs: Annotated[int, Query(ge=1, le=50)] = 10,
+        include_source: bool = False,
+    ) -> ScriptDetailResult:
+        return ScriptDetailResult.of(scripts.get_script(script_id, runs, include_source))
+
+    @api.put("/scripts/{script_id}")
+    def change_script(script_id: str, body: ScriptBody) -> ScriptResult:
+        """Replaces the name and the whole source; refused while it runs."""
+        return ScriptResult.of_stored(
+            scripts.update_script(script_id, body.name, body.source, clock())
+        )
+
+    @api.delete("/scripts/{script_id}")
+    def remove_script(script_id: str) -> DeleteScriptResult:
+        scripts.delete_script(script_id)
+        return DeleteScriptResult(script_id=script_id, deleted=True)
+
+    @api.post("/scripts/{script_id}/start")
+    def start_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
+        command = scripts.request_start(script_id, f"rest:{key.name}", clock())
+        return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
+
+    @api.post("/scripts/{script_id}/stop")
+    def stop_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
+        command = scripts.request_stop(script_id, f"rest:{key.name}", clock())
+        return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
+
+    @api.post("/scripts/{script_id}/schedule")
+    def schedule_script(script_id: str, body: ScriptScheduleDefinition) -> ScriptResult:
+        return ScriptResult.of_stored(scripts.schedule_script(script_id, body.to_core()))
+
+    @api.delete("/scripts/{script_id}/schedule")
+    def unschedule_script(script_id: str) -> ScriptResult:
+        return ScriptResult.of_stored(scripts.unschedule_script(script_id))
+
+    @api.get("/scripts/{script_id}/logs")
+    def script_logs(
+        script_id: str,
+        run_id: str | None = None,
+        lines: Annotated[int, Query(ge=1, le=1000)] = 100,
+    ) -> ScriptLogsResult:
+        return ScriptLogsResult.of(scripts.get_logs(script_id, run_id, lines))
 
     app.include_router(api)
     return app

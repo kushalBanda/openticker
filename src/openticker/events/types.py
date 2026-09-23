@@ -120,3 +120,24 @@ class StrategyStopped:
     detail: str
     realized_pnl: float
     occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ScriptStarted:
+    script_id: str
+    run_id: str
+    name: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ScriptExited:
+    """A hosted script's process ended, whatever the reason (ADR 25)."""
+
+    script_id: str
+    run_id: str
+    name: str
+    reason: str
+    detail: str
+    occurred_at: datetime = field(default_factory=_now)

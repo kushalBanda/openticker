@@ -513,3 +513,88 @@ def test_signal_strategy_schema_describes_every_field() -> None:
     for model in ("SignalStrategyDefinition", "SignalLegDefinition"):
         for name, schema in definitions[model]["properties"].items():
             assert schema.get("description"), f"{model}.{name} has no description"
+
+
+def test_script_tools_upload_run_and_read_a_script() -> None:
+    from openticker.adapters.inbound.mcp_models import ScriptScheduleDefinition
+    from openticker.core.scripts.models import ScriptLimits
+    from openticker.storage import script_files
+    from openticker.use_cases.scripts.supervise import (
+        SupervisorContext,
+        process_script_commands,
+        watch_scripts,
+    )
+    from tests.fixtures.calendar import NO_HOLIDAYS
+    from tests.fixtures.fake_processes import FakeProcesses
+
+    processes = FakeProcesses()
+    context = SupervisorContext(
+        processes, mcp_server.event_bus(), NO_HOLIDAYS, ScriptLimits(), "http://127.0.0.1:8750"
+    )
+    uploaded = mcp_server.upload_script(name="pinger", source="print('ping')\n")
+    script_id = uploaded.script_id
+    assert (uploaded.running, uploaded.last_run, uploaded.schedule) == (False, None, None)
+    assert "start_script" in (uploaded.next_step or "")
+
+    started = mcp_server.start_script(script_id=script_id)
+    assert (started.command.command, started.command.status) == ("start", "pending")
+    process_script_commands(context, TRADING_TIME)
+    (listed,) = mcp_server.list_scripts().scripts
+    assert listed.running
+    assert listed.last_run is not None and listed.last_run.trigger == "mcp"
+    run_id = listed.last_run.run_id
+    with pytest.raises(ToolError, match="stop_script it before changing it"):
+        mcp_server.update_script(script_id=script_id, name="pinger", source="print(1)\n")
+
+    script_files.append_log(script_id, run_id, "ping")
+    mcp_server.stop_script(script_id=script_id)
+    process_script_commands(context, TRADING_TIME)
+    watch_scripts(context, TRADING_TIME)
+    logs = mcp_server.get_script_logs(script_id=script_id)
+    assert logs.run.run_id == run_id
+    assert logs.run.stop_reason == "stopped"
+    assert logs.lines[1] == "ping"
+    assert logs.run.started_at.utcoffset() is not None
+
+    detail = mcp_server.get_script(script_id=script_id, include_source=True)
+    assert detail.source == "print('ping')\n"
+    assert [c.command for c in detail.commands] == ["stop", "start"]
+    scheduled = mcp_server.schedule_script(
+        script_id=script_id,
+        schedule=ScriptScheduleDefinition.model_validate({"start_time": "09:20"}),
+    )
+    assert scheduled.schedule is not None and scheduled.schedule.weekdays == [0, 1, 2, 3, 4]
+    assert mcp_server.unschedule_script(script_id=script_id).schedule is None
+    assert mcp_server.delete_script(script_id=script_id).deleted
+    assert mcp_server.list_scripts().scripts == []
+
+
+def test_script_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import ScriptScheduleDefinition
+
+    with pytest.raises(ToolError, match="not valid Python"):
+        mcp_server.upload_script(name="bad", source="def (:\n")
+    script_id = mcp_server.upload_script(name="ok", source="pass\n").script_id
+    with pytest.raises(ToolError, match="already exists"):
+        mcp_server.upload_script(name="ok", source="pass\n")
+    with pytest.raises(ToolError, match="not running; nothing to stop"):
+        mcp_server.stop_script(script_id=script_id)
+    with pytest.raises(ToolError, match="has never run"):
+        mcp_server.get_script_logs(script_id=script_id)
+    with pytest.raises(ToolError, match="list_scripts shows them"):
+        mcp_server.start_script(script_id="scr_missing")
+    with pytest.raises(ToolError, match="must be after start_time"):
+        mcp_server.schedule_script(
+            script_id=script_id,
+            schedule=ScriptScheduleDefinition.model_validate(
+                {"start_time": "10:00", "stop_time": "09:00"}
+            ),
+        )
+
+
+def test_script_schedule_schema_describes_every_field() -> None:
+    tool = next(tool for tool in _tools() if tool.name == "schedule_script")
+    for name, schema in tool.input_schema["$defs"]["ScriptScheduleDefinition"][
+        "properties"
+    ].items():
+        assert schema.get("description"), f"ScriptScheduleDefinition.{name} has no description"

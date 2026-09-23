@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import pytest
 
 from openticker.adapters.inbound.daemon.main import (
@@ -58,3 +61,62 @@ def test_every_log_handler_hides_alert_tokens() -> None:
     assert config["handlers"] and all(
         "hide_alert_tokens" in handler["filters"] for handler in config["handlers"].values()
     )
+
+
+def test_scripts_reach_the_server_through_this_machine() -> None:
+    from openticker.adapters.inbound.daemon.main import local_url
+
+    assert local_url("127.0.0.1", 8750) == "http://127.0.0.1:8750"
+    assert local_url("0.0.0.0", 9000) == "http://127.0.0.1:9000"
+    assert local_url("::", 9000) == "http://[::1]:9000"
+    assert local_url("::1", 9000) == "http://[::1]:9000"
+    assert local_url("192.168.1.5", 80) == "http://192.168.1.5:80"
+
+
+def test_sigterm_exits_through_the_shutdown_path() -> None:
+    import signal
+
+    from openticker.adapters.inbound.daemon.main import exit_on_signal
+
+    with pytest.raises(SystemExit) as exited:
+        exit_on_signal(signal.SIGTERM, None)
+    assert exited.value.code == 143
+
+
+def test_sigterm_stops_the_server_through_its_shutdown_path(tmp_path: Path) -> None:
+    """uvicorn raises SIGTERM again after its own shutdown; the server must
+    still leave through the code that stops its loops and scripts."""
+    import signal
+    import socket
+    import subprocess
+    import sys
+    import time
+
+    import httpx
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "OPENTICKER_HOME": str(tmp_path),
+        "OPENTICKER_BIND": f"127.0.0.1:{port}",
+    }
+    server = subprocess.Popen(
+        [sys.executable, "-c", "from openticker.adapters.inbound.daemon.main import run; run([])"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                if httpx.get(f"http://127.0.0.1:{port}/health").is_success:
+                    break
+            except httpx.TransportError:
+                time.sleep(0.1)
+        server.send_signal(signal.SIGTERM)
+        assert server.wait(timeout=20) == 128 + signal.SIGTERM  # not killed by it: -15
+    finally:
+        server.kill()

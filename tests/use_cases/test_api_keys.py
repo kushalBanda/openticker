@@ -50,3 +50,22 @@ def test_a_revoked_key_stops_working_and_its_name_is_not_reused() -> None:
 def test_key_names_are_short_plain_labels(name: str) -> None:
     with pytest.raises(InvalidApiKeyNameError):
         create_api_key(name, NOW)
+
+
+def test_script_keys_are_scoped_named_by_their_run_and_their_names_reserved() -> None:
+    from openticker.use_cases.api_keys import create_script_key, revoke_script_keys
+
+    with pytest.raises(InvalidApiKeyNameError, match="kept for hosted scripts"):
+        create_api_key("script-mine", NOW)
+    _, laptop = create_api_key("laptop", NOW)
+    first = create_script_key("scr_a", "srn_1", NOW)
+    second = create_script_key("scr_a", "srn_2", NOW)
+    stored = authenticate(first)
+    assert stored is not None
+    assert (stored.name, stored.scope) == ("script-srn_1", "script:scr_a")
+
+    assert revoke_script_keys({"srn_2"}, NOW) == 1
+
+    assert authenticate(first) is None
+    assert authenticate(second) is not None
+    assert authenticate(laptop) is not None  # never a script's

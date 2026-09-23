@@ -3,6 +3,9 @@
 A key is 32 random bytes, shown once at creation. Only its SHA-256 is stored:
 a key has far too much entropy to guess from its hash, so a slow password
 hash would add nothing but latency to every request.
+
+Each run of a hosted script gets its own key, scoped to trading routes and
+revoked when the run ends (ADR 25 in docs/adr).
 """
 
 import hashlib
@@ -20,6 +23,8 @@ from openticker.storage.sqlite.api_keys_repo import (
 
 KEY_PREFIX = "otk_"
 FULL_SCOPE = "full"
+SCRIPT_SCOPE_PREFIX = "script:"  # then the script's id
+_SCRIPT_KEY_NAME_PREFIX = "script-"  # then the run's id
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 _SHOWN_PREFIX_LENGTH = len(KEY_PREFIX) + 6
 
@@ -34,9 +39,44 @@ def create_api_key(name: str, now: datetime) -> tuple[StoredApiKey, str]:
         raise InvalidApiKeyNameError(
             f"key name {name!r} must be 1-40 lowercase letters, digits, '-' or '_'"
         )
+    if name.startswith(_SCRIPT_KEY_NAME_PREFIX):
+        raise InvalidApiKeyNameError(
+            f"key names starting {_SCRIPT_KEY_NAME_PREFIX!r} are kept for hosted scripts"
+        )
     key = KEY_PREFIX + secrets.token_urlsafe(32)
     stored = insert_api_key(name, _hash(key), key[:_SHOWN_PREFIX_LENGTH], FULL_SCOPE, now)
     return stored, key
+
+
+def create_script_key(script_id: str, run_id: str, now: datetime) -> str:
+    """A key for one run of a script, never stored except as its hash."""
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    insert_api_key(
+        script_key_name(run_id),
+        _hash(key),
+        key[:_SHOWN_PREFIX_LENGTH],
+        SCRIPT_SCOPE_PREFIX + script_id,
+        now,
+    )
+    return key
+
+
+def script_key_name(run_id: str) -> str:
+    return _SCRIPT_KEY_NAME_PREFIX + run_id
+
+
+def revoke_script_keys(keep_runs: set[str], now: datetime) -> int:
+    """Revokes every script key but those of `keep_runs`; how many were."""
+    keep = {script_key_name(run_id) for run_id in keep_runs}
+    revoked = 0
+    for stored in list_api_keys():
+        if (
+            stored.revoked_at is None
+            and stored.scope.startswith(SCRIPT_SCOPE_PREFIX)
+            and stored.name not in keep
+        ):
+            revoked += revoke_api_key(stored.name, now)
+    return revoked
 
 
 def authenticate(key: str) -> StoredApiKey | None:

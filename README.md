@@ -31,6 +31,8 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `create_signal_strategy`, `update_signal_strategy` | Save a strategy that alerts drive: up to 10 contracts (stocks, futures or options) that alerts enter and exit long or short, one at a time, with per-leg stops and targets, an entry window, a direction filter and strategy-wide limits. |
 | `rotate_strategy_webhook`, `disable_strategy_webhook` | Give a signal strategy an alert URL for TradingView or ChartInk, optionally limited to the senders' IP addresses; the old URL stops working. |
 | `get_strategy_signals` | Every alert a signal strategy received, whether it was accepted, and what came of it. |
+| `upload_script`, `update_script`, `delete_script`, `list_scripts`, `get_script` | Save your own Python strategy script. It trades through the REST API with a key made for each run that reaches only prices, orders and positions; it is never given your broker keys or other secrets. |
+| `start_script`, `stop_script`, `schedule_script`, `unschedule_script`, `get_script_logs` | Run a script under `openticker-serve` now or once a trading day between a start and a stop time, with memory and CPU limits, and read its output. Linux and macOS. |
 | `get_strategy_runs`, `get_strategy_run` | A strategy's runs: legs, fills, stop reason, P&L (with its peak and trough) and a timeline of what happened. If the live feed goes quiet on a leg, `openticker-serve` prices it from quotes; with no price from either for a minute, the run stops and closes its legs. After a restart it picks up every open run where it left off. |
 
 Example session, in plain language to your agent:
@@ -87,6 +89,19 @@ Every route except `/health` and signal strategies' alert URLs needs a key. An a
 
 The server also streams live prices from the broker (Kite's WebSocket ticker) for every open sandbox position, every waiting order and anything listed in `OPENTICKER_WATCH`. It fills waiting LIMIT/SL/SL-M orders as prices cross them, closes intraday (MIS) positions 15 minutes before the session ends, and settles expired futures and options at the underlying's closing price on expiry day. If the broker session expires, it notifies you to log in again.
 
+It also runs your uploaded Python scripts. Each gets `OPENTICKER_URL` and `OPENTICKER_API_KEY` in an environment that holds nothing else of yours, and calls the API like any client:
+
+```python
+import os, httpx
+
+api = httpx.Client(base_url=os.environ["OPENTICKER_URL"],
+                   headers={"X-API-Key": os.environ["OPENTICKER_API_KEY"]})
+api.post("/api/v1/orders", json={"broker": "zerodha", "symbol": "SBIN", "exchange": "NSE",
+                                 "side": "BUY", "quantity": 10, "product": "MIS"})
+```
+
+Scripts are your own trusted code: they run as your user and could read your files. The clean environment keeps secrets from reaching them by accident; it is not a sandbox for code from strangers (ADR 25).
+
 ### Notifications (optional)
 
 Orders and risk breaches can be sent to Slack (Incoming Webhook) and/or email (any SMTP server, including Resend and Amazon SES). Set the variables in `.env`; see `.env.example`. Everything is recorded in the local audit log either way.
@@ -116,7 +131,6 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 
 ## Roadmap
 
-- Hosting your own Python strategy scripts, without handing them your broker keys
 - More brokers, added on demand
 
 A web UI is planned after the agent-first surface is complete.

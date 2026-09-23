@@ -26,6 +26,16 @@ from openticker.core.risk.models import (
     StrategyLimits,
     StrategyStopReason,
 )
+from openticker.core.scripts.models import (
+    InvalidScriptError,
+    ScriptCommand,
+    ScriptCommandKind,
+    ScriptCommandStatus,
+    ScriptRun,
+    ScriptRunStatus,
+    ScriptSchedule,
+    ScriptStopReason,
+)
 from openticker.core.strategies.models import (
     MAX_LEGS,
     MAX_LOTS,
@@ -66,9 +76,11 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.sqlite.audit_repo import AuditEntry
+from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
+from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 
@@ -1287,3 +1299,189 @@ class AlertResult(BaseModel):
 
     status: str = Field(description="accepted, ignored or the refusal.")
     message: str
+
+
+# Hosted Python scripts (ADR 25 in docs/adr).
+
+
+class ScriptScheduleDefinition(BaseModel):
+    start_time: time = Field(description="HH:MM exchange time the script is started.")
+    stop_time: time | None = Field(
+        default=None,
+        description="HH:MM exchange time it is stopped, whether it was started by hand or by "
+        "the schedule. Omit to let it run until it exits by itself.",
+    )
+    weekdays: list[int] = Field(
+        default=[0, 1, 2, 3, 4],
+        description="Days it runs, 0 Monday to 6 Sunday. Days its exchange doesn't trade are "
+        "always skipped.",
+    )
+    exchange: Exchange = Field(
+        default=Exchange.NSE, description="Whose holidays and special sessions count."
+    )
+
+    def to_core(self) -> ScriptSchedule:
+        try:
+            return ScriptSchedule(
+                start_time=self.start_time,
+                stop_time=self.stop_time,
+                weekdays=frozenset(self.weekdays),
+                exchange=self.exchange,
+            )
+        except InvalidScriptError:
+            raise
+        except ValueError as exc:
+            raise InvalidScriptError(str(exc)) from exc
+
+    @classmethod
+    def of(cls, schedule: ScriptSchedule) -> "ScriptScheduleDefinition":
+        return cls(
+            start_time=schedule.start_time,
+            stop_time=schedule.stop_time,
+            weekdays=sorted(schedule.weekdays),
+            exchange=schedule.exchange,
+        )
+
+
+class ScriptRunResult(BaseModel):
+    run_id: str
+    status: ScriptRunStatus = Field(description="stopping: asked to stop, killed after 5s.")
+    trigger: str = Field(description="Who started it: mcp, rest:<key>, schedule, recovery.")
+    started_at: datetime
+    pid: int | None
+    stop_reason: ScriptStopReason | None = Field(
+        description="exited (code 0), failed (an error or a signal), stopped (stop_script), "
+        "schedule (stop_time), memory_limit, cpu_limit, log_limit, daemon_stopped, lost "
+        "(gone when openticker-serve came back), start_failed."
+    )
+    stop_detail: str | None
+    exit_code: int | None = Field(description="Negative: killed by that signal.")
+    ended_at: datetime | None
+
+    @classmethod
+    def of(cls, run: ScriptRun) -> "ScriptRunResult":
+        return cls(
+            run_id=run.id,
+            status=run.status,
+            trigger=run.trigger,
+            started_at=run.started_at.astimezone(EXCHANGE_TIMEZONE),
+            pid=run.pid,
+            stop_reason=run.stop_reason if run.status is ScriptRunStatus.ENDED else None,
+            stop_detail=run.stop_detail,
+            exit_code=run.exit_code,
+            ended_at=_local(run.ended_at),
+        )
+
+
+class ScriptResult(BaseModel):
+    script_id: str
+    name: str
+    size_bytes: int
+    sha256: str = Field(description="Of the source, to tell versions apart.")
+    schedule: ScriptScheduleDefinition | None = Field(
+        description="Null: it runs only on start_script."
+    )
+    running: bool
+    last_run: ScriptRunResult | None = Field(description="The latest run, going or ended.")
+    updated_at: datetime
+    next_step: str | None = None
+
+    @classmethod
+    def of(cls, summary: ScriptSummary, next_step: str | None = None) -> "ScriptResult":
+        stored = summary.script
+        return cls(
+            script_id=stored.id,
+            name=stored.name,
+            size_bytes=stored.source_bytes,
+            sha256=stored.source_sha256,
+            schedule=ScriptScheduleDefinition.of(stored.schedule) if stored.schedule else None,
+            running=summary.active is not None,
+            last_run=ScriptRunResult.of(summary.last) if summary.last else None,
+            updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
+            next_step=next_step,
+        )
+
+    @classmethod
+    def of_stored(cls, stored: StoredScript, next_step: str | None = None) -> "ScriptResult":
+        return cls.of(ScriptSummary(stored, None, None), next_step)
+
+
+class ScriptsResult(BaseModel):
+    scripts: list[ScriptResult]
+
+
+class ScriptCommandInfo(BaseModel):
+    command_id: int
+    command: ScriptCommandKind
+    status: ScriptCommandStatus = Field(
+        description="pending: openticker-serve carries it out within about a second."
+    )
+    triggered_by: str
+    outcome: str | None
+    created_at: datetime
+
+    @classmethod
+    def of(cls, command: ScriptCommand) -> "ScriptCommandInfo":
+        return cls(
+            command_id=command.id,
+            command=command.kind,
+            status=command.status,
+            triggered_by=command.triggered_by,
+            outcome=command.outcome,
+            created_at=command.created_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+class ScriptDetailResult(BaseModel):
+    script: ScriptResult
+    runs: list[ScriptRunResult] = Field(description="Newest first.")
+    commands: list[ScriptCommandInfo] = Field(
+        description="Latest start and stop requests, newest first."
+    )
+    source: str | None = Field(description="Only when include_source was asked for.")
+
+    @classmethod
+    def of(cls, detail: ScriptDetail) -> "ScriptDetailResult":
+        last = detail.runs[0] if detail.runs else None
+        active = last if last is not None and last.ended_at is None else None
+        return cls(
+            script=ScriptResult.of(ScriptSummary(detail.script, active, last)),
+            runs=[ScriptRunResult.of(run) for run in detail.runs],
+            commands=[ScriptCommandInfo.of(command) for command in detail.commands],
+            source=detail.source,
+        )
+
+
+class ScriptCommandResult(BaseModel):
+    script_id: str
+    command: ScriptCommandInfo
+    next_step: str
+
+    @classmethod
+    def of(cls, command: ScriptCommand, next_step: str) -> "ScriptCommandResult":
+        return cls(
+            script_id=command.script_id, command=ScriptCommandInfo.of(command), next_step=next_step
+        )
+
+
+class ScriptLogsResult(BaseModel):
+    script_id: str
+    name: str
+    run: ScriptRunResult
+    lines: list[str] = Field(description="stdout and stderr together, oldest first.")
+    truncated: bool = Field(description="True when earlier lines were left out.")
+
+    @classmethod
+    def of(cls, found: ScriptLog) -> "ScriptLogsResult":
+        return cls(
+            script_id=found.script.id,
+            name=found.script.name,
+            run=ScriptRunResult.of(found.run),
+            lines=found.lines,
+            truncated=found.truncated,
+        )
+
+
+class DeleteScriptResult(BaseModel):
+    script_id: str
+    deleted: bool

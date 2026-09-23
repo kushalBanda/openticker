@@ -1,8 +1,8 @@
 """`openticker-serve`: the long-running server (ADR 12 in docs/adr), and the
 commands that manage its API keys (ADR 17 in docs/adr).
 
-    openticker-serve                     run the REST API, live prices, sandbox execution
-                                         and strategies
+    openticker-serve                     run the REST API, live prices, sandbox execution,
+                                         strategies and hosted scripts
     openticker-serve keys create <name>  print a new key, once
     openticker-serve keys list
     openticker-serve keys revoke <name>
@@ -13,6 +13,7 @@ import copy
 import ipaddress
 import logging
 import os
+import signal
 import sys
 import threading
 from collections.abc import Mapping, Sequence
@@ -27,13 +28,16 @@ from openticker.adapters.brokers.registry import FEED_REGISTRY, get_feed
 from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
+from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
 from openticker.adapters.inbound.rest_api import API_KEY_HEADER, HideAlertTokens, create_app
+from openticker.adapters.scripts.supervisor import ProcessSupervisor
 from openticker.composition import (
     build_event_bus,
     capital_cap,
     order_broker,
     price_timeouts,
+    script_limits,
     watch_list,
 )
 from openticker.ports.models import EXCHANGE_TIMEZONE
@@ -61,6 +65,16 @@ def parse_bind(env: Mapping[str, str]) -> tuple[str, int]:
     if not host or not port.isdigit() or not 0 < int(port) < 65536:
         raise BindConfigError(f"OPENTICKER_BIND must be host:port, got {raw!r}")
     return host.removeprefix("[").removesuffix("]"), int(port)
+
+
+def local_url(host: str, port: int) -> str:
+    """Where a process on this machine reaches the server: a wildcard bind
+    is reached through loopback."""
+    if host in ("0.0.0.0", ""):
+        host = "127.0.0.1"
+    elif host == "::":
+        host = "::1"
+    return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
 def is_loopback(host: str) -> bool:
@@ -146,6 +160,7 @@ def _serve(env: Mapping[str, str]) -> None:
     )
     watch = watch_list(env)
     events = build_event_bus(env)  # now, so bad notification settings fail at startup
+    limits = script_limits(env)  # likewise bad script limits
     prices = LatestPrices()
     stop = threading.Event()
     feeds = [
@@ -186,8 +201,21 @@ def _serve(env: Mapping[str, str]) -> None:
             name="strategies",
         )
     )
+    feeds.append(
+        threading.Thread(
+            target=ScriptLoop(
+                ProcessSupervisor(), events, load_calendar, limits, local_url(host, port)
+            ).run,
+            args=(stop,),
+            name="scripts",
+        )
+    )
     for thread in feeds:
         thread.start()
+    # uvicorn raises SIGTERM again once it has shut down. With the default
+    # handler that ends the process at once, before the loops are stopped
+    # below, and hosted scripts would be left running with nothing watching.
+    signal.signal(signal.SIGTERM, exit_on_signal)
     try:
         uvicorn.run(create_app(events, env), host=host, port=port, log_config=_log_config())
     finally:
@@ -195,6 +223,12 @@ def _serve(env: Mapping[str, str]) -> None:
         for thread in feeds:
             thread.join(timeout=10)
         events.close()
+
+
+def exit_on_signal(signum: int, frame: object) -> None:
+    """Exits the way a signal would (128 + its number), but through the
+    `finally` blocks on the way out."""
+    raise SystemExit(128 + signum)
 
 
 def _log_config() -> dict[str, Any]:

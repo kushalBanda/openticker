@@ -32,6 +32,7 @@ from openticker.adapters.inbound.mcp_models import (
     BarsResult,
     CancelOrderResult,
     ConnectResult,
+    DeleteScriptResult,
     DeleteStrategyResult,
     FundsResult,
     LoginUrlResult,
@@ -43,6 +44,12 @@ from openticker.adapters.inbound.mcp_models import (
     PositionsResult,
     QuoteResult,
     RiskCheckResult,
+    ScriptCommandResult,
+    ScriptDetailResult,
+    ScriptLogsResult,
+    ScriptResult,
+    ScriptScheduleDefinition,
+    ScriptsResult,
     SearchResult,
     SignalStrategyDefinition,
     StrategiesResult,
@@ -66,6 +73,7 @@ from openticker.composition import (
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.scripts.models import MAX_SCRIPT_BYTES, InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
@@ -78,6 +86,8 @@ from openticker.events.types import (
     OrderPlaced,
     PositionSettled,
     RiskBreached,
+    ScriptExited,
+    ScriptStarted,
 )
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import (
@@ -89,6 +99,7 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
+from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.cancel_order import UnknownOrderError
 from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
@@ -109,6 +120,12 @@ from openticker.use_cases.get_positions import get_positions as get_positions_us
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
+from openticker.use_cases.scripts import manage as scripts
+from openticker.use_cases.scripts.manage import (
+    ScriptRunningError,
+    ScriptStateError,
+    UnknownScriptError,
+)
 from openticker.use_cases.search_instruments import (
     search_instruments as search_instruments_use_case,
 )
@@ -158,6 +175,11 @@ Typical flow:
    alert URL for TradingView or ChartInk alerts, served by openticker-serve.
    Each alert enters or exits one leg long or short; get_strategy_signals
    shows every alert and what came of it. kill_strategy refuses its alerts.
+8. Your own Python scripts: upload_script saves one; start_script runs it under
+   openticker-serve (or schedule_script runs it on trading days), with memory
+   and CPU limits. It trades only through the REST API, with a key made for each
+   run in OPENTICKER_API_KEY and the server's address in OPENTICKER_URL; it is
+   given no broker keys or other secrets. get_script_logs shows its output.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -187,6 +209,8 @@ EVENT_TYPE_NAMES = [
         RiskBreached,
         InstrumentSyncCompleted,
         BrokerSessionExpired,
+        ScriptStarted,
+        ScriptExited,
     )
 ]
 
@@ -246,6 +270,11 @@ _AGENT_FIXABLE_ERRORS = (
     StrategyLockedError,
     StrategyStateError,
     UnknownRunError,
+    UnknownScriptError,
+    DuplicateScriptNameError,
+    InvalidScriptError,
+    ScriptRunningError,
+    ScriptStateError,
 )
 
 
@@ -984,6 +1013,172 @@ def get_strategy_run(
     in get_positions."""
     with _agent_facing_errors():
         return StrategyRunResult.of_detail(control.get_run(run_id))
+
+
+ScriptId = Annotated[str, Field(description="From upload_script or list_scripts.")]
+ScriptName = Annotated[
+    str, Field(description="Unique among your scripts: letters, digits, spaces, '.', '-', '_'.")
+]
+ScriptSource = Annotated[
+    str,
+    Field(
+        description=f"The whole Python file, at most {MAX_SCRIPT_BYTES:,} bytes. It reads "
+        "OPENTICKER_URL and OPENTICKER_API_KEY from its environment and calls the REST API "
+        "with the key in the X-API-Key header, e.g. POST {OPENTICKER_URL}/api/v1/orders. "
+        "httpx is installed. Its working directory and HOME are its own folder."
+    ),
+]
+_SCRIPT_COMMAND_NEXT_STEP = (
+    "openticker-serve carries this out within about a second; get_script shows the run and "
+    "get_script_logs its output."
+)
+
+
+@mcp.tool(
+    title="Upload script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def upload_script(name: ScriptName, source: ScriptSource) -> ScriptResult:
+    """Save a Python script to run under openticker-serve. It is checked to
+    parse as Python; nothing runs until start_script or schedule_script."""
+    with _agent_facing_errors():
+        stored = scripts.upload_script(name, source, clock())
+    return ScriptResult.of_stored(
+        stored, "start_script runs it now; schedule_script runs it on trading days."
+    )
+
+
+@mcp.tool(
+    title="Update script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def update_script(script_id: ScriptId, name: ScriptName, source: ScriptSource) -> ScriptResult:
+    """Replace a script's name and whole source; get_script with
+    include_source returns the current one. Refused while it runs."""
+    with _agent_facing_errors():
+        stored = scripts.update_script(script_id, name, source, clock())
+    return ScriptResult.of_stored(stored)
+
+
+@mcp.tool(
+    title="Delete script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def delete_script(script_id: ScriptId) -> DeleteScriptResult:
+    """Remove a script with its runs and logs. Refused while it runs."""
+    with _agent_facing_errors():
+        scripts.delete_script(script_id)
+    return DeleteScriptResult(script_id=script_id, deleted=True)
+
+
+@mcp.tool(
+    title="List scripts",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def list_scripts() -> ScriptsResult:
+    """Every uploaded script: whether it runs now, its schedule and its
+    latest run."""
+    return ScriptsResult(scripts=[ScriptResult.of(summary) for summary in scripts.list_scripts()])
+
+
+@mcp.tool(
+    title="Get script",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_script(
+    script_id: ScriptId,
+    runs: Annotated[int, Field(ge=1, le=50, description="Most recent runs to return.")] = 10,
+    include_source: Annotated[bool, Field(description="Also return the source.")] = False,
+) -> ScriptDetailResult:
+    """One script: its latest runs with how each ended, and its latest start
+    and stop requests with what came of each."""
+    with _agent_facing_errors():
+        return ScriptDetailResult.of(scripts.get_script(script_id, runs, include_source))
+
+
+@mcp.tool(
+    title="Start script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def start_script(script_id: ScriptId) -> ScriptCommandResult:
+    """Run the script now under openticker-serve, until it exits, stop_script
+    or its schedule's stop_time. It gets a fresh API key limited to prices,
+    orders and positions, revoked when the run ends."""
+    with _agent_facing_errors():
+        command = scripts.request_start(script_id, "mcp", clock())
+    return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Stop script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def stop_script(script_id: ScriptId) -> ScriptCommandResult:
+    """Stop the running script: SIGTERM, then SIGKILL after 5 seconds. Its
+    open positions are left as they are. A scheduled script stopped this
+    way isn't started again until its next day."""
+    with _agent_facing_errors():
+        command = scripts.request_stop(script_id, "mcp", clock())
+    return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Schedule script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def schedule_script(
+    script_id: ScriptId,
+    schedule: Annotated[ScriptScheduleDefinition, Field(description="When it runs.")],
+) -> ScriptResult:
+    """Run the script from start_time on its weekdays, skipping days its
+    exchange doesn't trade, until stop_time or until it exits: once a day.
+    Scheduled while its window is open, it starts within a second."""
+    with _agent_facing_errors():
+        stored = scripts.schedule_script(script_id, schedule.to_core())
+    return ScriptResult.of_stored(stored, "get_script shows each run.")
+
+
+@mcp.tool(
+    title="Unschedule script",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def unschedule_script(script_id: ScriptId) -> ScriptResult:
+    """No more scheduled starts or stops. A run already going carries on;
+    stop_script ends it."""
+    with _agent_facing_errors():
+        stored = scripts.unschedule_script(script_id)
+    return ScriptResult.of_stored(stored)
+
+
+@mcp.tool(
+    title="Get script logs",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_script_logs(
+    script_id: ScriptId,
+    run_id: Annotated[
+        str | None, Field(description="From get_script; omit for the latest run.")
+    ] = None,
+    lines: Annotated[int, Field(ge=1, le=1000, description="Last lines to return.")] = 100,
+) -> ScriptLogsResult:
+    """A run's output, stdout and stderr together, with how it ended. The
+    last 10 runs' logs are kept."""
+    with _agent_facing_errors():
+        return ScriptLogsResult.of(scripts.get_logs(script_id, run_id, lines))
 
 
 def main() -> None:

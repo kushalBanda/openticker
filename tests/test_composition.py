@@ -31,7 +31,9 @@ def test_each_configured_channel_is_built() -> None:
 
 def test_partial_smtp_settings_fail_loudly() -> None:
     with pytest.raises(NotificationConfigError, match="SMTP_PASSWORD"):
-        notification_channels({key: value for key, value in _SMTP.items() if key != "SMTP_PASSWORD"})
+        notification_channels(
+            {key: value for key, value in _SMTP.items() if key != "SMTP_PASSWORD"}
+        )
 
 
 def test_built_bus_audits_every_event_synchronously() -> None:
@@ -92,3 +94,19 @@ def test_price_timeouts_come_from_the_environment() -> None:
         price_timeouts({"STRATEGY_TICK_FALLBACK_SECONDS": "90"})
     with pytest.raises(SandboxConfigError, match="positive"):
         price_timeouts({"STRATEGY_TICK_STALE_SECONDS": "-1"})
+
+
+def test_script_limits_are_whole_numbers_with_defaults() -> None:
+    from openticker.composition import ScriptConfigError, script_limits
+    from openticker.core.scripts.models import ScriptLimits
+
+    assert script_limits({}) == ScriptLimits(1024, 3600)
+    assert script_limits({"SCRIPT_MEMORY_LIMIT_MB": "512", "SCRIPT_CPU_SECONDS": " 60 "}) == (
+        ScriptLimits(512, 60)
+    )
+    with pytest.raises(ScriptConfigError, match="SCRIPT_MEMORY_LIMIT_MB must be a whole number"):
+        script_limits({"SCRIPT_MEMORY_LIMIT_MB": "1.5"})
+    with pytest.raises(ScriptConfigError, match="at least 64 MB"):
+        script_limits({"SCRIPT_MEMORY_LIMIT_MB": "10"})
+    with pytest.raises(ScriptConfigError, match="at least 1 second"):
+        script_limits({"SCRIPT_CPU_SECONDS": "0"})

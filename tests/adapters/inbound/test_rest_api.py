@@ -57,6 +57,16 @@ ROUTE_FOR_TOOL = {
     "rotate_strategy_webhook": ("POST", "/api/v1/strategies/{strategy_id}/webhook"),
     "disable_strategy_webhook": ("DELETE", "/api/v1/strategies/{strategy_id}/webhook"),
     "get_strategy_signals": ("GET", "/api/v1/strategies/{strategy_id}/signals"),
+    "upload_script": ("POST", "/api/v1/scripts"),
+    "list_scripts": ("GET", "/api/v1/scripts"),
+    "get_script": ("GET", "/api/v1/scripts/{script_id}"),
+    "update_script": ("PUT", "/api/v1/scripts/{script_id}"),
+    "delete_script": ("DELETE", "/api/v1/scripts/{script_id}"),
+    "start_script": ("POST", "/api/v1/scripts/{script_id}/start"),
+    "stop_script": ("POST", "/api/v1/scripts/{script_id}/stop"),
+    "schedule_script": ("POST", "/api/v1/scripts/{script_id}/schedule"),
+    "unschedule_script": ("DELETE", "/api/v1/scripts/{script_id}/schedule"),
+    "get_script_logs": ("GET", "/api/v1/scripts/{script_id}/logs"),
 }
 
 
@@ -121,7 +131,8 @@ def test_every_route_but_health_and_alerts_needs_a_key(events: EventBus) -> None
             method,
             path.replace("{broker}", "fake")
             .replace("{order_id}", "SB1")
-            .replace("{strategy_id}", "stg_1"),
+            .replace("{strategy_id}", "stg_1")
+            .replace("{script_id}", "scr_1"),
         )
         assert response.status_code == 401, path
 
@@ -383,3 +394,108 @@ def test_the_access_log_never_shows_an_alert_token() -> None:
     assert HideAlertTokens().filter(record)
     assert "otw_" not in record.getMessage()
     assert "/webhooks/strategies/[token]?x=1" in record.getMessage()
+
+
+SCRIPT_ROUTES = {
+    ("GET", "/api/v1/instruments"),
+    ("GET", "/api/v1/quote"),
+    ("GET", "/api/v1/bars"),
+    ("GET", "/api/v1/option-chain"),
+    ("GET", "/api/v1/market-status"),
+    ("POST", "/api/v1/risk/evaluate"),
+    ("POST", "/api/v1/orders"),
+    ("GET", "/api/v1/orders"),
+    ("DELETE", "/api/v1/orders/{order_id}"),
+    ("GET", "/api/v1/positions"),
+    ("GET", "/api/v1/funds"),
+}
+
+
+def test_script_api_key_cannot_connect_broker_or_manage_anything(events: EventBus) -> None:
+    from openticker.use_cases.api_keys import create_script_key
+
+    app = create_app(events, {}, clock=lambda: NOW)
+    script = TestClient(app, headers={"X-API-Key": create_script_key("scr_1", "srn_1", NOW)})
+    routes = _routes(app) - {("GET", "/health"), ("POST", "/webhooks/strategies/{token}")}
+
+    assert SCRIPT_ROUTES < routes
+    for method, path in routes:
+        response = script.request(
+            method,
+            path.replace("{broker}", "fake")
+            .replace("{order_id}", "SB1")
+            .replace("{strategy_id}", "stg_1")
+            .replace("{script_id}", "scr_1")
+            .replace("{run_id}", "run_1")
+            .replace("{leg_id}", "leg1"),
+        )
+        if (method, path) in SCRIPT_ROUTES:
+            assert response.status_code != 403, path
+        else:
+            assert response.status_code == 403, path
+            assert response.json()["detail"] == (
+                "a script's key reaches prices, orders and positions only"
+            )
+
+
+def test_a_scripts_orders_name_the_script(client: TestClient, events: EventBus) -> None:
+    from openticker.use_cases.api_keys import create_script_key
+
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    script = TestClient(
+        create_app(events, {}, clock=lambda: NOW),
+        headers={"X-API-Key": create_script_key("scr_1", "srn_1", NOW)},
+    )
+    order = {
+        "broker": "fake",
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "side": "BUY",
+        "quantity": 1,
+        "product": "MIS",
+    }
+
+    placed = script.post("/api/v1/orders", json=order).json()
+
+    assert placed["status"] == "FILLED"
+    book = script.get("/api/v1/orders", params={"broker": "fake"}).json()
+    assert book["orders"][0]["triggered_by"] == "script:scr_1"
+    assert script.get("/api/v1/funds", params={"broker": "fake"}).is_success
+
+
+def test_script_routes_mirror_the_tools(client: TestClient) -> None:
+    created = client.post("/api/v1/scripts", json={"name": "pinger", "source": "print(1)\n"})
+    assert created.status_code == 200
+    script_id = created.json()["script_id"]
+
+    assert (
+        client.post("/api/v1/scripts", json={"name": "bad", "source": "def (:"}).status_code == 422
+    )
+    assert client.post("/api/v1/scripts", json={"name": "pinger", "source": "1"}).status_code == 409
+    assert client.get(f"/api/v1/scripts/{script_id}/logs").status_code == 409
+    assert client.post(f"/api/v1/scripts/{script_id}/stop").status_code == 409
+    assert client.get("/api/v1/scripts/scr_missing").status_code == 404
+    started = client.post(f"/api/v1/scripts/{script_id}/start").json()
+    assert (started["command"]["command"], started["command"]["triggered_by"]) == (
+        "start",
+        "rest:tests",
+    )
+    assert (
+        client.put(
+            f"/api/v1/scripts/{script_id}", json={"name": "pinger", "source": "print(2)\n"}
+        ).status_code
+        == 409
+    )
+    client.post(f"/api/v1/scripts/{script_id}/stop")
+    scheduled = client.post(
+        f"/api/v1/scripts/{script_id}/schedule", json={"start_time": "09:20", "stop_time": "15:00"}
+    ).json()
+    assert scheduled["schedule"]["stop_time"] == "15:00:00"
+    assert client.delete(f"/api/v1/scripts/{script_id}/schedule").json()["schedule"] is None
+    detail = client.get(f"/api/v1/scripts/{script_id}", params={"include_source": True}).json()
+    assert detail["source"] == "print(1)\n"
+    assert [s["name"] for s in client.get("/api/v1/scripts").json()["scripts"]] == ["pinger"]
+    assert client.delete(f"/api/v1/scripts/{script_id}").json() == {
+        "script_id": script_id,
+        "deleted": True,
+    }

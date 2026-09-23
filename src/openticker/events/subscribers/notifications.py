@@ -10,6 +10,8 @@ from openticker.events.types import (
     OrderFilled,
     PositionSettled,
     RiskBreached,
+    ScriptExited,
+    ScriptStarted,
     StrategyLegClosed,
     StrategyStarted,
     StrategyStopped,
@@ -27,6 +29,8 @@ NOTIFIED_EVENTS: tuple[type, ...] = (
     StrategyStarted,
     StrategyLegClosed,
     StrategyStopped,
+    ScriptStarted,
+    ScriptExited,
 )
 
 
@@ -64,6 +68,13 @@ def describe(event: object) -> tuple[str, str] | None:
                 f"Strategy stopped: {event.name} ({event.reason}), P&L {event.realized_pnl:+,.2f}"
             )
             return subject, event.detail
+        case ScriptStarted():
+            return f"Script started: {event.name}", f"Run {event.run_id}, via {event.triggered_by}."
+        case ScriptExited():
+            return (
+                f"Script ended: {event.name} ({event.reason})",
+                f"Run {event.run_id} {event.detail}.",
+            )
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
     return None

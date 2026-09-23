@@ -11,6 +11,7 @@ from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.core.scripts.models import InvalidScriptError, ScriptLimits
 from openticker.core.strategies.prices import PriceTimeouts
 from openticker.events.bus import EventBus
 from openticker.events.subscribers.audit_log import record_event
@@ -39,6 +40,10 @@ class SandboxConfigError(Exception):
 
 class WatchConfigError(Exception):
     """`OPENTICKER_WATCH` is malformed."""
+
+
+class ScriptConfigError(Exception):
+    """A hosted script limit is not a whole number, or too small."""
 
 
 def build_event_bus(env: Mapping[str, str]) -> EventBus:
@@ -115,6 +120,25 @@ def price_timeouts(env: Mapping[str, str]) -> PriceTimeouts:
         raise SandboxConfigError(
             f"STRATEGY_TICK_FALLBACK_SECONDS must be less than STRATEGY_TICK_STALE_SECONDS: {exc}"
         ) from exc
+
+
+def script_limits(env: Mapping[str, str]) -> ScriptLimits:
+    """`SCRIPT_MEMORY_LIMIT_MB` (default 1024) and `SCRIPT_CPU_SECONDS` (default
+    3600): what one run of a hosted script may use (ADR 25 in docs/adr)."""
+    defaults = ScriptLimits()
+    values = {}
+    for name, default in (
+        ("SCRIPT_MEMORY_LIMIT_MB", defaults.memory_mb),
+        ("SCRIPT_CPU_SECONDS", defaults.cpu_seconds),
+    ):
+        raw = (env.get(name) or "").strip()
+        if raw and not raw.isdigit():
+            raise ScriptConfigError(f"{name} must be a whole number, got {raw!r}")
+        values[name] = int(raw) if raw else default
+    try:
+        return ScriptLimits(values["SCRIPT_MEMORY_LIMIT_MB"], values["SCRIPT_CPU_SECONDS"])
+    except InvalidScriptError as exc:
+        raise ScriptConfigError(str(exc)) from exc
 
 
 def watch_list(env: Mapping[str, str]) -> list[tuple[str, Exchange]]:
