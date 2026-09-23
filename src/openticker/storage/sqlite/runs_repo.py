@@ -24,6 +24,7 @@ from openticker.core.strategies.runs import (
     RunLeg,
     RunStatus,
 )
+from openticker.core.strategies.signals import SignalAction
 from openticker.ports.models import Exchange, Product, Side
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import (
@@ -35,6 +36,7 @@ from openticker.storage.sqlite.models import (
 from openticker.storage.sqlite.strategies_repo import write_transaction
 
 SCHEDULE_TRIGGER = "schedule"  # who sends a scheduled start
+WEBHOOK_TRIGGER = "webhook"  # who sends a signal, and opens a signal run
 
 
 @dataclass(frozen=True)
@@ -73,12 +75,14 @@ def add_command(
     now: datetime,
     broker: str | None = None,
     leg_id: str | None = None,
+    action: SignalAction | None = None,
 ) -> Command:
     row = StrategyCommandRow(
         strategy_id=strategy_id,
         kind=kind.value,
         leg_id=leg_id,
         broker=broker,
+        action=action.value if action else None,
         triggered_by=triggered_by,
         status=CommandStatus.PENDING.value,
         outcome=None,
@@ -136,6 +140,12 @@ def next_pending_command() -> Command | None:
         return _command(row) if row else None
 
 
+def commands_by_id(ids: list[int]) -> dict[int, Command]:
+    statement = select(StrategyCommandRow).where(StrategyCommandRow.id.in_(ids))
+    with Session(get_engine()) as session:
+        return {row.id: _command(row) for row in session.scalars(statement).all()}
+
+
 def recent_commands(strategy_id: str, limit: int) -> list[Command]:
     """Newest first."""
     statement = (
@@ -160,8 +170,21 @@ def active_run_of(session: Session, strategy_id: str) -> Run | None:
     return _run(row) if row else None
 
 
+def find_active_run(strategy_id: str) -> Run | None:
+    with Session(get_engine()) as session:
+        return active_run_of(session, strategy_id)
+
+
 def insert_run(session: Session, run: Run) -> None:
     session.add(StrategyRunRow(id=run.id, **_run_fields(run)))
+
+
+def update_run(session: Session, run: Run) -> None:
+    row = session.get(StrategyRunRow, run.id)
+    if row is None:
+        raise LookupError(f"no strategy run {run.id}")
+    for name, value in _run_fields(run).items():
+        setattr(row, name, value)
 
 
 def new_run_id() -> str:
@@ -170,11 +193,7 @@ def new_run_id() -> str:
 
 def save_run(run: Run) -> None:
     with write_transaction() as session:
-        row = session.get(StrategyRunRow, run.id)
-        if row is None:
-            raise LookupError(f"no strategy run {run.id}")
-        for name, value in _run_fields(run).items():
-            setattr(row, name, value)
+        update_run(session, run)
 
 
 def find_run(run_id: str) -> Run | None:
@@ -327,6 +346,7 @@ def _command(row: StrategyCommandRow) -> Command:
         created_at=row.created_at.replace(tzinfo=UTC),
         leg_id=row.leg_id,
         broker=row.broker,
+        action=SignalAction(row.action) if row.action else None,
         outcome=row.outcome,
         processed_at=row.processed_at.replace(tzinfo=UTC) if row.processed_at else None,
     )
@@ -387,6 +407,7 @@ def _encode_leg(leg: RunLeg) -> dict[str, Any]:
         "exit_reason": leg.exit_reason,
         "retry_at": _encode_moment(leg.retry_at),
         "failed_exits": leg.failed_exits,
+        "spec_leg": leg.spec_leg,
         "risk": None
         if risk is None
         else {
@@ -416,6 +437,7 @@ def _decode_leg(data: dict[str, Any]) -> RunLeg:
         exit_reason=data["exit_reason"],
         retry_at=_decode_moment(data["retry_at"]),
         failed_exits=data["failed_exits"],
+        spec_leg=data.get("spec_leg"),
         risk=None
         if risk is None
         else PositionRisk(

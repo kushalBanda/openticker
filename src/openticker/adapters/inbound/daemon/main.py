@@ -9,6 +9,7 @@ commands that manage its API keys (ADR 17 in docs/adr).
 """
 
 import argparse
+import copy
 import ipaddress
 import logging
 import os
@@ -17,6 +18,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
+from typing import Any
 
 import uvicorn
 from dotenv import load_dotenv
@@ -26,7 +28,7 @@ from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
-from openticker.adapters.inbound.rest_api import API_KEY_HEADER, create_app
+from openticker.adapters.inbound.rest_api import API_KEY_HEADER, HideAlertTokens, create_app
 from openticker.composition import (
     build_event_bus,
     capital_cap,
@@ -187,12 +189,21 @@ def _serve(env: Mapping[str, str]) -> None:
     for thread in feeds:
         thread.start()
     try:
-        uvicorn.run(create_app(events, env), host=host, port=port)
+        uvicorn.run(create_app(events, env), host=host, port=port, log_config=_log_config())
     finally:
         stop.set()
         for thread in feeds:
             thread.join(timeout=10)
         events.close()
+
+
+def _log_config() -> dict[str, Any]:
+    """uvicorn's own logging, with alert URL tokens kept out of the access log."""
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    config.setdefault("filters", {})["hide_alert_tokens"] = {"()": HideAlertTokens}
+    for handler in config["handlers"].values():
+        handler.setdefault("filters", []).append("hide_alert_tokens")
+    return config
 
 
 if __name__ == "__main__":

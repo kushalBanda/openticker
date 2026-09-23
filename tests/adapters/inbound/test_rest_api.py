@@ -2,6 +2,7 @@
 registered under its own name so nothing touches Kite."""
 
 import asyncio
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
-from openticker.adapters.inbound.rest_api import create_app
+from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
 from openticker.use_cases.api_keys import create_api_key, revoke
@@ -51,6 +52,11 @@ ROUTE_FOR_TOOL = {
     "close_strategy_leg": ("POST", "/api/v1/strategies/{strategy_id}/legs/{leg_id}/close"),
     "get_strategy_runs": ("GET", "/api/v1/strategies/{strategy_id}/runs"),
     "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
+    "create_signal_strategy": ("POST", "/api/v1/signal-strategies"),
+    "update_signal_strategy": ("PUT", "/api/v1/signal-strategies/{strategy_id}"),
+    "rotate_strategy_webhook": ("POST", "/api/v1/strategies/{strategy_id}/webhook"),
+    "disable_strategy_webhook": ("DELETE", "/api/v1/strategies/{strategy_id}/webhook"),
+    "get_strategy_signals": ("GET", "/api/v1/strategies/{strategy_id}/signals"),
 }
 
 
@@ -104,10 +110,10 @@ def test_rest_rejects_missing_wrong_and_revoked_api_keys(events: EventBus, key: 
     )
 
 
-def test_every_route_but_health_needs_a_key(events: EventBus) -> None:
+def test_every_route_but_health_and_alerts_needs_a_key(events: EventBus) -> None:
     app = create_app(events, {})
     anonymous = TestClient(app)
-    routes = _routes(app) - {("GET", "/health")}
+    routes = _routes(app) - {("GET", "/health"), ("POST", "/webhooks/strategies/{token}")}
 
     assert len(routes) == len(ROUTE_FOR_TOOL)
     for method, path in routes:
@@ -318,3 +324,62 @@ def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get(f"{base}/runs").json()["runs"][0]["stop_reason"] == "manual"
     assert client.post(f"{base}/stop").status_code == 409
     assert client.get("/api/v1/runs/run_missing").status_code == 404
+
+
+def test_an_alert_posted_to_its_url_needs_no_api_key(client: TestClient, events: EventBus) -> None:
+    from tests.adapters.inbound.test_mcp_server import SIGNAL_JSON
+    from tests.fixtures.strategies import list_nifty_market
+
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    list_nifty_market()
+    created = client.post(
+        "/api/v1/signal-strategies", json={"name": "alerts", "definition": SIGNAL_JSON}
+    )
+    strategy_id = created.json()["strategy_id"]
+    base = f"/api/v1/strategies/{strategy_id}"
+    webhook = client.post(f"{base}/webhook", json={"broker": "fake"}).json()
+    anonymous = TestClient(create_app(events, {}, clock=lambda: NOW))  # 09:30 IST
+
+    accepted = anonymous.post(
+        webhook["alert_path"], json={"stocks": "RELIANCE", "scan_name": "BUY"}
+    )
+    repeated = anonymous.post(
+        webhook["alert_path"], json={"stocks": "RELIANCE", "scan_name": "BUY"}
+    )
+    refused = anonymous.post(webhook["alert_path"], content=b"nope")
+    unknown = anonymous.post("/webhooks/strategies/otw_" + "x" * 43, json={})
+    changed = client.put(
+        f"/api/v1/signal-strategies/{strategy_id}",
+        json={"name": "alerts", "definition": {**SIGNAL_JSON, "exit_time": "15:10"}},
+    )
+    signals = client.get(f"{base}/signals").json()
+    disabled = client.delete(f"{base}/webhook")
+    gone = anonymous.post(webhook["alert_path"], json={"stocks": "RELIANCE", "scan_name": "BUY"})
+
+    assert created.status_code == 200 and created.json()["kind"] == "signal"
+    assert webhook["alert_url"] is None and webhook["broker"] == "fake"
+    assert accepted.status_code == 200
+    assert accepted.json() == {"status": "accepted", "message": "leg1 long_entry queued"}
+    assert repeated.status_code == 200  # the runner makes a second entry a no-op
+    assert (refused.status_code, refused.json()["status"]) == (400, "refused")
+    assert (unknown.status_code, unknown.json()["status"]) == (404, "unknown")
+    assert changed.json()["definition"]["exit_time"] == "15:10:00"
+    assert [call["result"] for call in signals["calls"]] == ["refused", "accepted", "accepted"]
+    assert disabled.status_code == 200 and gone.status_code == 404
+    assert client.get(f"{base}/preview", params={"broker": "fake"}).status_code == 409
+
+
+def test_the_access_log_never_shows_an_alert_token() -> None:
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:5", "POST", "/webhooks/strategies/otw_secretsecretsecret?x=1", "1.1", 200),
+        None,
+    )
+
+    assert HideAlertTokens().filter(record)
+    assert "otw_" not in record.getMessage()
+    assert "/webhooks/strategies/[token]?x=1" in record.getMessage()

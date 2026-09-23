@@ -12,7 +12,8 @@ from openticker.core.risk.models import (
     TrailMode,
     as_price,
 )
-from openticker.core.strategies.models import Horizon, LegSpec, RiskValue
+from openticker.core.strategies.models import Horizon, LegSpec, RiskValue, SignalLeg
+from openticker.core.strategies.signals import SignalAction
 from openticker.ports.models import Exchange, Product, Side
 
 
@@ -21,6 +22,7 @@ class CommandKind(StrEnum):
     STOP = "stop"
     KILL = "kill"
     CLOSE_LEG = "close_leg"
+    SIGNAL = "signal"  # an alert for a signal strategy (ADR 24)
 
 
 class CommandStatus(StrEnum):
@@ -39,6 +41,7 @@ class Command:
     created_at: datetime  # tz-aware UTC
     leg_id: str | None = None
     broker: str | None = None
+    action: SignalAction | None = None  # signal only
     outcome: str | None = None
     processed_at: datetime | None = None
 
@@ -72,6 +75,13 @@ class RunLeg:
     risk: PositionRisk | None = None  # set while open; carries the ratchets
     retry_at: datetime | None = None  # a failed exit is tried again from then
     failed_exits: int = 0
+    # A signal run's position: the defined leg it was entered for. An options
+    # run's legs are the defined legs themselves.
+    spec_leg: str | None = None
+
+    @property
+    def defined_as(self) -> str:
+        return self.spec_leg or self.leg_id
 
     @property
     def is_open(self) -> bool:
@@ -119,14 +129,16 @@ def leg_pnl(side: Side, entry: float, exit: float, quantity: int) -> float:
     return (exit - entry if side is Side.BUY else entry - exit) * quantity
 
 
-def leg_risk(leg: LegSpec, entry_price: float, quantity: int) -> PositionRisk:
+def leg_risk(
+    leg: LegSpec | SignalLeg, side: Side, entry_price: float, quantity: int
+) -> PositionRisk:
     """The leg's stop loss, target and trailing stop as prices, measured from
-    where it actually filled. A stop that would sit at or below zero is left
-    unset rather than moved."""
-    long = leg.side is Side.BUY
+    where it actually filled on `side`. A stop that would sit at or below zero
+    is left unset rather than moved."""
+    long = side is Side.BUY
     stop = _away(entry_price, leg.stop_loss, -1 if long else 1)
     return PositionRisk(
-        side=leg.side,
+        side=side,
         entry_price=entry_price,
         quantity=quantity,
         initial_sl=stop,

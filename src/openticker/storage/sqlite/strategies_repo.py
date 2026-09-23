@@ -1,4 +1,4 @@
-"""Strategy definitions (ADR 20 in docs/adr), stored as versioned JSON."""
+"""Strategy definitions (ADR 20 and ADR 24 in docs/adr), stored as versioned JSON."""
 
 import json
 import secrets
@@ -13,12 +13,16 @@ from sqlalchemy.orm import Session
 
 from openticker.core.risk.models import LockMode, ProfitLock, StrategyLimits
 from openticker.core.strategies.models import (
+    Direction,
     Horizon,
     LegSpec,
     OptionsStrategySpec,
     RelativeExpiry,
     RiskValue,
     Schedule,
+    SignalLeg,
+    SignalStrategySpec,
+    StrategySpec,
     StrikeSelector,
 )
 from openticker.ports.models import Exchange, InstrumentType, Side
@@ -27,6 +31,7 @@ from openticker.storage.sqlite.models import StrategyRow
 
 DEFINITION_VERSION = 1
 OPTIONS_KIND = "options"
+SIGNAL_KIND = "signal"
 SANDBOX_MODE = "sandbox"
 
 
@@ -38,8 +43,8 @@ class DuplicateStrategyNameError(Exception):
 class StoredStrategy:
     id: str
     name: str
-    kind: str
-    spec: OptionsStrategySpec
+    kind: str  # options or signal
+    spec: StrategySpec
     mode: str
     locked: bool
     created_at: datetime  # tz-aware UTC
@@ -47,13 +52,13 @@ class StoredStrategy:
     scheduled_broker: str | None = None  # None: enters only on start_strategy
 
 
-def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> StoredStrategy:
+def insert_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrategy:
     with write_transaction() as session:
         _refuse_taken(session, name)
         row = StrategyRow(
             id="stg_" + secrets.token_hex(6),
             name=name,
-            kind=OPTIONS_KIND,
+            kind=SIGNAL_KIND if isinstance(spec, SignalStrategySpec) else OPTIONS_KIND,
             definition=json.dumps(_encode(spec)),
             mode=SANDBOX_MODE,
             locked=False,
@@ -70,7 +75,7 @@ def insert_strategy(name: str, spec: OptionsStrategySpec, now: datetime) -> Stor
 def update_strategy(
     strategy_id: str,
     name: str,
-    spec: OptionsStrategySpec,
+    spec: StrategySpec,
     now: datetime,
     guard: Callable[[Session], None] = lambda session: None,
 ) -> StoredStrategy | None:
@@ -173,7 +178,9 @@ def _stored(row: StrategyRow) -> StoredStrategy:
         id=row.id,
         name=row.name,
         kind=row.kind,
-        spec=_decode(json.loads(row.definition)),
+        spec=_decode_signal(json.loads(row.definition))
+        if row.kind == SIGNAL_KIND
+        else _decode(json.loads(row.definition)),
         mode=row.mode,
         locked=row.locked,
         created_at=row.created_at.replace(tzinfo=UTC),
@@ -186,9 +193,9 @@ def _naive(moment: datetime) -> datetime:
     return moment.astimezone(UTC).replace(tzinfo=None)
 
 
-def _encode(spec: OptionsStrategySpec) -> dict[str, Any]:
-    schedule, limits = spec.schedule, spec.limits
-    lock = limits.lock_profit
+def _encode(spec: StrategySpec) -> dict[str, Any]:
+    if isinstance(spec, SignalStrategySpec):
+        return _encode_signal(spec)
     return {
         "version": DEFINITION_VERSION,
         "underlying": spec.underlying,
@@ -209,34 +216,62 @@ def _encode(spec: OptionsStrategySpec) -> dict[str, Any]:
             }
             for leg in spec.legs
         ],
-        "schedule": {
-            "entry_time": _encode_time(schedule.entry_time),
-            "exit_time": _encode_time(schedule.exit_time),
-            "weekdays": sorted(schedule.weekdays),
-            "exit_on_expiry": schedule.exit_on_expiry,
+        "schedule": _encode_schedule(spec.schedule),
+        "limits": _encode_limits(spec.limits),
+    }
+
+
+def _encode_signal(spec: SignalStrategySpec) -> dict[str, Any]:
+    return {
+        "version": DEFINITION_VERSION,
+        "horizon": spec.horizon.value,
+        "direction": spec.direction.value,
+        "legs": [
+            {
+                "symbol": leg.symbol,
+                "exchange": leg.exchange.value,
+                "quantity": leg.quantity,
+                "accepts": leg.accepts.value,
+                "stop_loss": _encode_risk(leg.stop_loss),
+                "target": _encode_risk(leg.target),
+                "trailing": _encode_risk(leg.trailing),
+            }
+            for leg in spec.legs
+        ],
+        "schedule": _encode_schedule(spec.schedule),
+        "limits": _encode_limits(spec.limits),
+    }
+
+
+def _encode_schedule(schedule: Schedule) -> dict[str, Any]:
+    return {
+        "entry_time": _encode_time(schedule.entry_time),
+        "exit_time": _encode_time(schedule.exit_time),
+        "weekdays": sorted(schedule.weekdays),
+        "exit_on_expiry": schedule.exit_on_expiry,
+    }
+
+
+def _encode_limits(limits: StrategyLimits) -> dict[str, Any]:
+    lock = limits.lock_profit
+    return {
+        "combined_stop_loss": limits.combined_stop_loss,
+        "combined_target": limits.combined_target,
+        "lock_profit": None
+        if lock is None
+        else {
+            "arm_at": lock.arm_at,
+            "lock": lock.lock,
+            "mode": lock.mode.value,
+            "trail_step": lock.trail_step,
         },
-        "limits": {
-            "combined_stop_loss": limits.combined_stop_loss,
-            "combined_target": limits.combined_target,
-            "lock_profit": None
-            if lock is None
-            else {
-                "arm_at": lock.arm_at,
-                "lock": lock.lock,
-                "mode": lock.mode.value,
-                "trail_step": lock.trail_step,
-            },
-            "stops_to_entry_on_leg_stop": limits.stops_to_entry_on_leg_stop,
-            "daily_loss_limit": limits.daily_loss_limit,
-        },
+        "stops_to_entry_on_leg_stop": limits.stops_to_entry_on_leg_stop,
+        "daily_loss_limit": limits.daily_loss_limit,
     }
 
 
 def _decode(data: dict[str, Any]) -> OptionsStrategySpec:
-    if data.get("version") != DEFINITION_VERSION:
-        raise ValueError(f"unknown strategy definition version {data.get('version')!r}")
-    schedule, limits = data["schedule"], data["limits"]
-    lock = limits["lock_profit"]
+    _check_version(data)
     return OptionsStrategySpec(
         underlying=data["underlying"],
         exchange=Exchange(data["exchange"]),
@@ -254,26 +289,62 @@ def _decode(data: dict[str, Any]) -> OptionsStrategySpec:
             )
             for leg in data["legs"]
         ),
-        schedule=Schedule(
-            entry_time=_decode_time(schedule["entry_time"]),
-            exit_time=_decode_time(schedule["exit_time"]),
-            weekdays=frozenset(schedule["weekdays"]),
-            exit_on_expiry=schedule["exit_on_expiry"],
+        schedule=_decode_schedule(data["schedule"]),
+        limits=_decode_limits(data["limits"]),
+    )
+
+
+def _decode_signal(data: dict[str, Any]) -> SignalStrategySpec:
+    _check_version(data)
+    return SignalStrategySpec(
+        horizon=Horizon(data["horizon"]),
+        direction=Direction(data["direction"]),
+        legs=tuple(
+            SignalLeg(
+                symbol=leg["symbol"],
+                exchange=Exchange(leg["exchange"]),
+                quantity=leg["quantity"],
+                accepts=Direction(leg["accepts"]),
+                stop_loss=_decode_risk(leg["stop_loss"]),
+                target=_decode_risk(leg["target"]),
+                trailing=_decode_risk(leg["trailing"]),
+            )
+            for leg in data["legs"]
         ),
-        limits=StrategyLimits(
-            combined_stop_loss=limits["combined_stop_loss"],
-            combined_target=limits["combined_target"],
-            lock_profit=None
-            if lock is None
-            else ProfitLock(
-                arm_at=lock["arm_at"],
-                lock=lock["lock"],
-                mode=LockMode(lock["mode"]),
-                trail_step=lock["trail_step"],
-            ),
-            stops_to_entry_on_leg_stop=limits["stops_to_entry_on_leg_stop"],
-            daily_loss_limit=limits["daily_loss_limit"],
+        schedule=_decode_schedule(data["schedule"]),
+        limits=_decode_limits(data["limits"]),
+    )
+
+
+def _check_version(data: dict[str, Any]) -> None:
+    if data.get("version") != DEFINITION_VERSION:
+        raise ValueError(f"unknown strategy definition version {data.get('version')!r}")
+
+
+def _decode_schedule(schedule: dict[str, Any]) -> Schedule:
+    return Schedule(
+        entry_time=_decode_time(schedule["entry_time"]),
+        exit_time=_decode_time(schedule["exit_time"]),
+        weekdays=frozenset(schedule["weekdays"]),
+        exit_on_expiry=schedule["exit_on_expiry"],
+    )
+
+
+def _decode_limits(limits: dict[str, Any]) -> StrategyLimits:
+    lock = limits["lock_profit"]
+    return StrategyLimits(
+        combined_stop_loss=limits["combined_stop_loss"],
+        combined_target=limits["combined_target"],
+        lock_profit=None
+        if lock is None
+        else ProfitLock(
+            arm_at=lock["arm_at"],
+            lock=lock["lock"],
+            mode=LockMode(lock["mode"]),
+            trail_step=lock["trail_step"],
         ),
+        stops_to_entry_on_leg_stop=limits["stops_to_entry_on_leg_stop"],
+        daily_loss_limit=limits["daily_loss_limit"],
     )
 
 

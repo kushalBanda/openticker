@@ -10,7 +10,7 @@ from openticker.storage.sqlite.strategies_repo import (
     list_strategies,
     update_strategy,
 )
-from tests.fixtures.strategies import EVERYTHING, NOW, STRADDLE
+from tests.fixtures.strategies import EVERYTHING, NOW, SIGNAL_EVERYTHING, STRADDLE
 
 
 def test_definition_round_trips_every_field() -> None:
@@ -26,6 +26,16 @@ def test_definition_round_trips_every_field() -> None:
         False,
         NOW,
     )
+
+
+def test_a_signal_definition_round_trips_every_field() -> None:
+    stored = insert_strategy("alerts", SIGNAL_EVERYTHING, NOW)
+
+    found = find_strategy(stored.id)
+
+    assert found is not None
+    assert (found.kind, found.spec) == ("signal", SIGNAL_EVERYTHING)
+    assert insert_strategy("options", STRADDLE, NOW).kind == "options"
 
 
 def test_names_are_unique_until_deleted() -> None:

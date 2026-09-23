@@ -30,6 +30,7 @@ from openticker.core.strategies.models import (
     MAX_LEGS,
     MAX_LOTS,
     MAX_STRIKE_OFFSET,
+    Direction,
     Horizon,
     InvalidStrategyError,
     LegSpec,
@@ -37,6 +38,8 @@ from openticker.core.strategies.models import (
     RelativeExpiry,
     RiskValue,
     Schedule,
+    SignalLeg,
+    SignalStrategySpec,
     StrikeSelector,
 )
 from openticker.core.strategies.runs import (
@@ -48,6 +51,7 @@ from openticker.core.strategies.runs import (
     RunLeg,
     RunStatus,
 )
+from openticker.core.strategies.signals import SignalAction
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -62,9 +66,10 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.sqlite.audit_repo import AuditEntry
+from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
-from openticker.use_cases.strategies.control import RunDetail
+from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 
 
@@ -595,7 +600,60 @@ class ProfitLockDefinition(BaseModel):
     trail_step: float | None = Field(default=None, gt=0, description="lock_and_trail only.")
 
 
-class StrategyDefinition(BaseModel):
+class _LimitFields(BaseModel):
+    """Strategy-wide limits, the same for both kinds of strategy."""
+
+    combined_stop_loss: float | None = Field(
+        default=None, gt=0, description="Exit everything at this total loss, in rupees."
+    )
+    combined_target: float | None = Field(
+        default=None, gt=0, description="Exit everything at this total profit, in rupees."
+    )
+    lock_profit: ProfitLockDefinition | None = Field(
+        default=None, description="Lock in profit once the strategy is up enough."
+    )
+    stops_to_entry_on_leg_stop: bool = Field(
+        default=False,
+        description="When one leg's stop loss fires, move every other open leg's stop to its "
+        "entry (where that tightens it) and stop applying combined_stop_loss.",
+    )
+    daily_loss_limit: float | None = Field(
+        default=None,
+        gt=0,
+        description="Stop for the day once today's runs have lost this much, in rupees.",
+    )
+
+    def _limits(self) -> StrategyLimits:
+        lock = self.lock_profit
+        return StrategyLimits(
+            combined_stop_loss=self.combined_stop_loss,
+            combined_target=self.combined_target,
+            lock_profit=None
+            if lock is None
+            else ProfitLock(
+                arm_at=lock.arm_at, lock=lock.lock, mode=lock.mode, trail_step=lock.trail_step
+            ),
+            stops_to_entry_on_leg_stop=self.stops_to_entry_on_leg_stop,
+            daily_loss_limit=self.daily_loss_limit,
+        )
+
+    @staticmethod
+    def _limit_values(limits: StrategyLimits) -> dict[str, Any]:
+        lock = limits.lock_profit
+        return {
+            "combined_stop_loss": limits.combined_stop_loss,
+            "combined_target": limits.combined_target,
+            "lock_profit": None
+            if lock is None
+            else ProfitLockDefinition(
+                arm_at=lock.arm_at, lock=lock.lock, mode=lock.mode, trail_step=lock.trail_step
+            ),
+            "stops_to_entry_on_leg_stop": limits.stops_to_entry_on_leg_stop,
+            "daily_loss_limit": limits.daily_loss_limit,
+        }
+
+
+class StrategyDefinition(_LimitFields):
     """An options strategy whose legs are chosen relative to the market, so the
     same definition trades the right contracts on any day."""
 
@@ -630,29 +688,9 @@ class StrategyDefinition(BaseModel):
         description="On the expiry day of any contract held, close at exit_time (or the 15:15 "
         "square-off) instead of being settled at expiry.",
     )
-    combined_stop_loss: float | None = Field(
-        default=None, gt=0, description="Exit everything at this total loss, in rupees."
-    )
-    combined_target: float | None = Field(
-        default=None, gt=0, description="Exit everything at this total profit, in rupees."
-    )
-    lock_profit: ProfitLockDefinition | None = Field(
-        default=None, description="Lock in profit once the strategy is up enough."
-    )
-    stops_to_entry_on_leg_stop: bool = Field(
-        default=False,
-        description="When one leg's stop loss fires, move every other open leg's stop to its "
-        "entry (where that tightens it) and stop applying combined_stop_loss.",
-    )
-    daily_loss_limit: float | None = Field(
-        default=None,
-        gt=0,
-        description="Stop for the day once today's runs have lost this much, in rupees.",
-    )
 
     def to_spec(self) -> OptionsStrategySpec:
         try:
-            lock = self.lock_profit
             return OptionsStrategySpec(
                 underlying=self.underlying,
                 exchange=Exchange(self.exchange),
@@ -664,20 +702,7 @@ class StrategyDefinition(BaseModel):
                     weekdays=frozenset(self.weekdays),
                     exit_on_expiry=self.exit_on_expiry,
                 ),
-                limits=StrategyLimits(
-                    combined_stop_loss=self.combined_stop_loss,
-                    combined_target=self.combined_target,
-                    lock_profit=None
-                    if lock is None
-                    else ProfitLock(
-                        arm_at=lock.arm_at,
-                        lock=lock.lock,
-                        mode=lock.mode,
-                        trail_step=lock.trail_step,
-                    ),
-                    stops_to_entry_on_leg_stop=self.stops_to_entry_on_leg_stop,
-                    daily_loss_limit=self.daily_loss_limit,
-                ),
+                limits=self._limits(),
             )
         except InvalidStrategyError:
             raise
@@ -686,7 +711,7 @@ class StrategyDefinition(BaseModel):
 
     @classmethod
     def of(cls, spec: OptionsStrategySpec) -> "StrategyDefinition":
-        schedule, limits, lock = spec.schedule, spec.limits, spec.limits.lock_profit
+        schedule = spec.schedule
         return cls(
             underlying=spec.underlying,
             exchange=spec.exchange.value,  # type: ignore[arg-type]
@@ -696,28 +721,140 @@ class StrategyDefinition(BaseModel):
             exit_time=schedule.exit_time,
             weekdays=sorted(schedule.weekdays),
             exit_on_expiry=schedule.exit_on_expiry,
-            combined_stop_loss=limits.combined_stop_loss,
-            combined_target=limits.combined_target,
-            lock_profit=None
-            if lock is None
-            else ProfitLockDefinition(
-                arm_at=lock.arm_at, lock=lock.lock, mode=lock.mode, trail_step=lock.trail_step
-            ),
-            stops_to_entry_on_leg_stop=limits.stops_to_entry_on_leg_stop,
-            daily_loss_limit=limits.daily_loss_limit,
+            **cls._limit_values(spec.limits),
+        )
+
+
+class SignalLegDefinition(BaseModel):
+    symbol: str = Field(
+        min_length=1,
+        description="The exact contract, as search_instruments shows it: a stock (RELIANCE), "
+        "a future or an option.",
+    )
+    exchange: Exchange = Field(description="The contract's exchange: NSE, BSE, NFO, BFO, MCX.")
+    quantity: int = Field(
+        ge=1, description="Units; for a derivative, a whole number of lots times the lot size."
+    )
+    accepts: Direction = Field(
+        default=Direction.BOTH,
+        description="Which alerts this leg takes: both, long_only (long_entry, long_exit) or "
+        "short_only (short_entry, short_exit).",
+    )
+    stop_loss: RiskValueInput | None = Field(default=None, description="Each position's stop.")
+    target: RiskValueInput | None = Field(default=None, description="Each position's target.")
+    trailing: RiskValueInput | None = Field(
+        default=None, description="Trailing stop distance; trails from the entry price."
+    )
+
+    def to_core(self) -> SignalLeg:
+        return SignalLeg(
+            symbol=self.symbol.strip().upper(),
+            exchange=self.exchange,
+            quantity=self.quantity,
+            accepts=self.accepts,
+            stop_loss=self.stop_loss.to_core() if self.stop_loss else None,
+            target=self.target.to_core() if self.target else None,
+            trailing=self.trailing.to_core() if self.trailing else None,
+        )
+
+    @classmethod
+    def of(cls, leg: SignalLeg) -> "SignalLegDefinition":
+        return cls(
+            symbol=leg.symbol,
+            exchange=leg.exchange,
+            quantity=leg.quantity,
+            accepts=leg.accepts,
+            stop_loss=RiskValueInput.of(leg.stop_loss),
+            target=RiskValueInput.of(leg.target),
+            trailing=RiskValueInput.of(leg.trailing),
+        )
+
+
+class SignalStrategyDefinition(_LimitFields):
+    """A strategy alerts drive: each alert enters or exits one of its legs,
+    which name their contracts outright."""
+
+    horizon: Horizon = Field(
+        description="intraday: MIS, closed by exit_time or the 15:15 square-off. "
+        "positional: NRML, carried overnight."
+    )
+    direction: Direction = Field(
+        default=Direction.BOTH,
+        description="Which positions alerts may open: both, long_only or short_only. An alert "
+        "for the other side is refused.",
+    )
+    legs: list[SignalLegDefinition] = Field(
+        min_length=1,
+        max_length=MAX_LEGS,
+        description=f"1 to {MAX_LEGS} contracts, named leg1, leg2, ... in this order; each "
+        "trades a different contract.",
+    )
+    entry_time: time | None = Field(
+        default=None, description="HH:MM exchange time entry alerts are taken from each day."
+    )
+    exit_time: time | None = Field(
+        default=None,
+        description="HH:MM exchange time that closes whatever is held each trading day; no "
+        "alert is taken after it.",
+    )
+    weekdays: list[int] = Field(
+        default=[0, 1, 2, 3, 4],
+        description="Days entry alerts are taken, 0 Monday to 4 Friday.",
+    )
+    exit_on_expiry: bool = Field(
+        default=True,
+        description="On the expiry day of a derivative held, close it at exit_time (or the "
+        "15:15 square-off) instead of being settled at expiry.",
+    )
+
+    def to_spec(self) -> SignalStrategySpec:
+        try:
+            return SignalStrategySpec(
+                legs=tuple(leg.to_core() for leg in self.legs),
+                horizon=self.horizon,
+                direction=self.direction,
+                schedule=Schedule(
+                    entry_time=self.entry_time,
+                    exit_time=self.exit_time,
+                    weekdays=frozenset(self.weekdays),
+                    exit_on_expiry=self.exit_on_expiry,
+                ),
+                limits=self._limits(),
+            )
+        except InvalidStrategyError:
+            raise
+        except ValueError as exc:
+            raise InvalidStrategyError(str(exc)) from exc
+
+    @classmethod
+    def of(cls, spec: SignalStrategySpec) -> "SignalStrategyDefinition":
+        schedule = spec.schedule
+        return cls(
+            horizon=spec.horizon,
+            direction=spec.direction,
+            legs=[SignalLegDefinition.of(leg) for leg in spec.legs],
+            entry_time=schedule.entry_time,
+            exit_time=schedule.exit_time,
+            weekdays=sorted(schedule.weekdays),
+            exit_on_expiry=schedule.exit_on_expiry,
+            **cls._limit_values(spec.limits),
         )
 
 
 class StrategyResult(BaseModel):
     strategy_id: str = Field(description="Pass this to the other strategy tools.")
     name: str
+    kind: Literal["options", "signal"] = Field(
+        description="options: legs chosen relative to the market, entered on start_strategy "
+        "or a schedule. signal: legs entered and exited by alerts."
+    )
     mode: str = Field(description="sandbox: every order is paper traded.")
     locked: bool = Field(description="True while the kill switch is on.")
     scheduled_broker: str | None = Field(
         description="The broker its scheduled entries go through; null when it enters only "
         "on start_strategy."
     )
-    definition: StrategyDefinition
+    definition: StrategyDefinition | SignalStrategyDefinition
     created_at: datetime
     updated_at: datetime
     next_step: str | None = None
@@ -727,10 +864,13 @@ class StrategyResult(BaseModel):
         return cls(
             strategy_id=stored.id,
             name=stored.name,
+            kind="signal" if isinstance(stored.spec, SignalStrategySpec) else "options",
             mode=stored.mode,
             locked=stored.locked,
             scheduled_broker=stored.scheduled_broker,
-            definition=StrategyDefinition.of(stored.spec),
+            definition=SignalStrategyDefinition.of(stored.spec)
+            if isinstance(stored.spec, SignalStrategySpec)
+            else StrategyDefinition.of(stored.spec),
             created_at=stored.created_at.astimezone(EXCHANGE_TIMEZONE),
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
             next_step=next_step,
@@ -740,7 +880,10 @@ class StrategyResult(BaseModel):
 class StrategySummary(BaseModel):
     strategy_id: str
     name: str
-    underlying: str
+    kind: Literal["options", "signal"]
+    underlying: str = Field(
+        description="An options strategy's underlying; a signal strategy's contracts."
+    )
     legs: int
     horizon: Horizon
     locked: bool
@@ -752,7 +895,10 @@ class StrategySummary(BaseModel):
         return cls(
             strategy_id=stored.id,
             name=stored.name,
-            underlying=stored.spec.underlying,
+            kind="signal" if isinstance(stored.spec, SignalStrategySpec) else "options",
+            underlying=", ".join(leg.symbol for leg in stored.spec.legs)
+            if isinstance(stored.spec, SignalStrategySpec)
+            else stored.spec.underlying,
             legs=len(stored.spec.legs),
             horizon=stored.spec.horizon,
             locked=stored.locked,
@@ -852,6 +998,7 @@ class CommandResult(BaseModel):
     command_id: int
     command: CommandKind
     leg_id: str | None
+    action: SignalAction | None = Field(default=None, description="An alert's, for a signal.")
     status: CommandStatus
     outcome: str | None = Field(description="What happened, or why it was refused.")
     triggered_by: str
@@ -864,6 +1011,7 @@ class CommandResult(BaseModel):
             command_id=command.id,
             command=command.kind,
             leg_id=command.leg_id,
+            action=command.action,
             status=command.status,
             outcome=command.outcome,
             triggered_by=command.triggered_by,
@@ -1025,3 +1173,117 @@ class StrategyRunResult(RunSummary):
                 for event in detail.events
             ],
         )
+
+
+ALERT_PATH = "/webhooks/strategies"  # served by openticker-serve, outside /api/v1
+ALERT_NEXT_STEP = (
+    "Keep openticker-serve running and reachable at alert_url. TradingView (or any sender): "
+    'POST {"action": "long_entry", "leg_id": "leg1"}, with action long_entry, long_exit, '
+    "short_entry or short_exit, and leg_id, or symbol and exchange. ChartInk: set this URL as "
+    "the scan's webhook and put BUY, SELL, SHORT or COVER in the scan's name. "
+    "get_strategy_signals shows every alert and what came of it."
+)
+
+
+class WebhookResult(BaseModel):
+    strategy_id: str
+    name: str
+    alert_path: str = Field(
+        description="POST alerts here on openticker-serve. Carries the only copy of the "
+        "token: keep it secret, and rotate_strategy_webhook again if it leaks."
+    )
+    alert_url: str | None = Field(
+        description="The full URL, when OPENTICKER_PUBLIC_URL names where openticker-serve is "
+        "reachable from the internet (a tunnel or reverse proxy)."
+    )
+    broker: str
+    allowed_ips: list[str] = Field(description="Empty: any address may call it.")
+    created_at: datetime
+    next_step: str
+
+    @classmethod
+    def of(
+        cls,
+        stored: StoredStrategy,
+        webhook: StoredWebhook,
+        token: str,
+        public_url: str | None,
+        next_step: str,
+    ) -> "WebhookResult":
+        path = f"{ALERT_PATH}/{token}"
+        return cls(
+            strategy_id=stored.id,
+            name=stored.name,
+            alert_path=path,
+            alert_url=public_url.rstrip("/") + path if public_url else None,
+            broker=webhook.broker,
+            allowed_ips=list(webhook.allowed_ips),
+            created_at=webhook.created_at.astimezone(EXCHANGE_TIMEZONE),
+            next_step=next_step,
+        )
+
+
+class WebhookInfo(BaseModel):
+    broker: str
+    allowed_ips: list[str]
+    created_at: datetime
+
+
+class SignalCallResult(BaseModel):
+    received_at: datetime
+    client_ip: str | None
+    result: str = Field(
+        description="accepted (written as commands), ignored (outside its schedule), refused "
+        "(doesn't fit the strategy), locked (kill switch), forbidden (not in the allowlist)."
+    )
+    message: str
+    alert_format: str | None = Field(description="chartink or json.")
+    payload: str | None = Field(description="The body, with the token removed, capped.")
+    commands: list[CommandResult] = Field(description="What the runner did with each signal.")
+
+
+class StrategySignalsResult(BaseModel):
+    strategy_id: str
+    name: str
+    locked: bool = Field(description="True while the kill switch is on: alerts are refused.")
+    webhook: WebhookInfo | None = Field(description="Null when it has no alert URL.")
+    calls: list[SignalCallResult] = Field(description="Newest first.")
+
+    @classmethod
+    def of(cls, detail: SignalsDetail) -> "StrategySignalsResult":
+        webhook = detail.webhook
+        return cls(
+            strategy_id=detail.strategy.id,
+            name=detail.strategy.name,
+            locked=detail.strategy.locked,
+            webhook=None
+            if webhook is None
+            else WebhookInfo(
+                broker=webhook.broker,
+                allowed_ips=list(webhook.allowed_ips),
+                created_at=webhook.created_at.astimezone(EXCHANGE_TIMEZONE),
+            ),
+            calls=[
+                SignalCallResult(
+                    received_at=call.received_at.astimezone(EXCHANGE_TIMEZONE),
+                    client_ip=call.client_ip,
+                    result=call.result,
+                    message=call.message,
+                    alert_format=call.alert_format,
+                    payload=call.payload,
+                    commands=[
+                        CommandResult.of(detail.commands[i])
+                        for i in call.command_ids
+                        if i in detail.commands
+                    ],
+                )
+                for call in detail.calls
+            ],
+        )
+
+
+class AlertResult(BaseModel):
+    """The answer to an alert. Carries nothing the caller didn't send."""
+
+    status: str = Field(description="accepted, ignored or the refusal.")
+    message: str

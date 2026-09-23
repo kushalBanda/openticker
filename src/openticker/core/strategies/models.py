@@ -1,6 +1,8 @@
-"""Rule-based strategy definitions: legs chosen relative to the market, a
-schedule and strategy-wide limits. A definition names no contract; the legs
-are resolved to real contracts when a run starts (ADR 20 in docs/adr).
+"""Strategy definitions. An options strategy's legs are chosen relative to
+the market and resolved to real contracts when a run starts (ADR 20 in
+docs/adr). A signal strategy's legs name their contracts, and alerts enter
+and exit them (ADR 24 in docs/adr). Both carry a schedule and strategy-wide
+limits.
 
 Construction validates the shape; anything wrong raises
 `InvalidStrategyError` with a message an agent can act on.
@@ -19,6 +21,7 @@ MAX_LEGS = 10
 MAX_LOTS = 50
 MAX_STRIKE_OFFSET = 20
 WEEKDAYS = frozenset(range(5))  # Monday 0 to Friday 4
+CASH_EXCHANGES = frozenset({Exchange.NSE, Exchange.BSE})
 
 
 class InvalidStrategyError(ValueError):
@@ -30,6 +33,17 @@ class RelativeExpiry(StrEnum):
     NEXT_WEEK = "next_week"  # the one after it
     MONTHLY = "monthly"  # last expiry of the nearest month
     NEXT_MONTH = "next_month"  # last expiry of the month after
+
+
+class Direction(StrEnum):
+    """Which positions alerts may open."""
+
+    BOTH = "both"
+    LONG_ONLY = "long_only"
+    SHORT_ONLY = "short_only"
+
+    def allows(self, long: bool) -> bool:
+        return self is Direction.BOTH or (self is Direction.LONG_ONLY) == long
 
 
 class Horizon(StrEnum):
@@ -169,6 +183,94 @@ class OptionsStrategySpec:
                 f"intraday positions are squared off at {latest:%H:%M}; set exit_time no later "
                 "than that, or make the strategy positional"
             )
+
+
+@dataclass(frozen=True)
+class SignalLeg:
+    """A contract alerts trade, named outright, in units."""
+
+    symbol: str
+    exchange: Exchange
+    quantity: int  # units; a derivative's is a whole number of lots
+    accepts: Direction = Direction.BOTH  # which side alerts may hold it on
+    stop_loss: RiskValue | None = None
+    target: RiskValue | None = None
+    trailing: RiskValue | None = None
+
+    def __post_init__(self) -> None:
+        if not self.symbol.strip():
+            raise InvalidStrategyError("a signal leg names its symbol")
+        if self.quantity < 1:
+            raise InvalidStrategyError(f"quantity must be at least 1, got {self.quantity}")
+        if (
+            self.accepts.allows(long=False)
+            and self.target is not None
+            and self.target.percent
+            and self.target.value >= 100
+        ):
+            raise InvalidStrategyError(
+                f"{self.symbol}: a short's target in percent must be below 100: a price can't "
+                "fall further than to zero"
+            )
+        if (
+            self.accepts.allows(long=True)
+            and self.stop_loss is not None
+            and self.stop_loss.percent
+            and self.stop_loss.value >= 100
+        ):
+            raise InvalidStrategyError(
+                f"{self.symbol}: a long's stop loss in percent must be below 100: a price can't "
+                "fall further than to zero"
+            )
+
+
+@dataclass(frozen=True)
+class SignalStrategySpec:
+    """Alerts open and close its legs one at a time. The schedule is when
+    entries are accepted: from `entry_time` on `weekdays`, until `exit_time`,
+    which also closes whatever is held."""
+
+    legs: tuple[SignalLeg, ...]
+    horizon: Horizon
+    direction: Direction = Direction.BOTH
+    schedule: Schedule = field(default_factory=Schedule)
+    limits: StrategyLimits = field(default_factory=StrategyLimits)
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.legs) <= MAX_LEGS:
+            raise InvalidStrategyError(f"a strategy has 1 to {MAX_LEGS} legs, got {len(self.legs)}")
+        contracts = [(leg.exchange, leg.symbol.upper()) for leg in self.legs]
+        if len(set(contracts)) != len(contracts):
+            raise InvalidStrategyError("each leg trades a different contract")
+        for index, leg in enumerate(self.legs):
+            name = f"{leg_id(index)} ({leg.symbol})"
+            if not any(
+                leg.accepts.allows(long) and self.direction.allows(long) for long in (True, False)
+            ):
+                raise InvalidStrategyError(
+                    f"{name} accepts {leg.accepts} alerts, which a {self.direction} strategy "
+                    "never acts on; change the leg's accepts or the strategy's direction"
+                )
+            if (
+                self.horizon is Horizon.POSITIONAL
+                and leg.exchange in CASH_EXCHANGES
+                and leg.accepts.allows(long=False)
+                and self.direction.allows(long=False)
+            ):
+                raise InvalidStrategyError(
+                    f"{name}: shares can't be held short overnight; make the strategy "
+                    "intraday, or have the leg accept long_only alerts"
+                )
+        exit_time = self.schedule.exit_time
+        latest = _intraday_cutoff()
+        if self.horizon is Horizon.INTRADAY and exit_time is not None and exit_time > latest:
+            raise InvalidStrategyError(
+                f"intraday positions are squared off at {latest:%H:%M}; set exit_time no later "
+                "than that, or make the strategy positional"
+            )
+
+
+StrategySpec = OptionsStrategySpec | SignalStrategySpec
 
 
 def leg_id(index: int) -> str:

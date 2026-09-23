@@ -1,11 +1,14 @@
 """REST API: the MCP tools as HTTP routes, each a thin call into use_cases,
 returning the same result shapes. Every route under /api/v1 needs an API key
-in the `X-API-Key` header (ADR 17 in docs/adr).
+in the `X-API-Key` header (ADR 17 in docs/adr). Signal strategies' alert URLs,
+under /webhooks, are authenticated by the token in the URL instead (ADR 24).
 
 Routes are plain `def`: FastAPI runs them on its thread pool, which keeps the
 use cases sync (ADR 2 in docs/adr).
 """
 
+import logging
+import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from importlib.metadata import version
@@ -24,6 +27,9 @@ from openticker.adapters.brokers.registry import (
     require_broker,
 )
 from openticker.adapters.inbound.mcp_models import (
+    ALERT_NEXT_STEP,
+    ALERT_PATH,
+    AlertResult,
     AuditLogResult,
     BarsResult,
     CancelOrderResult,
@@ -40,6 +46,7 @@ from openticker.adapters.inbound.mcp_models import (
     QuoteResult,
     RiskCheckResult,
     SearchResult,
+    SignalStrategyDefinition,
     StrategiesResult,
     StrategyCommandResult,
     StrategyDefinition,
@@ -47,8 +54,10 @@ from openticker.adapters.inbound.mcp_models import (
     StrategyResult,
     StrategyRunResult,
     StrategyRunsResult,
+    StrategySignalsResult,
     StrategySummary,
     SyncResult,
+    WebhookResult,
 )
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
@@ -91,6 +100,7 @@ from openticker.use_cases.strategies.control import (
     UnknownRunError,
 )
 from openticker.use_cases.strategies.define import (
+    StrategyKindError,
     StrategyRunningError,
     UnknownStrategyError,
     create_strategy,
@@ -100,6 +110,7 @@ from openticker.use_cases.strategies.define import (
     preview_strategy,
     update_strategy,
 )
+from openticker.use_cases.strategies.signals import SignalResult, accept_signal
 from openticker.use_cases.sync_instruments import sync_instruments
 
 API_KEY_HEADER = "X-API-Key"
@@ -119,6 +130,7 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (StrategyRunningError, 409),
     (StrategyLockedError, 409),
     (StrategyStateError, 409),
+    (StrategyKindError, 409),
     (InvalidStrategyError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
@@ -178,6 +190,53 @@ class StrategyBody(BaseModel):
     definition: StrategyDefinition
 
 
+class SignalStrategyBody(BaseModel):
+    name: str = Field(description="Unique among your strategies.")
+    definition: SignalStrategyDefinition
+
+
+class WebhookBody(BaseModel):
+    broker: str
+    allowed_ips: list[str] = Field(
+        default=[], max_length=20, description="Addresses or CIDR ranges; empty allows any."
+    )
+
+
+# How an alert's outcome is answered. An ignored alert is a success: the
+# sender did nothing wrong, and a failure would only make it retry.
+_ALERT_STATUSES = {
+    SignalResult.ACCEPTED: 200,
+    SignalResult.IGNORED: 200,
+    SignalResult.REFUSED: 400,
+    SignalResult.LOCKED: 403,
+    SignalResult.FORBIDDEN: 403,
+    SignalResult.UNKNOWN: 404,
+    SignalResult.RATE_LIMITED: 429,
+}
+
+
+async def _raw_body(request: Request) -> bytes:
+    return await request.body()
+
+
+_ALERT_TOKEN = re.compile(re.escape(ALERT_PATH) + r"/[^/?\s\"]+")
+
+
+class HideAlertTokens(logging.Filter):
+    """Keeps alert URL tokens out of the server's access log: the path is the
+    credential (ADR 24 in docs/adr)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _ALERT_TOKEN.sub(ALERT_PATH + "/[token]", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = _ALERT_TOKEN.sub(ALERT_PATH + "/[token]", record.msg)
+        return True
+
+
 class PlaceOrderBody(BaseModel):
     broker: str
     symbol: str
@@ -222,6 +281,19 @@ def create_app(
     def health() -> HealthResult:
         """Unauthenticated: whether the server is up."""
         return HealthResult(status="ok", version=version("openticker"))
+
+    @app.post(ALERT_PATH + "/{token}")
+    def alert(
+        token: str, request: Request, body: Annotated[bytes, Depends(_raw_body)]
+    ) -> JSONResponse:
+        """A signal strategy's alert URL: no API key, the token is the credential."""
+        outcome = accept_signal(
+            token, request.client.host if request.client else None, body, clock()
+        )
+        return JSONResponse(
+            status_code=_ALERT_STATUSES[outcome.result],
+            content=AlertResult(status=outcome.result.value, message=outcome.message).model_dump(),
+        )
 
     api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 
@@ -454,6 +526,40 @@ def create_app(
         """Closes one leg; the run carries on with the others."""
         command = control.request_close_leg(strategy_id, leg_id, f"rest:{key.name}", clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
+
+    @api.post("/signal-strategies")
+    def new_signal_strategy(body: SignalStrategyBody) -> StrategyResult:
+        """Saves a strategy alerts drive; places nothing."""
+        stored = create_strategy(body.name, body.definition.to_spec(), clock())
+        return StrategyResult.of(
+            stored, "POST /api/v1/strategies/{strategy_id}/webhook gives it an alert URL."
+        )
+
+    @api.put("/signal-strategies/{strategy_id}")
+    def change_signal_strategy(strategy_id: str, body: SignalStrategyBody) -> StrategyResult:
+        return StrategyResult.of(
+            update_strategy(strategy_id, body.name, body.definition.to_spec(), clock())
+        )
+
+    @api.post("/strategies/{strategy_id}/webhook")
+    def rotate_webhook(strategy_id: str, body: WebhookBody) -> WebhookResult:
+        """A new alert URL; the old one stops working. The token is shown only now."""
+        stored, webhook, token = control.rotate_webhook(
+            strategy_id, require_broker(body.broker), body.allowed_ips, clock()
+        )
+        return WebhookResult.of(
+            stored, webhook, token, env.get("OPENTICKER_PUBLIC_URL"), ALERT_NEXT_STEP
+        )
+
+    @api.delete("/strategies/{strategy_id}/webhook")
+    def disable_webhook(strategy_id: str) -> StrategyResult:
+        return StrategyResult.of(control.disable_webhook(strategy_id))
+
+    @api.get("/strategies/{strategy_id}/signals")
+    def signals(
+        strategy_id: str, limit: Annotated[int, Query(ge=1, le=100)] = 20
+    ) -> StrategySignalsResult:
+        return StrategySignalsResult.of(control.get_signals(strategy_id, limit))
 
     @api.get("/strategies/{strategy_id}/runs")
     def runs(

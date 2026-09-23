@@ -27,6 +27,7 @@ from openticker.adapters.brokers.registry import (
     require_broker,
 )
 from openticker.adapters.inbound.mcp_models import (
+    ALERT_NEXT_STEP,
     AuditLogResult,
     BarsResult,
     CancelOrderResult,
@@ -43,6 +44,7 @@ from openticker.adapters.inbound.mcp_models import (
     QuoteResult,
     RiskCheckResult,
     SearchResult,
+    SignalStrategyDefinition,
     StrategiesResult,
     StrategyCommandResult,
     StrategyDefinition,
@@ -50,8 +52,10 @@ from openticker.adapters.inbound.mcp_models import (
     StrategyResult,
     StrategyRunResult,
     StrategyRunsResult,
+    StrategySignalsResult,
     StrategySummary,
     SyncResult,
+    WebhookResult,
 )
 from openticker.composition import (
     SandboxConfigError,
@@ -115,7 +119,11 @@ from openticker.use_cases.strategies.control import (
     StrategyStateError,
     UnknownRunError,
 )
-from openticker.use_cases.strategies.define import StrategyRunningError, UnknownStrategyError
+from openticker.use_cases.strategies.define import (
+    StrategyKindError,
+    StrategyRunningError,
+    UnknownStrategyError,
+)
 from openticker.use_cases.sync_instruments import sync_instruments as sync_instruments_use_case
 
 INSTRUCTIONS = """\
@@ -145,6 +153,11 @@ Typical flow:
    conversation. stop_strategy closes it; kill_strategy also locks it until
    release_kill_switch. get_strategy_runs and get_strategy_run show what
    happened. A running strategy can't be edited or deleted; stop it first.
+7. Signal strategies: create_signal_strategy saves one whose legs name their
+   contracts (stocks, futures, options); rotate_strategy_webhook gives it an
+   alert URL for TradingView or ChartInk alerts, served by openticker-serve.
+   Each alert enters or exits one leg long or short; get_strategy_signals
+   shows every alert and what came of it. kill_strategy refuses its alerts.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -229,6 +242,7 @@ _AGENT_FIXABLE_ERRORS = (
     DuplicateStrategyNameError,
     InvalidStrategyError,
     StrategyRunningError,
+    StrategyKindError,
     StrategyLockedError,
     StrategyStateError,
     UnknownRunError,
@@ -644,6 +658,9 @@ Definition = Annotated[
 _STRATEGY_NEXT_STEP = (
     "preview_strategy shows the contracts it would trade now; start_strategy enters it."
 )
+_SIGNAL_NEXT_STEP = (
+    "rotate_strategy_webhook gives it an alert URL; alerts to it enter and exit its legs."
+)
 _SCHEDULE_NEXT_STEP = (
     "openticker-serve enters it at its entry_time; get_strategy_runs shows each scheduled "
     "start and its outcome. Keep openticker-serve running."
@@ -684,6 +701,102 @@ def update_strategy(
     with _agent_facing_errors():
         stored = strategies.update_strategy(strategy_id, name, definition.to_spec(), clock())
     return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
+
+
+SignalDefinition = Annotated[
+    SignalStrategyDefinition,
+    Field(description="The whole strategy: its contracts, direction, schedule and limits."),
+]
+
+
+@mcp.tool(
+    title="Create signal strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def create_signal_strategy(name: StrategyName, definition: SignalDefinition) -> StrategyResult:
+    """Save a strategy alerts drive: 1 to 10 legs, each a contract named
+    outright (search_instruments finds it), which alerts enter and exit long
+    or short one at a time, with per-leg stops and targets, an optional entry
+    window and strategy-wide limits. Places nothing."""
+    with _agent_facing_errors():
+        stored = strategies.create_strategy(name, definition.to_spec(), clock())
+    return StrategyResult.of(stored, _SIGNAL_NEXT_STEP)
+
+
+@mcp.tool(
+    title="Update signal strategy",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def update_signal_strategy(
+    strategy_id: StrategyId, name: StrategyName, definition: SignalDefinition
+) -> StrategyResult:
+    """Replace a signal strategy's name and whole definition; get_strategy
+    returns the current one in the same shape. Its alert URL is kept."""
+    with _agent_facing_errors():
+        stored = strategies.update_strategy(strategy_id, name, definition.to_spec(), clock())
+    return StrategyResult.of(stored)
+
+
+@mcp.tool(
+    title="Rotate strategy webhook",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def rotate_strategy_webhook(
+    broker: Broker,
+    strategy_id: StrategyId,
+    allowed_ips: Annotated[
+        list[str],
+        Field(
+            max_length=20,
+            description="Addresses or CIDR ranges alerts may come from; empty allows any. "
+            "TradingView sends from 52.89.214.238, 34.212.75.30, 54.218.53.128, 52.32.178.7.",
+        ),
+    ] = [],  # noqa: B006 — pydantic copies it
+) -> WebhookResult:
+    """Give a signal strategy a new alert URL; the old one stops working. The
+    token in it is shown only now. Alerts' orders are paper traded, priced
+    through `broker`."""
+    with _agent_facing_errors():
+        stored, webhook, token = control.rotate_webhook(
+            strategy_id, require_broker(broker), allowed_ips, clock()
+        )
+    return WebhookResult.of(
+        stored, webhook, token, os.environ.get("OPENTICKER_PUBLIC_URL"), ALERT_NEXT_STEP
+    )
+
+
+@mcp.tool(
+    title="Disable strategy webhook",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def disable_strategy_webhook(strategy_id: StrategyId) -> StrategyResult:
+    """Stop a signal strategy's alert URL working. A run already open
+    carries on; stop_strategy ends it."""
+    with _agent_facing_errors():
+        stored = control.disable_webhook(strategy_id)
+    return StrategyResult.of(stored, "rotate_strategy_webhook gives it a new alert URL.")
+
+
+@mcp.tool(
+    title="Get strategy signals",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_strategy_signals(
+    strategy_id: StrategyId,
+    limit: Annotated[int, Field(ge=1, le=100, description="Most recent alerts to return.")] = 20,
+) -> StrategySignalsResult:
+    """A signal strategy's alert URL settings and its latest alerts: who sent
+    each, whether it was accepted, and what the runner did with it."""
+    with _agent_facing_errors():
+        return StrategySignalsResult.of(control.get_signals(strategy_id, limit))
 
 
 @mcp.tool(

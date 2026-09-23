@@ -142,7 +142,7 @@ class StrategyRow(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(index=True)  # unique among strategies not deleted
-    kind: Mapped[str]  # "options"; "signal" comes with alert strategies
+    kind: Mapped[str]  # "options" (ADR 20) or "signal" (ADR 24)
     definition: Mapped[str]
     mode: Mapped[str]  # "sandbox"; live trading has no design yet (ADR 6)
     locked: Mapped[bool]  # the kill switch
@@ -163,9 +163,12 @@ class StrategyCommandRow(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(index=True)
-    kind: Mapped[str]  # start, stop, kill, close_leg
-    leg_id: Mapped[str | None]  # close_leg only
-    broker: Mapped[str | None]  # start only
+    kind: Mapped[str]  # start, stop, kill, close_leg, signal
+    leg_id: Mapped[str | None]  # close_leg and signal only
+    broker: Mapped[str | None]  # start and signal only
+    # signal only: long_entry, long_exit, short_entry, short_exit (ADR 24 in
+    # docs/adr). Nullable, so it can be added to an existing table (ADR 18).
+    action: Mapped[str | None]
     triggered_by: Mapped[str]
     status: Mapped[str] = mapped_column(index=True)  # pending, done, refused
     outcome: Mapped[str | None]
@@ -225,3 +228,35 @@ class StrategyEventRow(Base):
     run_id: Mapped[str] = mapped_column(index=True)
     occurred_at: Mapped[datetime]  # UTC, stored naive
     message: Mapped[str]
+
+
+# Signal strategies' alert URLs and every call made to them (ADR 24 in docs/adr).
+
+
+class StrategyWebhookRow(Base):
+    """One alert URL per signal strategy. Only the token's SHA-256 is kept:
+    the URL is shown once, when it is made."""
+
+    __tablename__ = "strategy_webhooks"
+
+    strategy_id: Mapped[str] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(unique=True)
+    broker: Mapped[str]  # the broker its signals' orders are priced through
+    allowed_ips: Mapped[str]  # JSON list of addresses and CIDR ranges; empty allows any
+    created_at: Mapped[datetime]  # UTC, stored naive
+
+
+class StrategySignalRow(Base):
+    """Every call to a known alert URL, and what became of it."""
+
+    __tablename__ = "strategy_signals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    strategy_id: Mapped[str] = mapped_column(index=True)
+    received_at: Mapped[datetime] = mapped_column(index=True)  # UTC, stored naive
+    client_ip: Mapped[str | None]
+    result: Mapped[str]  # accepted, ignored, refused, locked, forbidden, rate_limited
+    message: Mapped[str]
+    alert_format: Mapped[str | None]  # chartink or json, once the body was read
+    payload: Mapped[str | None]  # the body, with the token and secrets removed, capped
+    command_ids: Mapped[str | None]  # JSON list: the signal commands it wrote

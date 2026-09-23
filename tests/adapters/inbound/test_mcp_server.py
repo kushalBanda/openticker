@@ -330,6 +330,7 @@ def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
     runs = mcp_server.get_strategy_runs(strategy_id=strategy_id)
     assert [(r.status, r.trigger) for r in runs.runs] == [("open", "mcp")]
     assert runs.commands[0].status == "done"
+    assert isinstance(created.definition, StrategyDefinition)
     with pytest.raises(ToolError, match="stop the strategy before editing"):
         mcp_server.update_strategy(
             strategy_id=strategy_id, name="renamed", definition=created.definition
@@ -401,3 +402,114 @@ def test_strategy_run_tools_turn_mistakes_into_agent_facing_errors() -> None:
         mcp_server.get_strategy_run(run_id="run_missing")
     with pytest.raises(ToolError, match="list_strategies"):
         mcp_server.start_strategy(broker="fake", strategy_id="stg_missing")
+
+
+SIGNAL_JSON = {
+    "horizon": "intraday",
+    "direction": "both",
+    "legs": [
+        {"symbol": "reliance", "exchange": "NSE", "quantity": 10, "accepts": "long_only"},
+        {
+            "symbol": "NIFTY22SEP262500CE",
+            "exchange": "NFO",
+            "quantity": 65,
+            "stop_loss": {"value": 20, "percent": True},
+        },
+    ],
+    "entry_time": "09:30",
+    "exit_time": "15:00",
+    "combined_stop_loss": 2000,
+}
+
+
+def test_signal_strategy_tools_give_an_alert_url_and_show_its_alerts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openticker.adapters.inbound.mcp_models import SignalStrategyDefinition
+    from openticker.use_cases.strategies.signals import accept_signal
+    from tests.fixtures.strategies import list_nifty_market
+
+    mcp_server.sync_instruments(broker="fake")
+    list_nifty_market()
+    monkeypatch.setenv("OPENTICKER_PUBLIC_URL", "https://alerts.example.org/")
+    definition = SignalStrategyDefinition.model_validate(SIGNAL_JSON)
+
+    created = mcp_server.create_signal_strategy(name="alerts", definition=definition)
+    fetched = mcp_server.get_strategy(strategy_id=created.strategy_id)
+    webhook = mcp_server.rotate_strategy_webhook(
+        broker="fake", strategy_id=created.strategy_id, allowed_ips=["52.89.214.238"]
+    )
+    token = webhook.alert_path.rsplit("/", 1)[1]
+    accept_signal(
+        token, "52.89.214.238", b'{"action": "long_entry", "leg_id": "leg1"}', TRADING_TIME
+    )
+    signals = mcp_server.get_strategy_signals(strategy_id=created.strategy_id)
+
+    assert created.kind == "signal" and "rotate_strategy_webhook" in (created.next_step or "")
+    assert fetched.definition == definition.model_copy(
+        update={
+            "legs": [
+                definition.legs[0].model_copy(update={"symbol": "RELIANCE"}),
+                definition.legs[1],
+            ]
+        }
+    )
+    assert webhook.alert_path.startswith("/webhooks/strategies/otw_")
+    assert webhook.alert_url == "https://alerts.example.org" + webhook.alert_path
+    assert webhook.allowed_ips == ["52.89.214.238/32"]
+    assert signals.webhook is not None and signals.webhook.broker == "fake"
+    assert [(c.result, c.commands[0].action) for c in signals.calls] == [("accepted", "long_entry")]
+    summary = mcp_server.list_strategies().strategies[0]
+    assert (summary.kind, summary.underlying) == ("signal", "RELIANCE, NIFTY22SEP262500CE")
+    assert mcp_server.disable_strategy_webhook(strategy_id=created.strategy_id).kind == "signal"
+    assert mcp_server.get_strategy_signals(strategy_id=created.strategy_id).webhook is None
+
+
+def test_signal_strategy_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import (
+        SignalStrategyDefinition,
+        StrategyDefinition,
+    )
+    from tests.fixtures.strategies import list_nifty_market
+
+    mcp_server.sync_instruments(broker="fake")
+    list_nifty_market()
+    signal = mcp_server.create_signal_strategy(
+        name="alerts", definition=SignalStrategyDefinition.model_validate(SIGNAL_JSON)
+    )
+    options = mcp_server.create_strategy(
+        name="straddle", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    )
+
+    with pytest.raises(ToolError, match="nothing to start"):
+        mcp_server.start_strategy(broker="fake", strategy_id=signal.strategy_id)
+    with pytest.raises(ToolError, match="is an options strategy"):
+        mcp_server.rotate_strategy_webhook(broker="fake", strategy_id=options.strategy_id)
+    with pytest.raises(ToolError, match="not an IP address"):
+        mcp_server.rotate_strategy_webhook(
+            broker="fake", strategy_id=signal.strategy_id, allowed_ips=["somewhere"]
+        )
+    with pytest.raises(ToolError, match="keeps its kind"):
+        mcp_server.update_signal_strategy(
+            strategy_id=options.strategy_id,
+            name="straddle",
+            definition=SignalStrategyDefinition.model_validate(SIGNAL_JSON),
+        )
+    with pytest.raises(ToolError, match="has no alert URL"):
+        mcp_server.disable_strategy_webhook(strategy_id=signal.strategy_id)
+    with pytest.raises(ToolError, match="not in the instrument master"):
+        mcp_server.create_signal_strategy(
+            name="unknown",
+            definition=SignalStrategyDefinition.model_validate(
+                {**SIGNAL_JSON, "legs": [{"symbol": "INFY", "exchange": "NSE", "quantity": 1}]}
+            ),
+        )
+
+
+def test_signal_strategy_schema_describes_every_field() -> None:
+    tool = next(tool for tool in _tools() if tool.name == "create_signal_strategy")
+    definitions = tool.input_schema["$defs"]
+
+    for model in ("SignalStrategyDefinition", "SignalLegDefinition"):
+        for name, schema in definitions[model]["properties"].items():
+            assert schema.get("description"), f"{model}.{name} has no description"

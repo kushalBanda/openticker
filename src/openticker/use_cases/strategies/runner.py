@@ -1,10 +1,12 @@
 """The strategy runner, called only by the daemon (ADR 21 in docs/adr).
 
 `start_scheduled` writes the starts a strategy's schedule asks for (ADR 22 in
-docs/adr). `process_commands` carries out what the MCP server, the REST API
-and the schedule asked for: start, stop, kill, close a leg. `step_runs` judges every open run at the
-latest live prices, each leg on its own rules and the whole run on the
-strategy's (ADR 19), and closes what those rules and the schedule say to close.
+docs/adr). `process_commands` carries out what the MCP server, the REST API,
+the schedule and alerts asked for: start, stop, kill, close a leg, and a
+signal strategy's entries and exits (ADR 24 in docs/adr). `step_runs` judges
+every open run at the latest live prices, each leg on its own rules and the
+whole run on the strategy's (ADR 19), and closes what those rules and the
+schedule say to close.
 
 Every order is recorded in `strategy_orders` before it is sent. A run's legs,
 ratchets and stop reason are saved as they change, so a restarted daemon
@@ -32,7 +34,13 @@ from openticker.core.risk.models import (
     StrategyRisk,
     StrategyStopReason,
 )
-from openticker.core.strategies.models import leg_id
+from openticker.core.strategies.models import (
+    LegSpec,
+    OptionsStrategySpec,
+    SignalLeg,
+    SignalStrategySpec,
+    leg_id,
+)
 from openticker.core.strategies.prices import PriceTimeouts, is_stale, watched_since
 from openticker.core.strategies.runs import (
     Command,
@@ -46,13 +54,14 @@ from openticker.core.strategies.runs import (
     product_for,
 )
 from openticker.core.strategies.schedule import entry_due, exit_due
+from openticker.core.strategies.signals import Move, signal_move
 from openticker.events.bus import EventPublisher
 from openticker.events.types import StrategyLegClosed, StrategyStarted, StrategyStopped
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Instrument, Product, Side, Tick
 from openticker.ports.sandbox_port import OrderSandbox
 from openticker.storage.sqlite import runs_repo, strategies_repo
 from openticker.storage.sqlite.instruments_repo import get_instrument
-from openticker.storage.sqlite.runs_repo import SCHEDULE_TRIGGER, RunOrder
+from openticker.storage.sqlite.runs_repo import SCHEDULE_TRIGGER, WEBHOOK_TRIGGER, RunOrder
 from openticker.storage.sqlite.strategies_repo import StoredStrategy, write_transaction
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.strategies.define import resolve_legs
@@ -134,6 +143,8 @@ def start_scheduled(context: RunnerContext, now: datetime) -> None:
     per entry: whatever becomes of it (a refusal, a strategy already running)
     is the command's answer, carried out with the other commands."""
     for stored in strategies_repo.list_scheduled():
+        if not isinstance(stored.spec, OptionsStrategySpec):
+            continue
         due = entry_due(stored.spec.schedule, stored.spec.exchange, context.calendar, now)
         if due is None:
             continue
@@ -178,6 +189,9 @@ def _carry_out(context: RunnerContext, command: Command, now: datetime) -> None:
     if command.kind is CommandKind.START:
         _start(context, command, now)
         return
+    if command.kind is CommandKind.SIGNAL:
+        _signal(context, command, now)
+        return
     with write_transaction() as session:
         run = runs_repo.active_run_of(session, command.strategy_id)
         leg = next((leg for leg in run.legs if leg.leg_id == command.leg_id), None) if run else None
@@ -209,11 +223,18 @@ def _start(context: RunnerContext, command: Command, now: datetime) -> None:
     refusal = _start_refusal(command, stored, now)
     sandbox = None
     resolved = None
-    if refusal is None and stored is not None and command.broker is not None:
+    if (
+        refusal is None
+        and stored is not None
+        and isinstance(stored.spec, OptionsStrategySpec)
+        and command.broker is not None
+    ):
         try:
             sandbox = context.sandbox(command.broker)
             _, _, resolved = resolve_legs(stored.spec, sandbox, now)
-            refusal = _closed_market(stored, resolved[0].instrument, context.calendar, now)
+            refusal = _closed_market(
+                product_for(stored.spec.horizon), resolved[0].instrument, context.calendar, now
+            )
             closing = exit_due(
                 stored.spec.schedule,
                 now,
@@ -288,7 +309,7 @@ def _start(context: RunnerContext, command: Command, now: datetime) -> None:
                     status=LegStatus.OPEN,
                     entry_price=price,
                     entered_at=now,
-                    risk=leg_risk(specs[leg.leg_id], price, leg.quantity),
+                    risk=leg_risk(specs[leg.leg_id], leg.side, price, leg.quantity),
                 ),
             )
             runs_repo.save_run(run)
@@ -331,22 +352,231 @@ def _start_refusal(command: Command, stored: StoredStrategy | None, now: datetim
         return "the strategy was deleted"
     if stored.locked:
         return "locked by its kill switch"
+    if isinstance(stored.spec, SignalStrategySpec):
+        return "a signal strategy enters on its alerts, not on a start"
     if command.broker is None:
         return "no broker named"
     return None
 
 
 def _closed_market(
-    stored: StoredStrategy, contract: Instrument, calendar: MarketCalendar, now: datetime
+    product: Product, contract: Instrument, calendar: MarketCalendar, now: datetime
 ) -> str | None:
     status = market_status(now, contract.exchange, calendar)
     if not status.is_open:
         opens = status.session.opens_at.strftime("%a %d %b %H:%M")
         return f"{contract.exchange} is closed ({status.closed_reason}); it next opens {opens} IST"
-    if product_for(stored.spec.horizon) is Product.MIS and not intraday_allowed(
-        now, contract.exchange, calendar
+    if product is Product.MIS and not intraday_allowed(now, contract.exchange, calendar):
+        return "past the intraday square-off; make the strategy positional, or enter tomorrow"
+    return None
+
+
+# Signals
+
+
+def _signal(context: RunnerContext, command: Command, now: datetime) -> None:
+    """One alert's entry or exit for one leg of a signal strategy. A signal
+    strategy has a run per trading day: the first entry opens it, and it
+    waits for more alerts while flat, until exit_time or the session's end.
+    An entry for a position already held, or an exit for one that isn't, is
+    done and does nothing; an entry against a position held the other way
+    closes it first."""
+    stored = strategies_repo.find_strategy(command.strategy_id)
+    refusal = _signal_refusal(command, stored, now)
+    if (
+        refusal is not None
+        or stored is None
+        or not isinstance(stored.spec, SignalStrategySpec)
+        or command.action is None
+        or command.leg_id is None
     ):
-        return "past the intraday square-off; start a positional strategy, or start tomorrow"
+        _settle(command, CommandStatus.REFUSED, refusal or "not a signal", now)
+        return
+    action, spec = command.action, stored.spec
+    defined = {leg_id(i): leg for i, leg in enumerate(spec.legs)}.get(command.leg_id)
+    if defined is None:
+        _settle(command, CommandStatus.REFUSED, f"{stored.name!r} has no {command.leg_id}", now)
+        return
+    run = runs_repo.find_active_run(stored.id)
+    if run is not None and run.status is RunStatus.STOPPING:
+        _settle(command, CommandStatus.REFUSED, f"run {run.id} is stopping", now)
+        return
+    held = _position(run, command.leg_id)
+    if held is not None and held.status is not LegStatus.OPEN:
+        _settle(
+            command,
+            CommandStatus.REFUSED,
+            f"{held.leg_id} is {held.status}; send the alert again once it settles",
+            now,
+        )
+        return
+    move, why = signal_move(action, held.side if held else None)
+    if move is Move.NONE:
+        _settle(command, CommandStatus.DONE, why, now)
+        return
+    if run is not None and held is not None:  # EXIT, or the first half of a FLIP
+        if move is Move.EXIT:
+            _settle(command, CommandStatus.DONE, f"{why}: {held.leg_id}", now)
+        run = _with_leg(run, replace(held, status=LegStatus.CLOSING, exit_reason="signal"))
+        runs_repo.save_run(run)
+        runs_repo.add_event(run.id, now, f"{held.leg_id}: closing, {action} alert")
+        _close_legs(context, run, now)
+        if move is Move.EXIT:
+            return
+        run = runs_repo.find_run(run.id)
+        if run is None or _leg(run, held.leg_id).status is not LegStatus.CLOSED:
+            _settle(
+                command,
+                CommandStatus.REFUSED,
+                f"{held.leg_id}'s exit has not filled, so no {action} was entered; its exit "
+                "is being retried",
+                now,
+            )
+            return
+    _enter_signal(context, command, stored, defined, run, why, now)
+
+
+def _enter_signal(
+    context: RunnerContext,
+    command: Command,
+    stored: StoredStrategy,
+    defined: SignalLeg,
+    run: Run | None,
+    why: str,
+    now: datetime,
+) -> None:
+    assert isinstance(stored.spec, SignalStrategySpec) and command.action and command.leg_id
+    product = product_for(stored.spec.horizon)
+    instrument = get_instrument(defined.symbol, defined.exchange.value)
+    refusal = (
+        f"{defined.symbol} is no longer in the instrument master; run sync_instruments"
+        if instrument is None
+        else _closed_market(product, instrument, context.calendar, now)
+    )
+    sandbox = None
+    if refusal is None:
+        try:
+            sandbox = context.sandbox(command.broker or "")
+        except Exception as exc:  # noqa: BLE001 — any failure to reach the broker is the answer
+            refusal = str(exc) or type(exc).__name__
+    if refusal is not None or sandbox is None:
+        _settle(command, CommandStatus.REFUSED, refusal or "no sandbox", now)
+        return
+    opened = run is None
+    run = run or Run(
+        id=runs_repo.new_run_id(),
+        strategy_id=stored.id,
+        broker=command.broker or "",
+        product=product,
+        status=RunStatus.OPEN,
+        trigger=WEBHOOK_TRIGGER,
+        started_at=now,
+        legs=(),
+    )
+    count = sum(1 for leg in run.legs if leg.defined_as == command.leg_id)
+    leg = RunLeg(
+        leg_id=command.leg_id if count == 0 else f"{command.leg_id}.{count + 1}",
+        symbol=defined.symbol,
+        exchange=defined.exchange,
+        side=command.action.side,
+        quantity=defined.quantity,
+        status=LegStatus.PENDING,
+        spec_leg=command.leg_id,
+    )
+    run = replace(run, legs=(*run.legs, leg))
+    # The pending leg and the command's answer are written together: a daemon
+    # that dies before the order is answered reconciles the leg, and never
+    # carries out the alert twice.
+    with write_transaction() as session:
+        if opened:
+            runs_repo.insert_run(session, run)
+        else:
+            runs_repo.update_run(session, run)
+        runs_repo.settle_command(
+            session, command.id, CommandStatus.DONE, f"{why}: {leg.leg_id}", now
+        )
+    if opened:
+        runs_repo.add_event(run.id, now, f"opened by an alert for {command.leg_id}")
+    result = _place(context, sandbox, run, leg, "entry", leg.side, leg.quantity, now)
+    if result.status is OrderStatus.FILLED and result.fill_price is not None:
+        price = result.fill_price
+        entered = replace(
+            leg,
+            status=LegStatus.OPEN,
+            entry_price=price,
+            entered_at=now,
+            risk=leg_risk(defined, leg.side, price, leg.quantity),
+        )
+        runs_repo.add_event(run.id, now, f"{leg.leg_id}: {_filled(leg, price)}, {command.action}")
+    else:
+        reason = result.reason or result.status.value
+        entered = replace(leg, status=LegStatus.FAILED, exit_reason=reason)
+        runs_repo.add_event(run.id, now, f"{leg.leg_id}: entry failed: {reason}")
+    run = _with_leg(run, entered)
+    runs_repo.save_run(run)
+    if opened and entered.status is LegStatus.OPEN:
+        context.events.publish(
+            StrategyStarted(
+                strategy_id=stored.id,
+                run_id=run.id,
+                name=stored.name,
+                legs=_filled(entered, entered.entry_price or 0.0),
+                triggered_by=WEBHOOK_TRIGGER,
+            )
+        )
+
+
+def _signal_refusal(command: Command, stored: StoredStrategy | None, now: datetime) -> str | None:
+    if now - command.created_at > START_TIMEOUT:
+        return "expired: openticker-serve was not running when it arrived"
+    if stored is None:
+        return "the strategy was deleted"
+    if stored.locked:
+        return "locked by its kill switch"
+    if not isinstance(stored.spec, SignalStrategySpec):
+        return "not a signal strategy"
+    return None
+
+
+def _position(run: Run | None, defined: str) -> RunLeg | None:
+    """The run's position on a defined leg: not yet closed, the latest."""
+    if run is None:
+        return None
+    return next(
+        (
+            leg
+            for leg in reversed(run.legs)
+            if leg.defined_as == defined
+            and leg.status in (LegStatus.PENDING, LegStatus.OPEN, LegStatus.CLOSING)
+        ),
+        None,
+    )
+
+
+def _settle(command: Command, status: CommandStatus, outcome: str, now: datetime) -> None:
+    with write_transaction() as session:
+        runs_repo.settle_command(session, command.id, status, outcome, now)
+
+
+def _waits_for_signals(run: Run) -> bool:
+    """A signal run stays open while flat, for the day's next alert."""
+    return run.trigger == WEBHOOK_TRIGGER and run.status is RunStatus.OPEN
+
+
+def _day_over(
+    context: RunnerContext, run: Run, stored: StoredStrategy | None, now: datetime
+) -> tuple[StrategyStopReason, str] | None:
+    """Why a flat signal run ends now: its exit_time, or its session's close."""
+    if stored is None or not isinstance(stored.spec, SignalStrategySpec):
+        return StrategyStopReason.MANUAL, "the strategy was deleted"
+    exchange = run.legs[0].exchange if run.legs else stored.spec.legs[0].exchange
+    closing = exit_due(stored.spec.schedule, run.started_at, set(), exchange, context.calendar, now)
+    if closing is not None:
+        return closing
+    started = run.started_at.astimezone(EXCHANGE_TIMEZONE).date()
+    hours = session_hours(started, exchange, context.calendar)
+    if hours is None or now >= hours.closes_at:
+        return StrategyStopReason.SCHEDULE, "the session ended"
     return None
 
 
@@ -360,6 +590,11 @@ def _step(context: RunnerContext, run: Run, now: datetime) -> None:
         return
     held = [leg for leg in run.legs if leg.is_open]
     if not held:
+        if _waits_for_signals(run):
+            over = _day_over(context, run, strategies_repo.find_strategy(run.strategy_id), now)
+            if over is None:
+                return
+            run = _stopping(run, *over, now)
         _close_legs(context, run, now)  # ends it
         return
     if run.product is Product.MIS and not intraday_allowed(now, held[0].exchange, context.calendar):
@@ -516,7 +751,9 @@ def _close_legs(context: RunnerContext, run: Run, now: datetime) -> None:
         for leg in closing:
             run = _with_leg(run, _exit(context, sandbox, run, leg, held, now))
             runs_repo.save_run(run)
-    if not any(leg.is_open or leg.status is LegStatus.PENDING for leg in run.legs):
+    if not _waits_for_signals(run) and not any(
+        leg.is_open or leg.status is LegStatus.PENDING for leg in run.legs
+    ):
         _end(context, run, now)
 
 
@@ -596,7 +833,8 @@ def _reconcile(context: RunnerContext, run: Run, now: datetime) -> Run:
         return run
     runs_repo.save_run(run)
     failed = [leg.leg_id for leg in pending if _leg(run, leg.leg_id).status is LegStatus.FAILED]
-    if failed and run.status is RunStatus.OPEN:
+    # A signal run carries on past a failed entry, as it does when placing one.
+    if failed and run.status is RunStatus.OPEN and not _waits_for_signals(run):
         run = _stopping(
             run, StrategyStopReason.ERROR, f"{', '.join(failed)} could not be entered", now
         )
@@ -637,8 +875,9 @@ def _entered(run: Run, leg: RunLeg, placed: Order | None, now: datetime) -> RunL
         return replace(leg, status=LegStatus.FAILED, exit_reason=reason)
     price = placed.fill_price
     stored = strategies_repo.find_strategy(run.strategy_id)
-    specs = {leg_id(i): spec for i, spec in enumerate(stored.spec.legs)} if stored else {}
-    spec = specs.get(leg.leg_id)
+    defined: tuple[LegSpec | SignalLeg, ...] = stored.spec.legs if stored else ()
+    specs = {leg_id(i): spec for i, spec in enumerate(defined)}
+    spec = specs.get(leg.defined_as)
     stopping = run.status is RunStatus.STOPPING
     runs_repo.add_event(run.id, now, f"{leg.leg_id}: found filled, {_filled(leg, price)}")
     return replace(
@@ -647,7 +886,7 @@ def _entered(run: Run, leg: RunLeg, placed: Order | None, now: datetime) -> RunL
         entry_price=price,
         entered_at=placed.placed_at,
         exit_reason=run.stop_reason.value if stopping and run.stop_reason else None,
-        risk=leg_risk(spec, price, leg.quantity) if spec else None,
+        risk=leg_risk(spec, leg.side, price, leg.quantity) if spec else None,
     )
 
 

@@ -19,7 +19,7 @@ SOLD = LegSpec(
 
 
 def test_a_sold_legs_stop_is_above_its_fill_and_target_below() -> None:
-    risk = leg_risk(SOLD, 200.0, 65)
+    risk = leg_risk(SOLD, SOLD.side, 200.0, 65)
 
     assert (risk.initial_sl, risk.current_sl, risk.target) == (260.0, 260.0, 180.0)
     assert risk.trailing is not None
@@ -34,7 +34,7 @@ def test_a_sold_legs_stop_is_above_its_fill_and_target_below() -> None:
 def test_a_bought_legs_stop_is_below_its_fill_and_target_above() -> None:
     bought = replace(SOLD, side=Side.BUY, stop_loss=RiskValue(15.0, percent=False))
 
-    risk = leg_risk(bought, 200.0, 65)
+    risk = leg_risk(bought, bought.side, 200.0, 65)
 
     assert (risk.initial_sl, risk.target) == (185.0, 220.0)
 
@@ -42,13 +42,13 @@ def test_a_bought_legs_stop_is_below_its_fill_and_target_above() -> None:
 def test_a_stop_that_would_sit_below_zero_is_left_unset() -> None:
     bought = replace(SOLD, side=Side.BUY, stop_loss=RiskValue(50.0, percent=False), target=None)
 
-    assert leg_risk(bought, 40.0, 65).initial_sl is None
+    assert leg_risk(bought, bought.side, 40.0, 65).initial_sl is None
 
 
 def test_unset_rules_stay_unset() -> None:
     plain = LegSpec(Side.SELL, 1, InstrumentType.PE, RelativeExpiry.WEEKLY)
 
-    risk = leg_risk(plain, 100.0, 65)
+    risk = leg_risk(plain, plain.side, 100.0, 65)
 
     assert (risk.initial_sl, risk.target, risk.trailing) == (None, None, None)
 

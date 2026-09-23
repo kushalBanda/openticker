@@ -4,12 +4,15 @@ from datetime import UTC, date, datetime, time
 
 from openticker.core.risk.models import LockMode, ProfitLock, StrategyLimits
 from openticker.core.strategies.models import (
+    Direction,
     Horizon,
     LegSpec,
     OptionsStrategySpec,
     RelativeExpiry,
     RiskValue,
     Schedule,
+    SignalLeg,
+    SignalStrategySpec,
     StrikeSelector,
 )
 from openticker.ports.models import Exchange, InstrumentType, Side
@@ -74,6 +77,32 @@ EVERYTHING = OptionsStrategySpec(
         stops_to_entry_on_leg_stop=True,
         daily_loss_limit=6000.0,
     ),
+)
+
+
+# A signal strategy with every field set.
+SIGNAL_EVERYTHING = SignalStrategySpec(
+    legs=(
+        SignalLeg(
+            "RELIANCE",
+            Exchange.NSE,
+            10,
+            accepts=Direction.LONG_ONLY,
+            stop_loss=RiskValue(2.0, percent=True),
+            target=RiskValue(40.0, percent=False),
+            trailing=RiskValue(1.5, percent=True),
+        ),
+        SignalLeg("NIFTY29SEP26FUT", Exchange.NFO, 130),
+    ),
+    horizon=Horizon.POSITIONAL,
+    direction=Direction.BOTH,
+    schedule=Schedule(
+        entry_time=time(9, 30),
+        exit_time=time(15, 10),
+        weekdays=frozenset({0, 2, 4}),
+        exit_on_expiry=False,
+    ),
+    limits=EVERYTHING.limits,
 )
 
 

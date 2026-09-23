@@ -2,6 +2,7 @@ import pytest
 
 from openticker.adapters.inbound.daemon.main import (
     BindConfigError,
+    _log_config,
     is_loopback,
     parse_bind,
     run,
@@ -49,3 +50,11 @@ def test_keys_commands_fail_with_a_message(capsys: pytest.CaptureFixture[str]) -
 
     assert revoked.value.code == 1
     assert "no active API key named 'nobody'" in capsys.readouterr().err
+
+
+def test_every_log_handler_hides_alert_tokens() -> None:
+    config = _log_config()
+
+    assert config["handlers"] and all(
+        "hide_alert_tokens" in handler["filters"] for handler in config["handlers"].values()
+    )
