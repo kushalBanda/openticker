@@ -15,7 +15,7 @@ import httpx
 
 from openticker.adapters.brokers.zerodha.auth import KITE_BASE_URL
 from openticker.ports.errors import BrokerError, BrokerRateLimitError, BrokerSessionError
-from openticker.ports.models import Bar, Instrument, Interval, Quote
+from openticker.ports.models import Bar, DepthLevel, Instrument, Interval, MarketDepth, Quote
 
 _IST = ZoneInfo("Asia/Kolkata")
 
@@ -57,12 +57,22 @@ MAX_QUOTES_PER_REQUEST = 500
 
 
 def fetch_quote(api_key: str, access_token: str, instrument: Instrument) -> Quote:
+    return _to_quote(instrument, _full_quote(api_key, access_token, instrument))
+
+
+def fetch_depth(api_key: str, access_token: str, instrument: Instrument) -> MarketDepth:
+    """The same /quote call as `fetch_quote`: Kite's full quote carries the
+    five best levels of each side."""
+    return _to_depth(instrument, _full_quote(api_key, access_token, instrument))
+
+
+def _full_quote(api_key: str, access_token: str, instrument: Instrument) -> dict[str, Any]:
     key = _quote_key(instrument)
     payload = _get(api_key, access_token, "/quote", params={"i": key})
     data: dict[str, Any] | None = payload["data"].get(key)
     if data is None:
         raise KiteApiError(f"Kite returned no quote for {key}")
-    return _to_quote(instrument, data)
+    return data
 
 
 def fetch_quotes(api_key: str, access_token: str, instruments: Sequence[Instrument]) -> list[Quote]:
@@ -89,8 +99,8 @@ def _to_quote(instrument: Instrument, data: dict[str, Any]) -> Quote:
     open_interest = data.get("oi")
     volume = data.get("volume")
     ohlc: dict[str, Any] = data.get("ohlc") or {}
-    depth: dict[str, list[dict[str, Any]]] = data.get("depth") or {}
-    buy, sell = _top(depth.get("buy")), _top(depth.get("sell"))
+    bids, asks = _book(data)
+    best_bid, best_ask = bids[0] if bids else None, asks[0] if asks else None
     return Quote(
         instrument=instrument,
         last_price=float(data["last_price"]),
@@ -98,20 +108,63 @@ def _to_quote(instrument: Instrument, data: dict[str, Any]) -> Quote:
         open_interest=int(open_interest) if open_interest is not None else None,
         day_high=_price(ohlc.get("high")),
         day_low=_price(ohlc.get("low")),
-        bid=_price(buy.get("price")),
-        ask=_price(sell.get("price")),
-        bid_quantity=int(buy["quantity"]) if _price(buy.get("price")) else None,
-        ask_quantity=int(sell["quantity"]) if _price(sell.get("price")) else None,
+        bid=best_bid.price if best_bid else None,
+        ask=best_ask.price if best_ask else None,
+        bid_quantity=best_bid.quantity if best_bid else None,
+        ask_quantity=best_ask.quantity if best_ask else None,
         open=_price(ohlc.get("open")),
         close=_price(ohlc.get("close")),
         volume=int(volume) if volume is not None else None,
     )
 
 
-def _top(levels: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """The best level of one side of the book. Kite fills empty levels with
-    price 0, which `_price` reads as none."""
-    return levels[0] if levels else {}
+def _to_depth(instrument: Instrument, data: dict[str, Any]) -> MarketDepth:
+    ohlc: dict[str, Any] = data.get("ohlc") or {}
+    bids, asks = _book(data)
+    return MarketDepth(
+        instrument=instrument,
+        as_of=_quote_time(data),
+        last_price=float(data["last_price"]),
+        last_quantity=_count(data.get("last_quantity")),
+        bids=bids,
+        asks=asks,
+        total_buy_quantity=int(data.get("buy_quantity") or 0),
+        total_sell_quantity=int(data.get("sell_quantity") or 0),
+        open=_price(ohlc.get("open")),
+        high=_price(ohlc.get("high")),
+        low=_price(ohlc.get("low")),
+        close=_price(ohlc.get("close")),
+        volume=_count(data.get("volume")),
+        open_interest=_count(data.get("oi")),
+    )
+
+
+# Levels read per side of the book, as openalgo reads them; Kite's /quote sends five.
+DEPTH_LEVELS = 5
+
+
+def _book(data: dict[str, Any]) -> tuple[tuple[DepthLevel, ...], tuple[DepthLevel, ...]]:
+    """Bids and asks, best first, as Kite orders them. The one reading of the
+    book that quotes (best bid and ask) and depth both use."""
+    depth: dict[str, list[dict[str, Any]]] = data.get("depth") or {}
+    return _levels(depth.get("buy")), _levels(depth.get("sell"))
+
+
+def _levels(levels: list[dict[str, Any]] | None) -> tuple[DepthLevel, ...]:
+    """Kite pads empty levels with price 0; those are left out."""
+    return tuple(
+        DepthLevel(
+            price=float(level["price"]),
+            quantity=int(level.get("quantity") or 0),
+            orders=int(level.get("orders") or 0),
+        )
+        for level in (levels or [])[:DEPTH_LEVELS]
+        if level.get("price")
+    )
+
+
+def _count(value: Any) -> int | None:
+    return int(value) if value is not None else None
 
 
 def _price(value: Any) -> float | None:

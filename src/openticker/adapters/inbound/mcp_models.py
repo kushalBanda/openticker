@@ -66,11 +66,13 @@ from openticker.core.strategies.signals import SignalAction
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
+    DepthLevel,
     Exchange,
     Funds,
     Instrument,
     InstrumentType,
     Interval,
+    MarketDepth,
     Position,
     Product,
     Quote,
@@ -180,6 +182,58 @@ class QuoteResult(BaseModel):
             prev_close=quote.close,
             volume=quote.volume,
             open_interest=quote.open_interest,
+        )
+
+
+class DepthLevelResult(BaseModel):
+    price: float
+    quantity: int = Field(description="Units waiting at this price.")
+    orders: int = Field(description="Orders making up that quantity.")
+
+    @classmethod
+    def of(cls, level: DepthLevel) -> "DepthLevelResult":
+        return cls(price=level.price, quantity=level.quantity, orders=level.orders)
+
+
+class MarketDepthResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    as_of: datetime = Field(description="Time of the last trade, exchange-local.")
+    last_price: float
+    last_quantity: int | None = Field(description="Units in the last trade.")
+    bids: list[DepthLevelResult] = Field(
+        description="Buyers waiting, best (highest) first; up to 5, empty levels left out."
+    )
+    asks: list[DepthLevelResult] = Field(
+        description="Sellers waiting, best (lowest) first; up to 5, empty levels left out."
+    )
+    total_buy_quantity: int = Field(description="Units buyers are waiting for, whole book.")
+    total_sell_quantity: int = Field(description="Units sellers are offering, whole book.")
+    open: float | None = Field(description="Today's open; None before the first trade.")
+    high: float | None = Field(description="Today's high.")
+    low: float | None = Field(description="Today's low.")
+    prev_close: float | None = Field(description="The previous session's close.")
+    volume: int | None = Field(description="Units traded today.")
+    open_interest: int | None = Field(description="Futures and options only.")
+
+    @classmethod
+    def of(cls, depth: MarketDepth) -> "MarketDepthResult":
+        return cls(
+            symbol=depth.instrument.symbol,
+            exchange=depth.instrument.exchange,
+            as_of=depth.as_of.astimezone(EXCHANGE_TIMEZONE),
+            last_price=depth.last_price,
+            last_quantity=depth.last_quantity,
+            bids=[DepthLevelResult.of(level) for level in depth.bids],
+            asks=[DepthLevelResult.of(level) for level in depth.asks],
+            total_buy_quantity=depth.total_buy_quantity,
+            total_sell_quantity=depth.total_sell_quantity,
+            open=depth.open,
+            high=depth.high,
+            low=depth.low,
+            prev_close=depth.close,
+            volume=depth.volume,
+            open_interest=depth.open_interest,
         )
 
 

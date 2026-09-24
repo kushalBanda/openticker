@@ -40,6 +40,7 @@ from openticker.adapters.inbound.mcp_models import (
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
+    MarketDepthResult,
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
@@ -101,6 +102,7 @@ from openticker.use_cases.evaluate_risk import evaluate_risk
 from openticker.use_cases.get_audit_log import get_audit_log
 from openticker.use_cases.get_funds import get_funds
 from openticker.use_cases.get_historical_bars import get_historical_bars
+from openticker.use_cases.get_market_depth import get_market_depth
 from openticker.use_cases.get_market_status import get_market_status
 from openticker.use_cases.get_option_chain import NoOptionsError, get_option_chain
 from openticker.use_cases.get_order_status import get_order_status
@@ -208,13 +210,15 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
 
-# What a hosted script's key reaches (ADR 25 in docs/adr): prices, and placing,
-# reading, changing and cancelling orders. Never broker login, strategies or scripts.
+# What a hosted script's key reaches (ADR 25 in docs/adr): prices and market depth,
+# and placing, reading, changing and cancelling orders. Never broker login,
+# strategies or scripts.
 _SCRIPT_ROUTES = frozenset(
     {
         ("GET", "/api/v1/instruments"),
         ("GET", "/api/v1/quote"),
         ("POST", "/api/v1/quotes"),
+        ("GET", "/api/v1/depth"),
         ("GET", "/api/v1/bars"),
         ("GET", "/api/v1/option-chain"),
         ("GET", "/api/v1/market-status"),
@@ -432,6 +436,10 @@ def create_app(
     @api.get("/quote")
     def quote(broker: Broker, symbol: Symbol, exchange: ExchangeQuery) -> QuoteResult:
         return QuoteResult.of(get_quote(get_adapter(broker), symbol, exchange.value))
+
+    @api.get("/depth")
+    def depth(broker: Broker, symbol: Symbol, exchange: ExchangeQuery) -> MarketDepthResult:
+        return MarketDepthResult.of(get_market_depth(get_adapter(broker), symbol, exchange.value))
 
     @api.post("/quotes")
     def quotes(body: QuotesBody) -> QuotesResult:

@@ -29,6 +29,7 @@ ROUTE_FOR_TOOL = {
     "search_instruments": ("GET", "/api/v1/instruments"),
     "get_quote": ("GET", "/api/v1/quote"),
     "get_quotes": ("POST", "/api/v1/quotes"),
+    "get_market_depth": ("GET", "/api/v1/depth"),
     "get_historical_bars": ("GET", "/api/v1/bars"),
     "get_option_chain": ("GET", "/api/v1/option-chain"),
     "place_order": ("POST", "/api/v1/orders"),
@@ -434,6 +435,7 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/instruments"),
     ("GET", "/api/v1/quote"),
     ("POST", "/api/v1/quotes"),
+    ("GET", "/api/v1/depth"),
     ("GET", "/api/v1/bars"),
     ("GET", "/api/v1/option-chain"),
     ("GET", "/api/v1/market-status"),
@@ -585,3 +587,18 @@ def test_quotes_route_lists_what_it_could_not_quote(client: TestClient) -> None:
     assert [(m["symbol"], m["exchange"]) for m in ok["missing"]] == [("NOPE", "NSE")]
     assert none_known.status_code == 404
     assert too_many.status_code == 422
+
+
+def test_depth_route_matches_the_tool(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    params = {"broker": "fake", "symbol": "RELIANCE", "exchange": "NSE"}
+
+    depth = client.get("/api/v1/depth", params=params).json()
+    unknown = client.get("/api/v1/depth", params={**params, "symbol": "NOPE"})
+
+    assert [(b["price"], b["quantity"], b["orders"]) for b in depth["bids"]] == [
+        (FAKE_LAST_PRICE - 0.05, 10, 2),
+        (FAKE_LAST_PRICE - 0.1, 40, 3),
+    ]
+    assert (depth["total_buy_quantity"], depth["total_sell_quantity"]) == (900, 700)
+    assert unknown.status_code == 404

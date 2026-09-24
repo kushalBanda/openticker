@@ -37,6 +37,7 @@ from openticker.adapters.inbound.mcp_models import (
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
+    MarketDepthResult,
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
@@ -115,6 +116,9 @@ from openticker.use_cases.get_funds import get_funds as get_funds_use_case
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
 )
+from openticker.use_cases.get_market_depth import (
+    get_market_depth as get_market_depth_use_case,
+)
 from openticker.use_cases.get_market_status import (
     get_market_status as get_market_status_use_case,
 )
@@ -163,7 +167,7 @@ Typical flow:
    "reconnect" error means repeat this step.
 2. sync_instruments once per day (instrument lists change with every expiry).
 3. search_instruments to find the exact symbol, then get_quote (get_quotes for up
-   to 50 at once) / get_historical_bars.
+   to 50 at once; get_market_depth for the order book) / get_historical_bars.
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
    strikes, prices, IV and Greeks around at-the-money.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
@@ -450,6 +454,21 @@ def get_quotes(
             get_adapter(broker), [(item.symbol, item.exchange.value) for item in instruments]
         )
     return QuotesResult.of(lookup)
+
+
+@mcp.tool(
+    title="Get market depth",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_market_depth(broker: Broker, symbol: Symbol, exchange: ExchangeParam) -> MarketDepthResult:
+    """The order book for one instrument, live from the broker: the five best
+    bids and asks with their quantity and number of orders, total quantity
+    waiting on each side, and the day's prices, volume and open interest.
+    Shows whether an option or stock is liquid enough to trade before
+    placing an order."""
+    with _agent_facing_errors():
+        depth = get_market_depth_use_case(get_adapter(broker), symbol, exchange.value)
+    return MarketDepthResult.of(depth)
 
 
 @mcp.tool(

@@ -1,4 +1,5 @@
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -270,3 +271,12 @@ def test_open_positions_lists_every_non_zero_position_without_prices() -> None:
     [position] = sandbox.open_positions()
 
     assert (position.product, position.quantity, position.last_price) == (Product.CNC, 5, None)
+
+
+def test_market_depth_comes_from_the_real_broker() -> None:
+    market = PricedBroker()
+
+    passed = _sandbox(market).get_market_depth(FAKE_INSTRUMENT)
+    direct = market.get_market_depth(FAKE_INSTRUMENT)
+
+    assert replace(passed, as_of=direct.as_of) == direct

@@ -7,10 +7,12 @@ from openticker.core.orders.models import Order, OrderChanges, OrderRequest, Ord
 from openticker.ports.models import (
     Bar,
     Credentials,
+    DepthLevel,
     Exchange,
     Funds,
     Instrument,
     InstrumentType,
+    MarketDepth,
     Position,
     Quote,
 )
@@ -54,6 +56,28 @@ class FakeBrokerPort:
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return [self.get_quote(instrument) for instrument in instruments]
+
+    def get_market_depth(self, instrument: Instrument) -> MarketDepth:
+        """Two bids and one ask around FAKE_LAST_PRICE."""
+        return MarketDepth(
+            instrument=instrument,
+            as_of=datetime.now(UTC),
+            last_price=FAKE_LAST_PRICE,
+            last_quantity=5,
+            bids=(
+                DepthLevel(FAKE_LAST_PRICE - 0.05, 10, 2),
+                DepthLevel(FAKE_LAST_PRICE - 0.1, 40, 3),
+            ),
+            asks=(DepthLevel(FAKE_LAST_PRICE + 0.05, 25, 1),),
+            total_buy_quantity=900,
+            total_sell_quantity=700,
+            open=None,
+            high=None,
+            low=None,
+            close=None,
+            volume=None,
+            open_interest=None,
+        )
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

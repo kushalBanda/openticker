@@ -233,3 +233,70 @@ def test_fetch_quote_carries_the_best_bid_and_ask_and_the_day(
     assert (quote.bid, quote.ask) == (1374.5, None)  # Kite pads an empty side with price 0
     assert (quote.bid_quantity, quote.ask_quantity) == (12, None)
     assert (quote.open, quote.close, quote.volume) == (1360.0, 1358.0, 5_120_334)
+
+
+def test_fetch_depth_drops_empty_levels_and_keeps_the_whole_book_totals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty = {"price": 0, "quantity": 0, "orders": 0}
+    client = _install(
+        monkeypatch,
+        [
+            _ok(
+                {
+                    "NSE:RELIANCE": {
+                        "last_price": 1374.6,
+                        "last_quantity": 7,
+                        "last_trade_time": "2026-09-18 15:29:59",
+                        "buy_quantity": 50_000,
+                        "sell_quantity": 42_000,
+                        "volume": 5_120_334,
+                        "ohlc": {"open": 1360.0, "high": 1380.0, "low": 1355.5, "close": 1358.0},
+                        "depth": {
+                            "buy": [
+                                {"price": 1374.5, "quantity": 12, "orders": 3},
+                                {"price": 1374.4, "quantity": 30, "orders": 5},
+                                empty,
+                                empty,
+                                empty,
+                            ],
+                            "sell": [{"price": 1374.7, "quantity": 9, "orders": 1}] + [empty] * 4,
+                        },
+                    }
+                }
+            )
+        ],
+    )
+
+    depth = market_data.fetch_depth("key", "token", FAKE_INSTRUMENT)
+
+    assert [(level.price, level.quantity, level.orders) for level in depth.bids] == [
+        (1374.5, 12, 3),
+        (1374.4, 30, 5),
+    ]
+    assert [level.price for level in depth.asks] == [1374.7]
+    assert (depth.total_buy_quantity, depth.total_sell_quantity) == (50_000, 42_000)
+    assert (depth.last_price, depth.last_quantity, depth.close, depth.volume) == (
+        1374.6,
+        7,
+        1358.0,
+        5_120_334,
+    )
+    assert depth.open_interest is None  # equities carry no OI
+    assert client.requests[0][:2] == ("/quote", {"i": "NSE:RELIANCE"})
+
+
+def test_depth_reads_five_levels_a_side_and_quote_reads_the_same_best(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    side = [{"price": 100.0 - i, "quantity": i + 1, "orders": 1} for i in range(7)]
+    payload = {"NSE:RELIANCE": {"last_price": 100.0, "depth": {"buy": side, "sell": []}}}
+    _install(monkeypatch, [_ok(payload), _ok(payload)])
+
+    depth = market_data.fetch_depth("key", "token", FAKE_INSTRUMENT)
+    quote = market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+
+    assert [level.price for level in depth.bids] == [100.0, 99.0, 98.0, 97.0, 96.0]
+    assert depth.asks == ()
+    assert (quote.bid, quote.bid_quantity) == (depth.bids[0].price, depth.bids[0].quantity)
+    assert (quote.ask, quote.ask_quantity) == (None, None)

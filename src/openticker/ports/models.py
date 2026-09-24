@@ -89,6 +89,33 @@ class Quote:
 
 
 @dataclass(frozen=True)
+class DepthLevel:
+    price: float
+    quantity: int
+    orders: int
+
+
+@dataclass(frozen=True)
+class MarketDepth:
+    """The order book's best levels for one instrument, with the day so far."""
+
+    instrument: Instrument
+    as_of: datetime  # tz-aware UTC
+    last_price: float
+    last_quantity: int | None
+    bids: tuple[DepthLevel, ...]  # best first, up to 5; empty levels left out
+    asks: tuple[DepthLevel, ...]
+    total_buy_quantity: int  # the whole book, not only the levels shown
+    total_sell_quantity: int
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None  # the previous session's
+    volume: int | None
+    open_interest: int | None
+
+
+@dataclass(frozen=True)
 class Bar:
     instrument: Instrument
     interval: str  # "day", "minute", ...

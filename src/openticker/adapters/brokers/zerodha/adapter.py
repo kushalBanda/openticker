@@ -11,11 +11,20 @@ from openticker.adapters.brokers.zerodha.instruments import (
 from openticker.adapters.brokers.zerodha.market_data import (
     KiteSessionError,
     fetch_candles,
+    fetch_depth,
     fetch_quote,
     fetch_quotes,
 )
 from openticker.core.orders.models import Order, OrderChanges, OrderRequest, OrderResult, Trade
-from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
+from openticker.ports.models import (
+    Bar,
+    Credentials,
+    Funds,
+    Instrument,
+    MarketDepth,
+    Position,
+    Quote,
+)
 
 
 class ZerodhaAdapter:
@@ -44,6 +53,9 @@ class ZerodhaAdapter:
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return fetch_quotes(self._api_key, self._session_token(), instruments)
+
+    def get_market_depth(self, instrument: Instrument) -> MarketDepth:
+        return fetch_depth(self._api_key, self._session_token(), instrument)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

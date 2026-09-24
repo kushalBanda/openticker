@@ -43,6 +43,7 @@ from openticker.ports.models import (
     Credentials,
     Funds,
     Instrument,
+    MarketDepth,
     Position,
     Product,
     Quote,
@@ -85,6 +86,9 @@ class SandboxBroker:
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return self._market.get_quotes(instruments)
+
+    def get_market_depth(self, instrument: Instrument) -> MarketDepth:
+        return self._market.get_market_depth(instrument)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

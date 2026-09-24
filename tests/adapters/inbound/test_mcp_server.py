@@ -47,6 +47,18 @@ def test_get_quote_after_sync_returns_resolved_quote() -> None:
     assert result.as_of.utcoffset() is not None
 
 
+def test_get_market_depth_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    depth = mcp_server.get_market_depth(broker="fake", symbol="RELIANCE", exchange=Exchange.NSE)
+
+    assert (depth.symbol, depth.last_price, depth.last_quantity) == ("RELIANCE", FAKE_LAST_PRICE, 5)
+    assert [a.price for a in depth.asks] == [FAKE_LAST_PRICE + 0.05]
+    assert depth.as_of.utcoffset() is not None
+    with pytest.raises(ToolError, match="sync_instruments"):
+        mcp_server.get_market_depth(broker="fake", symbol="NOPE", exchange=Exchange.NSE)
+
+
 def test_get_quotes_through_the_tool() -> None:
     mcp_server.sync_instruments(broker="fake")
 

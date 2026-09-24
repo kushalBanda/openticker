@@ -5,6 +5,7 @@ import pytest
 from openticker.storage.duckdb import bars_repo
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.use_cases.get_historical_bars import get_historical_bars
+from openticker.use_cases.get_market_depth import get_market_depth
 from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FAKE_LAST_PRICE, FakeBrokerPort
@@ -34,3 +35,13 @@ def test_get_historical_bars_stores_what_it_returns() -> None:
     stored = bars_repo.get_bars(FAKE_INSTRUMENT, "day", date(2026, 9, 18), date(2026, 9, 19))
     assert stored == bars
     assert len(stored) == 2
+
+
+def test_market_depth_resolves_the_instrument_first() -> None:
+    with pytest.raises(UnknownInstrumentError, match="sync_instruments"):
+        get_market_depth(FakeBrokerPort(), "RELIANCE", "NSE")
+    upsert_instruments([FAKE_INSTRUMENT])
+
+    depth = get_market_depth(FakeBrokerPort(), "RELIANCE", "NSE")
+
+    assert depth.instrument == FAKE_INSTRUMENT and depth.bids[0].price < depth.asks[0].price

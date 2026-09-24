@@ -9,7 +9,15 @@ from openticker.core.orders.models import (
     OrderResult,
     Trade,
 )
-from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
+from openticker.ports.models import (
+    Bar,
+    Credentials,
+    Funds,
+    Instrument,
+    MarketDepth,
+    Position,
+    Quote,
+)
 
 
 class BrokerPort(Protocol):
@@ -21,6 +29,7 @@ class BrokerPort(Protocol):
         the broker returns nothing for is left out rather than failing the batch."""
         ...
 
+    def get_market_depth(self, instrument: Instrument) -> MarketDepth: ...
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
     ) -> list[Bar]: ...
