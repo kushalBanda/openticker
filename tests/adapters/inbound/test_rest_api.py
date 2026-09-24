@@ -37,6 +37,8 @@ ROUTE_FOR_TOOL = {
     "get_audit_log": ("GET", "/api/v1/audit"),
     "get_market_status": ("GET", "/api/v1/market-status"),
     "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
+    "get_order_status": ("GET", "/api/v1/orders/{order_id}"),
+    "get_tradebook": ("GET", "/api/v1/trades"),
     "create_strategy": ("POST", "/api/v1/strategies"),
     "list_strategies": ("GET", "/api/v1/strategies"),
     "get_strategy": ("GET", "/api/v1/strategies/{strategy_id}"),
@@ -255,6 +257,35 @@ def test_resting_order_and_cancel_over_rest(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
+def test_order_status_and_tradebook_over_rest(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order = {
+        "broker": "fake",
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "side": "BUY",
+        "quantity": 2,
+        "product": "MIS",
+    }
+    placed = client.post("/api/v1/orders", json=order).json()
+
+    status = client.get(f"/api/v1/orders/{placed['order_id']}", params={"broker": "fake"})
+    missing = client.get("/api/v1/orders/SBNOPE", params={"broker": "fake"})
+    trades = client.get("/api/v1/trades", params={"broker": "fake"}).json()
+
+    assert (status.json()["status"], status.json()["fill_price"]) == ("FILLED", FAKE_LAST_PRICE)
+    assert missing.status_code == 404
+    [trade] = trades["trades"]
+    assert (trade["order_id"], trade["quantity"], trade["value"]) == (
+        placed["order_id"],
+        2,
+        2 * FAKE_LAST_PRICE,
+    )
+    assert trade["triggered_by"] == "rest:tests"
+    assert trade["filled_at"] == "2026-09-22T09:30:00+05:30"  # the app's clock, not the wall's
+    assert trades["since"] == "2026-09-22T00:00:00+05:30"
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -406,6 +437,8 @@ SCRIPT_ROUTES = {
     ("POST", "/api/v1/orders"),
     ("GET", "/api/v1/orders"),
     ("DELETE", "/api/v1/orders/{order_id}"),
+    ("GET", "/api/v1/orders/{order_id}"),
+    ("GET", "/api/v1/trades"),
     ("GET", "/api/v1/positions"),
     ("GET", "/api/v1/funds"),
 }

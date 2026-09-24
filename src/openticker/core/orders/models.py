@@ -68,6 +68,22 @@ class Order:
 
 
 @dataclass(frozen=True)
+class Trade:
+    """One fill."""
+
+    order_id: str
+    instrument: Instrument
+    side: Side
+    quantity: int
+    price: float
+    product: Product
+    filled_at: datetime  # tz-aware UTC
+    triggered_by: str
+    strategy_id: str | None
+    run_id: str | None
+
+
+@dataclass(frozen=True)
 class ValidationResult:
     valid: bool
     reason: str | None

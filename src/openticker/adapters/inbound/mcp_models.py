@@ -18,6 +18,7 @@ from openticker.core.orders.models import (
     OrderResult,
     OrderStatus,
     OrderType,
+    Trade,
 )
 from openticker.core.risk.models import (
     BreachReason,
@@ -502,6 +503,50 @@ class OrderbookResult(BaseModel):
     @classmethod
     def of(cls, orders: Sequence[Order]) -> "OrderbookResult":
         return cls(orders=[OrderbookEntryResult.of(order) for order in orders])
+
+
+class TradeResult(BaseModel):
+    order_id: str
+    filled_at: datetime = Field(description="Exchange-local.")
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    price: float = Field(description="Fill price.")
+    value: float = Field(description="price x quantity.")
+    product: Product
+    triggered_by: str
+    strategy_id: str | None
+    run_id: str | None
+
+    @classmethod
+    def of(cls, trade: Trade) -> "TradeResult":
+        return cls(
+            order_id=trade.order_id,
+            filled_at=trade.filled_at.astimezone(EXCHANGE_TIMEZONE),
+            symbol=trade.instrument.symbol,
+            exchange=trade.instrument.exchange,
+            side=trade.side,
+            quantity=trade.quantity,
+            price=trade.price,
+            value=round(trade.price * trade.quantity, 2),
+            product=trade.product,
+            triggered_by=trade.triggered_by,
+            strategy_id=trade.strategy_id,
+            run_id=trade.run_id,
+        )
+
+
+class TradebookResult(BaseModel):
+    trades: list[TradeResult] = Field(description="Newest first.")
+    since: datetime = Field(description="Start of today, exchange-local.")
+
+    @classmethod
+    def of(cls, trades: Sequence[Trade], since: datetime) -> "TradebookResult":
+        return cls(
+            trades=[TradeResult.of(trade) for trade in trades],
+            since=since.astimezone(EXCHANGE_TIMEZONE),
+        )
 
 
 class RiskCheckResult(BaseModel):

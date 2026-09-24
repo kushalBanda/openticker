@@ -4,10 +4,7 @@ from openticker.core.orders.models import OrderResult, OrderStatus
 from openticker.events.bus import EventPublisher
 from openticker.events.types import OrderCancelled
 from openticker.ports.broker_port import BrokerPort
-
-
-class UnknownOrderError(Exception):
-    pass
+from openticker.use_cases.errors import UnknownOrderError
 
 
 def cancel_order(

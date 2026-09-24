@@ -42,6 +42,7 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     OptionChainResult,
+    OrderbookEntryResult,
     OrderbookResult,
     PlaceOrderResult,
     PositionsResult,
@@ -65,6 +66,7 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySignalsResult,
     StrategySummary,
     SyncResult,
+    TradebookResult,
     WebhookResult,
 )
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
@@ -89,17 +91,20 @@ from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
-from openticker.use_cases.cancel_order import UnknownOrderError, cancel_order
+from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.connect_broker import connect_broker
+from openticker.use_cases.errors import UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk
 from openticker.use_cases.get_audit_log import get_audit_log
 from openticker.use_cases.get_funds import get_funds
 from openticker.use_cases.get_historical_bars import get_historical_bars
 from openticker.use_cases.get_market_status import get_market_status
 from openticker.use_cases.get_option_chain import NoOptionsError, get_option_chain
+from openticker.use_cases.get_order_status import get_order_status
 from openticker.use_cases.get_orderbook import get_orderbook
 from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
+from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -210,6 +215,8 @@ _SCRIPT_ROUTES = frozenset(
         ("POST", "/api/v1/orders"),
         ("GET", "/api/v1/orders"),
         ("DELETE", "/api/v1/orders/{order_id}"),
+        ("GET", "/api/v1/orders/{order_id}"),
+        ("GET", "/api/v1/trades"),
         ("GET", "/api/v1/positions"),
         ("GET", "/api/v1/funds"),
     }
@@ -458,7 +465,7 @@ def create_app(
         )
         result = place_order(
             request,
-            order_broker(body.broker, env),
+            order_broker(body.broker, env, clock),
             events,
             capital_cap(env),
             load_calendar(),
@@ -473,7 +480,7 @@ def create_app(
     @api.delete("/orders/{order_id}")
     def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
         """Withdraws a PENDING order; anything else is left as it is."""
-        result = cancel_order(order_id, order_broker(broker, env), events, _caller(key))
+        result = cancel_order(order_id, order_broker(broker, env, clock), events, _caller(key))
         return CancelOrderResult.of(order_id, result)
 
     @api.get("/market-status")
@@ -486,15 +493,29 @@ def create_app(
     def orderbook(
         broker: Broker, limit: Annotated[int, Query(ge=1, le=200)] = 20
     ) -> OrderbookResult:
-        return OrderbookResult.of(get_orderbook(order_broker(broker, env), limit))
+        return OrderbookResult.of(get_orderbook(order_broker(broker, env, clock), limit))
+
+    @api.get("/orders/{order_id}")
+    def order_status(order_id: str, broker: Broker) -> OrderbookEntryResult:
+        return OrderbookEntryResult.of(get_order_status(order_broker(broker, env, clock), order_id))
+
+    @api.get("/trades")
+    def tradebook(
+        broker: Broker, limit: Annotated[int, Query(ge=1, le=500)] = 50
+    ) -> TradebookResult:
+        """Today's fills, newest first."""
+        now = clock()
+        return TradebookResult.of(
+            get_tradebook(order_broker(broker, env, clock), limit, now), session_start(now)
+        )
 
     @api.get("/positions")
     def positions(broker: Broker, include_closed: bool = False) -> PositionsResult:
-        return PositionsResult.of(get_positions(order_broker(broker, env)), include_closed)
+        return PositionsResult.of(get_positions(order_broker(broker, env, clock)), include_closed)
 
     @api.get("/funds")
     def funds(broker: Broker) -> FundsResult:
-        return FundsResult.of(get_funds(order_broker(broker, env)))
+        return FundsResult.of(get_funds(order_broker(broker, env, clock)))
 
     @api.post("/risk/evaluate")
     def risk(body: RiskBody) -> RiskCheckResult:

@@ -1,7 +1,7 @@
 """ZerodhaAdapter — BrokerPort over Kite Connect."""
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 
 from openticker.adapters.brokers.zerodha.auth import exchange_request_token
 from openticker.adapters.brokers.zerodha.instruments import (
@@ -14,7 +14,7 @@ from openticker.adapters.brokers.zerodha.market_data import (
     fetch_quote,
     fetch_quotes,
 )
-from openticker.core.orders.models import Order, OrderRequest, OrderResult
+from openticker.core.orders.models import Order, OrderRequest, OrderResult, Trade
 from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
 
 
@@ -71,3 +71,6 @@ class ZerodhaAdapter:
 
     def cancel_order(self, order_id: str) -> OrderResult:
         raise NotImplementedError("live order cancellation is not implemented yet")
+
+    def get_trades(self, since: datetime, limit: int) -> list[Trade]:
+        raise NotImplementedError("the live trade book is not implemented yet")

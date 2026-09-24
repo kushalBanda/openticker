@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy import literal_column, select
 from sqlalchemy.orm import Session
 
-from openticker.core.orders.models import Order, OrderStatus, OrderType
+from openticker.core.orders.models import Order, OrderStatus, OrderType, Trade
 from openticker.core.orders.sandbox import FLAT, NetPosition
 from openticker.ports.models import Instrument, Product, Side
 from openticker.storage.sqlite.engine import get_engine
@@ -87,6 +87,35 @@ class StoredOrder:
             price=self.price,
             trigger_price=self.trigger_price,
             triggered=self.triggered,
+        )
+
+
+@dataclass(frozen=True)
+class StoredTrade:
+    order_id: str
+    filled_at: datetime  # tz-aware UTC
+    exchange: str
+    symbol: str
+    side: Side
+    quantity: int
+    price: float
+    product: Product
+    triggered_by: str
+    strategy_id: str | None
+    run_id: str | None
+
+    def to_trade(self, instrument: Instrument) -> Trade:
+        return Trade(
+            order_id=self.order_id,
+            instrument=instrument,
+            side=self.side,
+            quantity=self.quantity,
+            price=self.price,
+            product=self.product,
+            filled_at=self.filled_at,
+            triggered_by=self.triggered_by,
+            strategy_id=self.strategy_id,
+            run_id=self.run_id,
         )
 
 
@@ -244,6 +273,34 @@ def list_orders(limit: int) -> list[StoredOrder]:
             .limit(limit)
         ).all()
     return [_stored(row) for row in rows]
+
+
+def list_trades(since: datetime, limit: int) -> list[StoredTrade]:
+    """Fills at or after `since`, newest first, each with who placed its order."""
+    with Session(get_engine()) as session:
+        rows = session.execute(
+            select(SandboxTradeRow, SandboxOrderRow.triggered_by)
+            .join(SandboxOrderRow, SandboxOrderRow.order_id == SandboxTradeRow.order_id)
+            .where(SandboxTradeRow.filled_at >= _naive_utc(since))
+            .order_by(SandboxTradeRow.filled_at.desc(), SandboxTradeRow.id.desc())
+            .limit(limit)
+        ).all()
+    return [
+        StoredTrade(
+            order_id=trade.order_id,
+            filled_at=trade.filled_at.replace(tzinfo=UTC),
+            exchange=trade.exchange,
+            symbol=trade.symbol,
+            side=Side(trade.side),
+            quantity=trade.quantity,
+            price=trade.price,
+            product=Product(trade.product),
+            triggered_by=triggered_by,
+            strategy_id=trade.strategy_id,
+            run_id=trade.run_id,
+        )
+        for trade, triggered_by in rows
+    ]
 
 
 def find_order(order_id: str) -> StoredOrder | None:

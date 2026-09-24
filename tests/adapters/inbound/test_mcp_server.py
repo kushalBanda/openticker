@@ -647,3 +647,28 @@ def test_script_tools_turn_mistakes_into_agent_facing_errors() -> None:
                 {"start_time": "10:00", "stop_time": "09:00"}
             ),
         )
+
+
+def test_order_status_and_tradebook_through_the_tools() -> None:
+    mcp_server.sync_instruments(broker="fake")
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=3,
+        product=Product.MIS,
+    )
+    assert placed.order_id is not None
+
+    status = mcp_server.get_order_status(broker="fake", order_id=placed.order_id)
+    book = mcp_server.get_tradebook(broker="fake")
+
+    assert (status.status, status.fill_price) == ("FILLED", FAKE_LAST_PRICE)
+    assert [(t.order_id, t.quantity, t.triggered_by) for t in book.trades] == [
+        (placed.order_id, 3, "mcp")
+    ]
+    assert book.trades[0].filled_at == TRADING_TIME  # the server's clock, not the wall's
+    with pytest.raises(ToolError, match="get_orderbook"):
+        mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
+

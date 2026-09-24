@@ -39,6 +39,7 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     OptionChainResult,
+    OrderbookEntryResult,
     OrderbookResult,
     PlaceOrderResult,
     PositionsResult,
@@ -62,6 +63,7 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySignalsResult,
     StrategySummary,
     SyncResult,
+    TradebookResult,
     WebhookResult,
 )
 from openticker.composition import (
@@ -101,9 +103,9 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
-from openticker.use_cases.cancel_order import UnknownOrderError
 from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
+from openticker.use_cases.errors import UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
 from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
 from openticker.use_cases.get_funds import get_funds as get_funds_use_case
@@ -115,9 +117,12 @@ from openticker.use_cases.get_market_status import (
 )
 from openticker.use_cases.get_option_chain import NoOptionsError
 from openticker.use_cases.get_option_chain import get_option_chain as get_option_chain_use_case
+from openticker.use_cases.get_order_status import get_order_status as get_order_status_use_case
 from openticker.use_cases.get_orderbook import get_orderbook as get_orderbook_use_case
 from openticker.use_cases.get_positions import get_positions as get_positions_use_case
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
+from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
+from openticker.use_cases.get_tradebook import session_start
 from openticker.use_cases.place_order import place_order as place_order_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -198,6 +203,7 @@ DEFAULT_SEARCH_LIMIT = 20
 DEFAULT_AUDIT_LIMIT = 20
 DEFAULT_STRIKE_COUNT = 10
 DEFAULT_ORDERBOOK_LIMIT = 20
+DEFAULT_TRADEBOOK_LIMIT = 50
 EVENT_TYPE_NAMES = [
     event.__name__
     for event in (
@@ -555,7 +561,7 @@ def place_order(
         )
         result = place_order_use_case(
             request,
-            order_broker(broker, os.environ),
+            order_broker(broker, os.environ, clock),
             event_bus(),
             capital_cap(os.environ),
             load_calendar(),
@@ -597,7 +603,7 @@ def cancel_order(
     order that already filled or was cancelled is left as it is."""
     with _agent_facing_errors():
         result = cancel_order_use_case(
-            order_id, order_broker(broker, os.environ), event_bus(), "mcp"
+            order_id, order_broker(broker, os.environ, clock), event_bus(), "mcp"
         )
     return CancelOrderResult.of(order_id, result)
 
@@ -614,7 +620,7 @@ def get_positions(
 ) -> PositionsResult:
     """Sandbox net positions valued at the broker's live prices."""
     with _agent_facing_errors():
-        positions = get_positions_use_case(order_broker(broker, os.environ))
+        positions = get_positions_use_case(order_broker(broker, os.environ, clock))
     return PositionsResult.of(positions, include_closed)
 
 
@@ -625,7 +631,7 @@ def get_positions(
 def get_funds(broker: Broker) -> FundsResult:
     """Virtual capital, margin in use and realized P&L in the sandbox."""
     with _agent_facing_errors():
-        funds = get_funds_use_case(order_broker(broker, os.environ))
+        funds = get_funds_use_case(order_broker(broker, os.environ, clock))
     return FundsResult.of(funds)
 
 
@@ -641,8 +647,41 @@ def get_orderbook(
 ) -> OrderbookResult:
     """Sandbox orders, filled and rejected, most recent first."""
     with _agent_facing_errors():
-        orders = get_orderbook_use_case(order_broker(broker, os.environ), limit)
+        orders = get_orderbook_use_case(order_broker(broker, os.environ, clock), limit)
     return OrderbookResult.of(orders)
+
+
+@mcp.tool(
+    title="Get sandbox order status",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_order_status(
+    broker: Broker,
+    order_id: Annotated[str, Field(description="From place_order or get_orderbook.")],
+) -> OrderbookEntryResult:
+    """One sandbox order, whatever its status: PENDING, FILLED (with its fill
+    price), CANCELLED or REJECTED (with the reason)."""
+    with _agent_facing_errors():
+        order = get_order_status_use_case(order_broker(broker, os.environ, clock), order_id)
+    return OrderbookEntryResult.of(order)
+
+
+@mcp.tool(
+    title="Get sandbox trade book",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_tradebook(
+    broker: Broker,
+    limit: Annotated[int, Field(ge=1, le=500, description="Most trades to return.")] = (
+        DEFAULT_TRADEBOOK_LIMIT
+    ),
+) -> TradebookResult:
+    """Today's sandbox fills, newest first: what actually traded, at what
+    price and when. Includes resting orders filled later and strategy fills."""
+    now = clock()
+    with _agent_facing_errors():
+        trades = get_tradebook_use_case(order_broker(broker, os.environ, clock), limit, now)
+    return TradebookResult.of(trades, session_start(now))
 
 
 @mcp.tool(

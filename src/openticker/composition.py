@@ -4,8 +4,8 @@ adapters together; entry points (`openticker-mcp`, `openticker-serve`) call it,
 nothing else does."""
 
 import math
-from collections.abc import Mapping
-from datetime import timedelta
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 
 from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
@@ -94,9 +94,14 @@ def sandbox_settings(env: Mapping[str, str]) -> SandboxSettings:
     return SandboxSettings() if capital is None else SandboxSettings(starting_capital=capital)
 
 
-def order_broker(broker: str, env: Mapping[str, str]) -> SandboxBroker:
-    """The sandbox, pricing through the named broker (ADR 11 in docs/adr)."""
-    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(env))
+def order_broker(
+    broker: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> SandboxBroker:
+    """The sandbox, pricing through the named broker (ADR 11 in docs/adr).
+    `clock` stamps its orders; entry points pass the one they were given."""
+    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(env), clock)
 
 
 def capital_cap(env: Mapping[str, str]) -> float | None:

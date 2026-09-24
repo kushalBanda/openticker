@@ -25,6 +25,7 @@ from openticker.core.orders.models import (
     OrderResult,
     OrderStatus,
     OrderType,
+    Trade,
 )
 from openticker.core.orders.sandbox import (
     Leverage,
@@ -328,6 +329,13 @@ class SandboxBroker:
         return [
             stored.to_order(instrument)
             for stored in sandbox_repo.list_orders(limit)
+            if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
+        ]
+
+    def get_trades(self, since: datetime, limit: int) -> list[Trade]:
+        return [
+            stored.to_trade(instrument)
+            for stored in sandbox_repo.list_trades(since, limit)
             if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
         ]
 
