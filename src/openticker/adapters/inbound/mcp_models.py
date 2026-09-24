@@ -4,7 +4,7 @@ included), matching the trading dates the tools take as input. The REST API
 returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time
 from typing import Annotated, Any, Literal
 
@@ -84,6 +84,7 @@ from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
+from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
@@ -488,6 +489,64 @@ class PlaceOrderResult(BaseModel):
         )
 
 
+class OrderInput(BaseModel):
+    """One order of a basket: place_order's fields."""
+
+    symbol: str = Field(description="OpenTicker's symbol, e.g. SBIN, NIFTY29SEP26FUT.")
+    exchange: Exchange
+    side: Side = Field(description="BUY or SELL.")
+    quantity: int = Field(ge=1, description="Units, not lots: a multiple of the lot size for F&O.")
+    product: Product = Field(
+        description="MIS: intraday. NRML: F&O carried overnight. CNC: equity delivery."
+    )
+    order_type: OrderType = Field(
+        default=OrderType.MARKET, description="MARKET, LIMIT, SL or SL-M, as in place_order."
+    )
+    price: float | None = Field(default=None, gt=0, description="Limit price: LIMIT and SL only.")
+    trigger_price: float | None = Field(default=None, gt=0, description="SL and SL-M only.")
+
+    def to_order(self) -> BasketOrder:
+        return BasketOrder(
+            symbol=self.symbol,
+            exchange=self.exchange,
+            side=self.side,
+            quantity=self.quantity,
+            product=self.product,
+            order_type=self.order_type,
+            price=self.price,
+            trigger_price=self.trigger_price,
+        )
+
+
+class BasketResult(BaseModel):
+    orders: list[PlaceOrderResult] = Field(
+        description="In placing order: every BUY, then every SELL. One refused doesn't "
+        "stop the rest; each says its own status and reason."
+    )
+
+    @classmethod
+    def of(
+        cls, placements: Sequence[BasketPlacement], next_step: Callable[[OrderStatus], str]
+    ) -> "BasketResult":
+        return cls(
+            orders=[
+                PlaceOrderResult(
+                    order_id=placed.result.broker_order_id,
+                    status=placed.result.status,
+                    symbol=placed.order.symbol,
+                    exchange=placed.order.exchange,
+                    side=placed.order.side,
+                    quantity=placed.order.quantity,
+                    product=placed.order.product,
+                    fill_price=placed.result.fill_price,
+                    reason=placed.result.reason,
+                    next_step=next_step(placed.result.status),
+                )
+                for placed in placements
+            ]
+        )
+
+
 class CancelOrderResult(BaseModel):
     order_id: str
     status: OrderStatus = Field(description="CANCELLED, or the status that kept it from being.")
@@ -496,6 +555,57 @@ class CancelOrderResult(BaseModel):
     @classmethod
     def of(cls, order_id: str, result: OrderResult) -> "CancelOrderResult":
         return cls(order_id=order_id, status=result.status, reason=result.reason)
+
+
+class CancelAllResult(BaseModel):
+    cancelled: list[str] = Field(description="Ids of the orders withdrawn.")
+    failed: list[CancelOrderResult] = Field(
+        description="Orders that were pending but filled or went before they could be withdrawn."
+    )
+
+    @classmethod
+    def of(cls, outcomes: Sequence[tuple[Order, OrderResult]]) -> "CancelAllResult":
+        return cls(
+            cancelled=[o.order_id for o, r in outcomes if r.status is OrderStatus.CANCELLED],
+            failed=[
+                CancelOrderResult.of(o.order_id, r)
+                for o, r in outcomes
+                if r.status is not OrderStatus.CANCELLED
+            ],
+        )
+
+
+def closing_result(
+    position: Position, result: OrderResult, next_step: Callable[[OrderStatus], str]
+) -> PlaceOrderResult:
+    """The order that closes `position`: the other side, for what was held."""
+    return PlaceOrderResult(
+        order_id=result.broker_order_id,
+        status=result.status,
+        symbol=position.instrument.symbol,
+        exchange=position.instrument.exchange,
+        side=Side.SELL if position.quantity > 0 else Side.BUY,
+        quantity=abs(position.quantity),
+        product=position.product,
+        fill_price=result.fill_price,
+        reason=result.reason,
+        next_step=next_step(result.status),
+    )
+
+
+class CloseAllResult(BaseModel):
+    orders: list[PlaceOrderResult] = Field(
+        description="One per open position. One that couldn't close (exchange closed, no "
+        "fresh price, expired) says why; the rest still closed."
+    )
+
+    @classmethod
+    def of(
+        cls,
+        closed: Sequence[tuple[Position, OrderResult]],
+        next_step: Callable[[OrderStatus], str],
+    ) -> "CloseAllResult":
+        return cls(orders=[closing_result(p, r, next_step) for p, r in closed])
 
 
 class PositionResult(BaseModel):

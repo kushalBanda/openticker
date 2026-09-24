@@ -709,6 +709,68 @@ def test_modify_order_through_the_tool() -> None:
         mcp_server.modify_order(broker="fake", order_id="SBNOPE", price=1.0)
 
 
+def test_place_basket_through_the_tool() -> None:
+    from openticker.adapters.inbound.mcp_models import OrderInput
+
+    mcp_server.sync_instruments(broker="fake")
+    leg = {"symbol": "RELIANCE", "exchange": Exchange.NSE, "quantity": 2, "product": Product.MIS}
+
+    result = mcp_server.place_basket(
+        broker="fake",
+        orders=[
+            OrderInput(side=Side.SELL, **leg),  # type: ignore[arg-type]
+            OrderInput(side=Side.BUY, **{**leg, "symbol": "NOPE"}),  # type: ignore[arg-type]
+            OrderInput(side=Side.BUY, **leg),  # type: ignore[arg-type]
+        ],
+    )
+
+    assert [(o.symbol, o.side, o.status) for o in result.orders] == [
+        ("NOPE", Side.BUY, "REJECTED"),
+        ("RELIANCE", Side.BUY, "FILLED"),
+        ("RELIANCE", Side.SELL, "FILLED"),
+    ]
+    assert "sync_instruments" in (result.orders[0].reason or "")
+    assert "get_positions" in result.orders[1].next_step
+    assert mcp_server.get_positions(broker="fake").positions == []
+
+
+def test_close_and_cancel_all_through_the_tools() -> None:
+    from openticker.core.orders.models import OrderType
+
+    mcp_server.sync_instruments(broker="fake")
+    for product, order_type, price in (
+        (Product.MIS, OrderType.MARKET, None),
+        (Product.CNC, OrderType.MARKET, None),
+        (Product.MIS, OrderType.LIMIT, 2000.0),
+    ):
+        mcp_server.place_order(
+            broker="fake",
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=2,
+            product=product,
+            order_type=order_type,
+            price=price,
+        )
+
+    one = mcp_server.close_position(
+        broker="fake", symbol="RELIANCE", exchange=Exchange.NSE, product=Product.MIS
+    )
+    rest = mcp_server.close_all_positions(broker="fake")
+    cancelled = mcp_server.cancel_all_orders(broker="fake")
+
+    assert (one.side, one.quantity, one.status) == (Side.SELL, 2, "FILLED")
+    assert "get_positions" in one.next_step
+    assert [(o.symbol, o.status) for o in rest.orders] == [("RELIANCE", "FILLED")]
+    assert len(cancelled.cancelled) == 1
+    assert mcp_server.get_positions(broker="fake").positions == []
+    with pytest.raises(ToolError, match="get_positions"):
+        mcp_server.close_position(
+            broker="fake", symbol="RELIANCE", exchange=Exchange.NSE, product=Product.MIS
+        )
+
+
 def test_order_status_and_tradebook_through_the_tools() -> None:
     mcp_server.sync_instruments(broker="fake")
     placed = mcp_server.place_order(

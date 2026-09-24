@@ -33,7 +33,10 @@ from openticker.adapters.inbound.mcp_models import (
     AlertResult,
     AuditLogResult,
     BarsResult,
+    BasketResult,
+    CancelAllResult,
     CancelOrderResult,
+    CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
@@ -47,6 +50,7 @@ from openticker.adapters.inbound.mcp_models import (
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
+    OrderInput,
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
@@ -72,6 +76,7 @@ from openticker.adapters.inbound.mcp_models import (
     SyncResult,
     TradebookResult,
     WebhookResult,
+    closing_result,
 )
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
@@ -95,7 +100,10 @@ from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
+from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
+from openticker.use_cases.close_all_positions import close_all_positions
+from openticker.use_cases.close_position import NoOpenPositionError, close_position
 from openticker.use_cases.connect_broker import connect_broker
 from openticker.use_cases.errors import BatchTooLargeError, UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk
@@ -112,6 +120,7 @@ from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.get_quotes import MAX_QUOTES, get_quotes
 from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.modify_order import modify_order
+from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -151,6 +160,7 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnsupportedUnderlyingError, 404),
     (NoOptionsError, 404),
     (UnknownOrderError, 404),
+    (NoOpenPositionError, 404),
     (UnknownStrategyError, 404),
     (LegResolutionError, 404),
     (UnknownRunError, 404),
@@ -177,6 +187,15 @@ _NEXT_STEP = {
     OrderStatus.PENDING: "Rests until a live price crosses it; fills while openticker-serve "
     "runs. DELETE /api/v1/orders/{order_id} withdraws it.",
 }
+
+_CLOSE_NEXT_STEP = {
+    OrderStatus.FILLED: "GET /api/v1/positions shows it flat; GET /api/v1/funds the realized P&L.",
+}
+
+
+def _close_next_step(status: OrderStatus) -> str:
+    return _CLOSE_NEXT_STEP.get(status, "Fix what the reason says and close it again.")
+
 
 _STRATEGY_NEXT_STEP = (
     "GET /api/v1/strategies/{strategy_id}/preview shows the contracts it would trade now; "
@@ -211,8 +230,8 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
 
 # What a hosted script's key reaches (ADR 25 in docs/adr): prices and market depth,
-# and placing, reading, changing and cancelling orders. Never broker login,
-# strategies or scripts.
+# placing, reading, changing and cancelling orders, and closing one position. Never
+# broker login, strategies, scripts, or cancelling or closing everything at once.
 _SCRIPT_ROUTES = frozenset(
     {
         ("GET", "/api/v1/instruments"),
@@ -224,12 +243,14 @@ _SCRIPT_ROUTES = frozenset(
         ("GET", "/api/v1/market-status"),
         ("POST", "/api/v1/risk/evaluate"),
         ("POST", "/api/v1/orders"),
+        ("POST", "/api/v1/orders/basket"),
         ("GET", "/api/v1/orders"),
         ("DELETE", "/api/v1/orders/{order_id}"),
         ("PATCH", "/api/v1/orders/{order_id}"),
         ("GET", "/api/v1/orders/{order_id}"),
         ("GET", "/api/v1/trades"),
         ("GET", "/api/v1/positions"),
+        ("POST", "/api/v1/positions/close"),
         ("GET", "/api/v1/funds"),
     }
 )
@@ -336,6 +357,18 @@ class PlaceOrderBody(BaseModel):
 class QuotesBody(BaseModel):
     broker: str
     instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_QUOTES)
+
+
+class ClosePositionBody(BaseModel):
+    broker: str
+    symbol: str
+    exchange: Exchange
+    product: Product = Field(description="The position's product, as GET /positions shows it.")
+
+
+class BasketBody(BaseModel):
+    broker: str
+    orders: list[OrderInput] = Field(min_length=1, max_length=MAX_BASKET)
 
 
 class ModifyOrderBody(BaseModel):
@@ -511,11 +544,63 @@ def create_app(
             _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
         )
 
+    @api.post("/orders/basket")
+    def create_basket(body: BasketBody, key: ApiKey) -> BasketResult:
+        """Up to 50 sandbox orders as one set, every BUY before any SELL. Not
+        atomic: each order says its own status, and a refused one doesn't stop
+        the rest."""
+        placements = place_basket(
+            [item.to_order() for item in body.orders],
+            order_broker(body.broker, env, clock),
+            events,
+            capital_cap(env),
+            load_calendar(),
+            clock(),
+            _caller(key),
+        )
+        return BasketResult.of(
+            placements,
+            lambda status: _NEXT_STEP.get(
+                status, "Fix what the reason says and place that order again."
+            ),
+        )
+
     @api.delete("/orders/{order_id}")
     def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
         """Withdraws a PENDING order; anything else is left as it is."""
         result = cancel_order(order_id, order_broker(broker, env, clock), events, _caller(key))
         return CancelOrderResult.of(order_id, result)
+
+    @api.post("/orders/cancel-all")
+    def cancel_all(body: BrokerBody, key: ApiKey) -> CancelAllResult:
+        """Withdraws every PENDING order, strategies' included. Strategies keep running."""
+        return CancelAllResult.of(
+            cancel_all_orders(order_broker(body.broker, env, clock), events, _caller(key))
+        )
+
+    @api.post("/positions/close")
+    def close_one(body: ClosePositionBody, key: ApiKey) -> PlaceOrderResult:
+        """Closes one position at the market for exactly what is held. A refusal
+        (exchange closed, no fresh price) is a 200 with the reason."""
+        position, result = close_position(
+            order_broker(body.broker, env, clock),
+            resolve_instrument(body.symbol, body.exchange.value),
+            body.product,
+            events,
+            load_calendar(),
+            clock(),
+            _caller(key),
+        )
+        return closing_result(position, result, _close_next_step)
+
+    @api.post("/positions/close-all")
+    def close_all(body: BrokerBody, key: ApiKey) -> CloseAllResult:
+        """Closes every open position at the market. Strategies are not stopped;
+        pending orders stay (POST /orders/cancel-all withdraws them)."""
+        closed = close_all_positions(
+            order_broker(body.broker, env, clock), events, load_calendar(), clock(), _caller(key)
+        )
+        return CloseAllResult.of(closed, _close_next_step)
 
     @api.patch("/orders/{order_id}")
     def patch_order(order_id: str, body: ModifyOrderBody, key: ApiKey) -> ModifyOrderResult:

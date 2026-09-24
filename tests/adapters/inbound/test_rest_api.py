@@ -33,6 +33,7 @@ ROUTE_FOR_TOOL = {
     "get_historical_bars": ("GET", "/api/v1/bars"),
     "get_option_chain": ("GET", "/api/v1/option-chain"),
     "place_order": ("POST", "/api/v1/orders"),
+    "place_basket": ("POST", "/api/v1/orders/basket"),
     "get_orderbook": ("GET", "/api/v1/orders"),
     "get_positions": ("GET", "/api/v1/positions"),
     "get_funds": ("GET", "/api/v1/funds"),
@@ -40,6 +41,9 @@ ROUTE_FOR_TOOL = {
     "get_audit_log": ("GET", "/api/v1/audit"),
     "get_market_status": ("GET", "/api/v1/market-status"),
     "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
+    "cancel_all_orders": ("POST", "/api/v1/orders/cancel-all"),
+    "close_position": ("POST", "/api/v1/positions/close"),
+    "close_all_positions": ("POST", "/api/v1/positions/close-all"),
     "modify_order": ("PATCH", "/api/v1/orders/{order_id}"),
     "get_order_status": ("GET", "/api/v1/orders/{order_id}"),
     "get_tradebook": ("GET", "/api/v1/trades"),
@@ -290,6 +294,48 @@ def test_order_status_and_tradebook_over_rest(client: TestClient) -> None:
     assert trades["since"] == "2026-09-22T00:00:00+05:30"
 
 
+def test_basket_route_places_buys_first(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    leg = {"symbol": "RELIANCE", "exchange": "NSE", "quantity": 2, "product": "MIS"}
+
+    placed = client.post(
+        "/api/v1/orders/basket",
+        json={"broker": "fake", "orders": [{**leg, "side": "SELL"}, {**leg, "side": "BUY"}]},
+    ).json()
+    too_many = client.post(
+        "/api/v1/orders/basket",
+        json={"broker": "fake", "orders": [{**leg, "side": "BUY"}] * 51},
+    )
+    book = client.get("/api/v1/orders", params={"broker": "fake"}).json()
+
+    assert [(o["side"], o["status"]) for o in placed["orders"]] == [
+        ("BUY", "FILLED"),
+        ("SELL", "FILLED"),
+    ]
+    assert too_many.status_code == 422
+    assert [o["triggered_by"] for o in book["orders"]] == ["rest:tests"] * 2
+
+
+def test_close_and_cancel_all_routes(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    base = {"broker": "fake", "symbol": "RELIANCE", "exchange": "NSE", "product": "MIS"}
+    client.post("/api/v1/orders", json={**base, "side": "BUY", "quantity": 3})
+    client.post(
+        "/api/v1/orders",
+        json={**base, "side": "BUY", "quantity": 1, "order_type": "LIMIT", "price": 2000},
+    )
+
+    closed = client.post("/api/v1/positions/close", json=base).json()
+    again = client.post("/api/v1/positions/close", json=base)
+    close_all = client.post("/api/v1/positions/close-all", json={"broker": "fake"}).json()
+    cancelled = client.post("/api/v1/orders/cancel-all", json={"broker": "fake"}).json()
+
+    assert (closed["side"], closed["quantity"], closed["status"]) == ("SELL", 3, "FILLED")
+    assert again.status_code == 404 and "get_positions" in again.json()["detail"]
+    assert close_all == {"orders": []}
+    assert len(cancelled["cancelled"]) == 1 and cancelled["failed"] == []
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -441,12 +487,14 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/market-status"),
     ("POST", "/api/v1/risk/evaluate"),
     ("POST", "/api/v1/orders"),
+    ("POST", "/api/v1/orders/basket"),
     ("GET", "/api/v1/orders"),
     ("DELETE", "/api/v1/orders/{order_id}"),
     ("PATCH", "/api/v1/orders/{order_id}"),
     ("GET", "/api/v1/orders/{order_id}"),
     ("GET", "/api/v1/trades"),
     ("GET", "/api/v1/positions"),
+    ("POST", "/api/v1/positions/close"),
     ("GET", "/api/v1/funds"),
 }
 

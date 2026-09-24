@@ -30,7 +30,10 @@ from openticker.adapters.inbound.mcp_models import (
     ALERT_NEXT_STEP,
     AuditLogResult,
     BarsResult,
+    BasketResult,
+    CancelAllResult,
     CancelOrderResult,
+    CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
@@ -44,6 +47,7 @@ from openticker.adapters.inbound.mcp_models import (
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
+    OrderInput,
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
@@ -69,6 +73,7 @@ from openticker.adapters.inbound.mcp_models import (
     SyncResult,
     TradebookResult,
     WebhookResult,
+    closing_result,
 )
 from openticker.composition import (
     SandboxConfigError,
@@ -107,7 +112,15 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.use_cases.cancel_all_orders import (
+    cancel_all_orders as cancel_all_orders_use_case,
+)
 from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
+from openticker.use_cases.close_all_positions import (
+    close_all_positions as close_all_positions_use_case,
+)
+from openticker.use_cases.close_position import NoOpenPositionError
+from openticker.use_cases.close_position import close_position as close_position_use_case
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
 from openticker.use_cases.errors import BatchTooLargeError, UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
@@ -133,6 +146,8 @@ from openticker.use_cases.get_quotes import get_quotes as get_quotes_use_case
 from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
 from openticker.use_cases.get_tradebook import session_start
 from openticker.use_cases.modify_order import modify_order as modify_order_use_case
+from openticker.use_cases.place_basket import MAX_BASKET
+from openticker.use_cases.place_basket import place_basket as place_basket_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -302,6 +317,7 @@ _AGENT_FIXABLE_ERRORS = (
     SandboxConfigError,
     CalendarError,
     UnknownOrderError,
+    NoOpenPositionError,
     BatchTooLargeError,
     UnknownStrategyError,
     LegResolutionError,
@@ -627,6 +643,47 @@ def place_order(
 
 
 @mcp.tool(
+    title="Place sandbox basket",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def place_basket(
+    broker: Broker,
+    orders: Annotated[
+        list[OrderInput],
+        Field(
+            min_length=1,
+            max_length=MAX_BASKET,
+            description="Each as place_order takes it: symbol, exchange, side, quantity, "
+            "product, order_type, price, trigger_price.",
+        ),
+    ],
+) -> BasketResult:
+    """Up to 50 sandbox orders as one set, e.g. every leg of an iron condor.
+    Every BUY is placed before any SELL, so a spread holds its hedge first.
+    Each order goes through the same checks as place_order, one after
+    another; the set is not atomic, and an order refused (unknown symbol,
+    closed market, short of funds) doesn't stop the rest."""
+    with _agent_facing_errors():
+        placements = place_basket_use_case(
+            [item.to_order() for item in orders],
+            order_broker(broker, os.environ, clock),
+            event_bus(),
+            capital_cap(os.environ),
+            load_calendar(),
+            clock(),
+            "mcp",
+        )
+    return BasketResult.of(
+        placements,
+        lambda status: _NEXT_STEP.get(
+            status, "Fix what the reason says and place that order again."
+        ),
+    )
+
+
+@mcp.tool(
     title="Get market status",
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
@@ -658,6 +715,79 @@ def cancel_order(
             order_id, order_broker(broker, os.environ, clock), event_bus(), "mcp"
         )
     return CancelOrderResult.of(order_id, result)
+
+
+@mcp.tool(
+    title="Cancel all sandbox orders",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def cancel_all_orders(broker: Broker) -> CancelAllResult:
+    """Withdraw every PENDING sandbox order, strategies' included, and release
+    the margin they held. Strategies keep running."""
+    with _agent_facing_errors():
+        outcomes = cancel_all_orders_use_case(
+            order_broker(broker, os.environ, clock), event_bus(), "mcp"
+        )
+    return CancelAllResult.of(outcomes)
+
+
+_CLOSE_NEXT_STEP = {
+    OrderStatus.FILLED: "get_positions shows it flat; get_funds shows the realized P&L.",
+}
+
+
+def _close_next_step(status: OrderStatus) -> str:
+    return _CLOSE_NEXT_STEP.get(status, "Fix what the reason says and close it again.")
+
+
+@mcp.tool(
+    title="Close sandbox position",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def close_position(
+    broker: Broker,
+    symbol: Symbol,
+    exchange: ExchangeParam,
+    product: Annotated[
+        Product, Field(description="The position's product, as get_positions shows it.")
+    ],
+) -> PlaceOrderResult:
+    """Close one sandbox position with a MARKET order for exactly what is
+    held, at the live price. Needs the exchange open. A strategy holding it
+    keeps running and finds the leg already closed."""
+    with _agent_facing_errors():
+        position, result = close_position_use_case(
+            order_broker(broker, os.environ, clock),
+            resolve_instrument(symbol, exchange.value),
+            product,
+            event_bus(),
+            load_calendar(),
+            clock(),
+            "mcp",
+        )
+    return closing_result(position, result, _close_next_step)
+
+
+@mcp.tool(
+    title="Close all sandbox positions",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def close_all_positions(broker: Broker) -> CloseAllResult:
+    """Close every open sandbox position at the market, strategies' included.
+    Strategies are not stopped: a signal strategy may enter again on its next
+    alert; kill_strategy stops that. Pending orders stay; cancel_all_orders
+    withdraws them."""
+    with _agent_facing_errors():
+        closed = close_all_positions_use_case(
+            order_broker(broker, os.environ, clock), event_bus(), load_calendar(), clock(), "mcp"
+        )
+    return CloseAllResult.of(closed, _close_next_step)
 
 
 @mcp.tool(

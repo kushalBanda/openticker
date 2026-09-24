@@ -279,6 +279,29 @@ class SandboxBroker:
     def settle_position(
         self, instrument: Instrument, product: Product, price: float, reason: str, now: datetime
     ) -> OrderResult:
+        return self._close(instrument, product, price, reason, SETTLEMENT_TRIGGER, now)
+
+    def close_position(
+        self,
+        instrument: Instrument,
+        product: Product,
+        price: float,
+        now: datetime,
+        triggered_by: str,
+    ) -> OrderResult:
+        return self._close(instrument, product, price, None, triggered_by, now)
+
+    def _close(
+        self,
+        instrument: Instrument,
+        product: Product,
+        price: float,
+        reason: str | None,
+        triggered_by: str,
+        now: datetime,
+    ) -> OrderResult:
+        """A MARKET order for exactly what is held, read under the write lock:
+        a resting order filling meanwhile can't make it overshoot."""
         with sandbox_repo.fill_transaction() as session:
             exchange = instrument.exchange.value
             held = sandbox_repo.load_position(session, exchange, instrument.symbol, product)
@@ -301,7 +324,7 @@ class SandboxBroker:
                 status=OrderStatus.FILLED,
                 fill_price=price,
                 reason=reason,
-                triggered_by=SETTLEMENT_TRIGGER,
+                triggered_by=triggered_by,
                 strategy_id=None,
                 run_id=None,
             )

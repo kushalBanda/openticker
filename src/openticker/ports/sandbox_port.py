@@ -38,6 +38,19 @@ class SandboxPort(Protocol):
         """Every non-zero position, without prices: cheap enough to check often."""
         ...
 
+    def close_position(
+        self,
+        instrument: Instrument,
+        product: Product,
+        price: float,
+        now: datetime,
+        triggered_by: str,
+    ) -> OrderResult:
+        """A MARKET order at `price` for exactly the quantity held, read under
+        the write lock. Nothing held: REJECTED, nothing recorded. Whether the
+        exchange is open and `price` fresh is the caller's to check."""
+        ...
+
     def settle_position(
         self, instrument: Instrument, product: Product, price: float, reason: str, now: datetime
     ) -> OrderResult:
