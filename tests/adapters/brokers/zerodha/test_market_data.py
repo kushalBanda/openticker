@@ -203,3 +203,33 @@ def test_fetch_quote_carries_the_day_range(monkeypatch: pytest.MonkeyPatch) -> N
     quote = market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
 
     assert (quote.day_low, quote.day_high) == (1355.5, 1380.0)
+
+
+def test_fetch_quote_carries_the_best_bid_and_ask_and_the_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(
+        monkeypatch,
+        [
+            _ok(
+                {
+                    "NSE:RELIANCE": {
+                        "last_price": 1374.6,
+                        "timestamp": "2026-09-18 15:30:00",
+                        "volume": 5_120_334,
+                        "ohlc": {"open": 1360.0, "high": 1380.0, "low": 1355.5, "close": 1358.0},
+                        "depth": {
+                            "buy": [{"price": 1374.5, "quantity": 12, "orders": 3}],
+                            "sell": [{"price": 0, "quantity": 0, "orders": 0}],
+                        },
+                    }
+                }
+            )
+        ],
+    )
+
+    quote = market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+
+    assert (quote.bid, quote.ask) == (1374.5, None)  # Kite pads an empty side with price 0
+    assert (quote.bid_quantity, quote.ask_quantity) == (12, None)
+    assert (quote.open, quote.close, quote.volume) == (1360.0, 1358.0, 5_120_334)

@@ -87,15 +87,35 @@ def _quote_key(instrument: Instrument) -> str:
 
 def _to_quote(instrument: Instrument, data: dict[str, Any]) -> Quote:
     open_interest = data.get("oi")
+    volume = data.get("volume")
     ohlc: dict[str, Any] = data.get("ohlc") or {}
+    depth: dict[str, list[dict[str, Any]]] = data.get("depth") or {}
+    buy, sell = _top(depth.get("buy")), _top(depth.get("sell"))
     return Quote(
         instrument=instrument,
         last_price=float(data["last_price"]),
         as_of=_quote_time(data),
         open_interest=int(open_interest) if open_interest is not None else None,
-        day_high=float(ohlc["high"]) if "high" in ohlc else None,
-        day_low=float(ohlc["low"]) if "low" in ohlc else None,
+        day_high=_price(ohlc.get("high")),
+        day_low=_price(ohlc.get("low")),
+        bid=_price(buy.get("price")),
+        ask=_price(sell.get("price")),
+        bid_quantity=int(buy["quantity"]) if _price(buy.get("price")) else None,
+        ask_quantity=int(sell["quantity"]) if _price(sell.get("price")) else None,
+        open=_price(ohlc.get("open")),
+        close=_price(ohlc.get("close")),
+        volume=int(volume) if volume is not None else None,
     )
+
+
+def _top(levels: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """The best level of one side of the book. Kite fills empty levels with
+    price 0, which `_price` reads as none."""
+    return levels[0] if levels else {}
+
+
+def _price(value: Any) -> float | None:
+    return float(value) if value else None
 
 
 def fetch_candles(

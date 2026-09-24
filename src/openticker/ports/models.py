@@ -78,6 +78,14 @@ class Quote:
     open_interest: int | None = None  # derivatives only
     day_high: float | None = None
     day_low: float | None = None
+    # A full broker quote carries these; feed ticks and polled prices may not.
+    bid: float | None = None  # best buy price waiting
+    ask: float | None = None  # best sell price waiting
+    bid_quantity: int | None = None  # waiting at the best bid
+    ask_quantity: int | None = None
+    open: float | None = None
+    close: float | None = None  # the previous session's
+    volume: int | None = None
 
 
 @dataclass(frozen=True)

@@ -38,6 +38,7 @@ from openticker.adapters.inbound.mcp_models import (
     DeleteScriptResult,
     DeleteStrategyResult,
     FundsResult,
+    InstrumentRef,
     LoginUrlResult,
     MarketStatusesResult,
     MarketStatusResult,
@@ -48,6 +49,7 @@ from openticker.adapters.inbound.mcp_models import (
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
+    QuotesResult,
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
@@ -94,7 +96,7 @@ from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.connect_broker import connect_broker
-from openticker.use_cases.errors import UnknownOrderError
+from openticker.use_cases.errors import BatchTooLargeError, UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk
 from openticker.use_cases.get_audit_log import get_audit_log
 from openticker.use_cases.get_funds import get_funds
@@ -105,6 +107,7 @@ from openticker.use_cases.get_order_status import get_order_status
 from openticker.use_cases.get_orderbook import get_orderbook
 from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
+from openticker.use_cases.get_quotes import MAX_QUOTES, get_quotes
 from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_order import place_order
@@ -160,6 +163,7 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ScriptStateError, 409),
     (InvalidStrategyError, 422),
     (InvalidScriptError, 422),
+    (BatchTooLargeError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
@@ -210,6 +214,7 @@ _SCRIPT_ROUTES = frozenset(
     {
         ("GET", "/api/v1/instruments"),
         ("GET", "/api/v1/quote"),
+        ("POST", "/api/v1/quotes"),
         ("GET", "/api/v1/bars"),
         ("GET", "/api/v1/option-chain"),
         ("GET", "/api/v1/market-status"),
@@ -324,6 +329,11 @@ class PlaceOrderBody(BaseModel):
     trigger_price: float | None = Field(default=None, gt=0, description="SL and SL-M only.")
 
 
+class QuotesBody(BaseModel):
+    broker: str
+    instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_QUOTES)
+
+
 class ModifyOrderBody(BaseModel):
     broker: str
     quantity: int | None = Field(default=None, ge=1, description="Omit to keep it.")
@@ -422,6 +432,12 @@ def create_app(
     @api.get("/quote")
     def quote(broker: Broker, symbol: Symbol, exchange: ExchangeQuery) -> QuoteResult:
         return QuoteResult.of(get_quote(get_adapter(broker), symbol, exchange.value))
+
+    @api.post("/quotes")
+    def quotes(body: QuotesBody) -> QuotesResult:
+        """Quotes for up to 50 instruments; a read, POSTed because it takes a list."""
+        wanted = [(item.symbol, item.exchange.value) for item in body.instruments]
+        return QuotesResult.of(get_quotes(get_adapter(body.broker), wanted))
 
     @api.get("/bars")
     def bars(

@@ -81,6 +81,7 @@ from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.evaluate_risk import RiskCheck
+from openticker.use_cases.get_quotes import QuotesLookup
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
@@ -151,6 +152,16 @@ class QuoteResult(BaseModel):
     exchange: Exchange
     last_price: float
     as_of: datetime = Field(description="Time of the last trade, exchange-local.")
+    bid: float | None = Field(description="Best price a buyer is waiting at; None if none.")
+    ask: float | None = Field(description="Best price a seller is waiting at; None if none.")
+    bid_quantity: int | None = Field(description="Units waiting at the best bid.")
+    ask_quantity: int | None = Field(description="Units waiting at the best ask.")
+    open: float | None = Field(description="Today's open; None before the first trade.")
+    high: float | None = Field(description="Today's high.")
+    low: float | None = Field(description="Today's low.")
+    prev_close: float | None = Field(description="The previous session's close.")
+    volume: int | None = Field(description="Units traded today.")
+    open_interest: int | None = Field(description="Futures and options only.")
 
     @classmethod
     def of(cls, quote: Quote) -> "QuoteResult":
@@ -159,6 +170,45 @@ class QuoteResult(BaseModel):
             exchange=quote.instrument.exchange,
             last_price=quote.last_price,
             as_of=quote.as_of.astimezone(EXCHANGE_TIMEZONE),
+            bid=quote.bid,
+            ask=quote.ask,
+            bid_quantity=quote.bid_quantity,
+            ask_quantity=quote.ask_quantity,
+            open=quote.open,
+            high=quote.day_high,
+            low=quote.day_low,
+            prev_close=quote.close,
+            volume=quote.volume,
+            open_interest=quote.open_interest,
+        )
+
+
+class InstrumentRef(BaseModel):
+    symbol: str = Field(description="OpenTicker's symbol, e.g. SBIN, NIFTY29SEP26FUT.")
+    exchange: Exchange
+
+
+class MissingQuoteResult(BaseModel):
+    symbol: str
+    exchange: str
+    reason: str
+
+
+class QuotesResult(BaseModel):
+    quotes: list[QuoteResult] = Field(description="In the order asked, repeats once.")
+    missing: list[MissingQuoteResult] = Field(
+        description="Instruments not quoted, each with why: not in the instrument master "
+        "(check with search_instruments, or run sync_instruments), or no quote from the broker."
+    )
+
+    @classmethod
+    def of(cls, lookup: QuotesLookup) -> "QuotesResult":
+        return cls(
+            quotes=[QuoteResult.of(quote) for quote in lookup.quotes],
+            missing=[
+                MissingQuoteResult(symbol=m.symbol, exchange=m.exchange, reason=m.reason)
+                for m in lookup.missing
+            ],
         )
 
 

@@ -47,6 +47,27 @@ def test_get_quote_after_sync_returns_resolved_quote() -> None:
     assert result.as_of.utcoffset() is not None
 
 
+def test_get_quotes_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    from openticker.adapters.inbound.mcp_models import InstrumentRef
+
+    result = mcp_server.get_quotes(
+        broker="fake",
+        instruments=[
+            InstrumentRef(symbol="RELIANCE", exchange=Exchange.NSE),
+            InstrumentRef(symbol="NOPE", exchange=Exchange.NSE),
+        ],
+    )
+
+    assert [(q.symbol, q.last_price) for q in result.quotes] == [("RELIANCE", FAKE_LAST_PRICE)]
+    assert [m.symbol for m in result.missing] == ["NOPE"]
+    with pytest.raises(ToolError, match="sync_instruments"):
+        mcp_server.get_quotes(
+            broker="fake", instruments=[InstrumentRef(symbol="NOPE", exchange=Exchange.NSE)]
+        )
+
+
 def test_get_historical_bars_returns_exchange_local_times_and_explains_truncation() -> None:
     mcp_server.sync_instruments(broker="fake")
 

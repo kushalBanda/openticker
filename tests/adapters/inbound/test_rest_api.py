@@ -1,3 +1,4 @@
+
 """REST routes end to end, over HTTP in-process, with `FakeBrokerPort`
 registered under its own name so nothing touches Kite."""
 
@@ -27,6 +28,7 @@ ROUTE_FOR_TOOL = {
     "sync_instruments": ("POST", "/api/v1/instruments/sync"),
     "search_instruments": ("GET", "/api/v1/instruments"),
     "get_quote": ("GET", "/api/v1/quote"),
+    "get_quotes": ("POST", "/api/v1/quotes"),
     "get_historical_bars": ("GET", "/api/v1/bars"),
     "get_option_chain": ("GET", "/api/v1/option-chain"),
     "place_order": ("POST", "/api/v1/orders"),
@@ -431,6 +433,7 @@ def test_the_access_log_never_shows_an_alert_token() -> None:
 SCRIPT_ROUTES = {
     ("GET", "/api/v1/instruments"),
     ("GET", "/api/v1/quote"),
+    ("POST", "/api/v1/quotes"),
     ("GET", "/api/v1/bars"),
     ("GET", "/api/v1/option-chain"),
     ("GET", "/api/v1/market-status"),
@@ -565,3 +568,20 @@ def test_modify_route_changes_a_resting_order(client: TestClient) -> None:
     audit = client.get("/api/v1/audit", params={"event_type": "OrderModified"}).json()
     [modified] = audit["entries"]
     assert modified["triggered_by"] == "rest:tests"
+
+
+def test_quotes_route_lists_what_it_could_not_quote(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+
+    def body(*symbols: str) -> dict[str, object]:
+        instruments = [{"symbol": symbol, "exchange": "NSE"} for symbol in symbols]
+        return {"broker": "fake", "instruments": instruments}
+
+    ok = client.post("/api/v1/quotes", json=body("RELIANCE", "NOPE")).json()
+    none_known = client.post("/api/v1/quotes", json=body("NOPE"))
+    too_many = client.post("/api/v1/quotes", json=body(*(f"S{i}" for i in range(51))))
+
+    assert [(q["symbol"], q["last_price"]) for q in ok["quotes"]] == [("RELIANCE", FAKE_LAST_PRICE)]
+    assert [(m["symbol"], m["exchange"]) for m in ok["missing"]] == [("NOPE", "NSE")]
+    assert none_known.status_code == 404
+    assert too_many.status_code == 422

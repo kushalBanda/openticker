@@ -35,6 +35,7 @@ from openticker.adapters.inbound.mcp_models import (
     DeleteScriptResult,
     DeleteStrategyResult,
     FundsResult,
+    InstrumentRef,
     LoginUrlResult,
     MarketStatusesResult,
     MarketStatusResult,
@@ -45,6 +46,7 @@ from openticker.adapters.inbound.mcp_models import (
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
+    QuotesResult,
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
@@ -106,7 +108,7 @@ from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.cancel_order import cancel_order as cancel_order_use_case
 from openticker.use_cases.connect_broker import connect_broker as connect_broker_use_case
-from openticker.use_cases.errors import UnknownOrderError
+from openticker.use_cases.errors import BatchTooLargeError, UnknownOrderError
 from openticker.use_cases.evaluate_risk import evaluate_risk as evaluate_risk_use_case
 from openticker.use_cases.get_audit_log import get_audit_log as get_audit_log_use_case
 from openticker.use_cases.get_funds import get_funds as get_funds_use_case
@@ -122,6 +124,8 @@ from openticker.use_cases.get_order_status import get_order_status as get_order_
 from openticker.use_cases.get_orderbook import get_orderbook as get_orderbook_use_case
 from openticker.use_cases.get_positions import get_positions as get_positions_use_case
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
+from openticker.use_cases.get_quotes import MAX_QUOTES
+from openticker.use_cases.get_quotes import get_quotes as get_quotes_use_case
 from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
 from openticker.use_cases.get_tradebook import session_start
 from openticker.use_cases.modify_order import modify_order as modify_order_use_case
@@ -158,7 +162,8 @@ Typical flow:
    from the redirect. Broker sessions expire daily; any tool failing with a
    "reconnect" error means repeat this step.
 2. sync_instruments once per day (instrument lists change with every expiry).
-3. search_instruments to find the exact symbol, then get_quote / get_historical_bars.
+3. search_instruments to find the exact symbol, then get_quote (get_quotes for up
+   to 50 at once) / get_historical_bars.
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
    strikes, prices, IV and Greeks around at-the-money.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
@@ -293,6 +298,7 @@ _AGENT_FIXABLE_ERRORS = (
     SandboxConfigError,
     CalendarError,
     UnknownOrderError,
+    BatchTooLargeError,
     UnknownStrategyError,
     LegResolutionError,
     DuplicateStrategyNameError,
@@ -416,10 +422,34 @@ def search_instruments(
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
 )
 def get_quote(broker: Broker, symbol: Symbol, exchange: ExchangeParam) -> QuoteResult:
-    """Last traded price of one instrument, live from the broker."""
+    """Live quote for one instrument: last price, best bid and ask, the day's
+    open, high and low, previous close, volume and open interest. get_quotes
+    takes up to 50 at once."""
     with _agent_facing_errors():
         quote = get_quote_use_case(get_adapter(broker), symbol, exchange.value)
     return QuoteResult.of(quote)
+
+
+@mcp.tool(
+    title="Get quotes",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_quotes(
+    broker: Broker,
+    instruments: Annotated[
+        list[InstrumentRef],
+        Field(min_length=1, max_length=MAX_QUOTES, description="Symbol and exchange of each."),
+    ],
+) -> QuotesResult:
+    """Live quotes for up to 50 instruments in one broker call: last price,
+    best bid and ask, the day's open, high and low, previous close, volume
+    and open interest. Instruments that can't be quoted are listed with the
+    reason; the call fails only when none of them is known."""
+    with _agent_facing_errors():
+        lookup = get_quotes_use_case(
+            get_adapter(broker), [(item.symbol, item.exchange.value) for item in instruments]
+        )
+    return QuotesResult.of(lookup)
 
 
 @mcp.tool(
