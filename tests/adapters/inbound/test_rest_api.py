@@ -37,6 +37,7 @@ ROUTE_FOR_TOOL = {
     "get_audit_log": ("GET", "/api/v1/audit"),
     "get_market_status": ("GET", "/api/v1/market-status"),
     "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
+    "modify_order": ("PATCH", "/api/v1/orders/{order_id}"),
     "get_order_status": ("GET", "/api/v1/orders/{order_id}"),
     "get_tradebook": ("GET", "/api/v1/trades"),
     "create_strategy": ("POST", "/api/v1/strategies"),
@@ -437,6 +438,7 @@ SCRIPT_ROUTES = {
     ("POST", "/api/v1/orders"),
     ("GET", "/api/v1/orders"),
     ("DELETE", "/api/v1/orders/{order_id}"),
+    ("PATCH", "/api/v1/orders/{order_id}"),
     ("GET", "/api/v1/orders/{order_id}"),
     ("GET", "/api/v1/trades"),
     ("GET", "/api/v1/positions"),
@@ -532,3 +534,34 @@ def test_script_routes_mirror_the_tools(client: TestClient) -> None:
         "script_id": script_id,
         "deleted": True,
     }
+
+
+def test_modify_route_changes_a_resting_order(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    placed = client.post(
+        "/api/v1/orders",
+        json={
+            "broker": "fake",
+            "symbol": "RELIANCE",
+            "exchange": "NSE",
+            "side": "BUY",
+            "quantity": 2,
+            "product": "MIS",
+            "order_type": "LIMIT",
+            "price": 2400.0,
+        },
+    ).json()
+    path = f"/api/v1/orders/{placed['order_id']}"
+
+    changed = client.patch(path, json={"broker": "fake", "price": 2410.0, "quantity": 4}).json()
+    refused = client.patch(path, json={"broker": "fake", "trigger_price": 2400.0}).json()
+    missing = client.patch("/api/v1/orders/SBNOPE", json={"broker": "fake", "price": 1.0})
+
+    assert changed["status"] == "PENDING"
+    assert (changed["order"]["price"], changed["order"]["quantity"]) == (2410.0, 4)
+    assert refused["status"] == "REJECTED" and "take no trigger_price" in refused["reason"]
+    assert refused["order"]["price"] == 2410.0
+    assert missing.status_code == 404
+    audit = client.get("/api/v1/audit", params={"event_type": "OrderModified"}).json()
+    [modified] = audit["entries"]
+    assert modified["triggered_by"] == "rest:tests"

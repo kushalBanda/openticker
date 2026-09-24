@@ -42,21 +42,16 @@ def place_order(
     validation = validate_order(request, now.astimezone(EXCHANGE_TIMEZONE).date())
     if not validation.valid:
         return _failed(events, request, OrderStatus.REJECTED, validation.reason or "invalid order")
-    closed = _market_closed(request, calendar, now) if check_session else None
+    closed = market_closed_reason(request, calendar, now) if check_session else None
     if closed is not None:
         return _failed(events, request, OrderStatus.REJECTED, closed)
 
     try:
-        if (
-            check_session
-            and _past_intraday_cutoff(request, calendar, now)
-            and not _only_reduces(request, broker)
-        ):
-            return _failed(
-                events, request, OrderStatus.REJECTED, _cutoff_reason(request, calendar, now)
-            )
+        cutoff = intraday_cutoff_reason(request, broker, calendar, now) if check_session else None
+        if cutoff is not None:
+            return _failed(events, request, OrderStatus.REJECTED, cutoff)
         if capital_cap is not None:
-            breach = _capital_cap_breach(request, broker, capital_cap)
+            breach = capital_cap_breach(request, broker, capital_cap)
             if breach is not None:
                 events.publish(
                     RiskBreached(symbol=symbol, reason=BreachReason.CAPITAL_CAP, detail=breach)
@@ -109,7 +104,10 @@ def place_order(
     return result
 
 
-def _market_closed(request: OrderRequest, calendar: MarketCalendar, now: datetime) -> str | None:
+def market_closed_reason(
+    request: OrderRequest, calendar: MarketCalendar, now: datetime
+) -> str | None:
+    """Why the order's exchange can't take it now, or None while it's open."""
     exchange = request.instrument.exchange
     status = market_status(now, exchange, calendar)
     if not status.is_open:
@@ -118,10 +116,18 @@ def _market_closed(request: OrderRequest, calendar: MarketCalendar, now: datetim
     return None
 
 
-def _past_intraday_cutoff(request: OrderRequest, calendar: MarketCalendar, now: datetime) -> bool:
-    return request.product is Product.MIS and not intraday_allowed(
-        now, request.instrument.exchange, calendar
-    )
+def intraday_cutoff_reason(
+    request: OrderRequest, broker: BrokerPort, calendar: MarketCalendar, now: datetime
+) -> str | None:
+    """Why an MIS order can't go ahead after the intraday square-off: from
+    then on it may only reduce a position. None when it may."""
+    if (
+        request.product is Product.MIS
+        and not intraday_allowed(now, request.instrument.exchange, calendar)
+        and not _only_reduces(request, broker)
+    ):
+        return _cutoff_reason(request, calendar, now)
+    return None
 
 
 def _cutoff_reason(request: OrderRequest, calendar: MarketCalendar, now: datetime) -> str:
@@ -151,9 +157,9 @@ def _only_reduces(request: OrderRequest, broker: BrokerPort) -> bool:
     return held * after >= 0 and abs(after) <= abs(held)
 
 
-def _capital_cap_breach(
-    request: OrderRequest, broker: BrokerPort, capital_cap: float
-) -> str | None:
+def capital_cap_breach(request: OrderRequest, broker: BrokerPort, capital_cap: float) -> str | None:
+    """Why the position would be worth more than `capital_cap` once the order
+    fills, or None. An order that only reduces a position never breaches."""
     if _only_reduces(request, broker):
         return None
     _, after = _held_after(request, broker)

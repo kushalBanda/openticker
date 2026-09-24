@@ -15,13 +15,16 @@ class SandboxPort(Protocol):
         """Oldest first."""
         ...
 
-    def fill_pending(self, order_id: str, price: float, now: datetime) -> OrderResult:
+    def fill_pending(self, order: Order, price: float, now: datetime) -> OrderResult:
         """Fills a pending order at `price`, or rejects it if the funds are no
-        longer there. An order no longer pending is left as it is."""
+        longer there. `order` is what `price` was matched against: one no
+        longer pending, or changed since (modify_order), is left as it is,
+        and the next price decides."""
         ...
 
-    def arm_pending(self, order_id: str, now: datetime) -> None:
-        """Records that an SL order's trigger has been crossed."""
+    def arm_pending(self, order: Order, now: datetime) -> None:
+        """Records that an SL order's trigger has been crossed, unless the
+        order changed since `order` was read."""
         ...
 
     def expire_order(self, order_id: str, reason: str, now: datetime) -> OrderResult: ...

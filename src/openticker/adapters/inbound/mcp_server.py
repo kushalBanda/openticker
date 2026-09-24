@@ -38,6 +38,7 @@ from openticker.adapters.inbound.mcp_models import (
     LoginUrlResult,
     MarketStatusesResult,
     MarketStatusResult,
+    ModifyOrderResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
@@ -74,7 +75,7 @@ from openticker.composition import (
 )
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
-from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
 from openticker.core.scripts.models import MAX_SCRIPT_BYTES, InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
@@ -123,6 +124,7 @@ from openticker.use_cases.get_positions import get_positions as get_positions_us
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
 from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
 from openticker.use_cases.get_tradebook import session_start
+from openticker.use_cases.modify_order import modify_order as modify_order_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -165,7 +167,8 @@ Typical flow:
    rest until a live price crosses them, which needs openticker-serve running.
    Intraday (MIS) positions are closed 15 minutes before the session ends.
    evaluate_risk checks stop/target settings first; get_positions, get_funds
-   and get_orderbook show the result; cancel_order withdraws a pending order.
+   and get_orderbook show the result; modify_order changes a pending order's
+   quantity or prices, cancel_order withdraws it.
 6. Strategies: create_strategy saves an options strategy whose legs are chosen
    relative to the market (ATM, N strikes in or out of the money, weekly or
    monthly expiry) with strategy-wide limits; preview_strategy shows the real
@@ -606,6 +609,48 @@ def cancel_order(
             order_id, order_broker(broker, os.environ, clock), event_bus(), "mcp"
         )
     return CancelOrderResult.of(order_id, result)
+
+
+@mcp.tool(
+    title="Modify sandbox order",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def modify_order(
+    broker: Broker,
+    order_id: Annotated[
+        str, Field(description="A PENDING order, from place_order or get_orderbook.")
+    ],
+    quantity: Annotated[
+        int | None, Field(ge=1, description="New quantity in units. Omit to keep it.")
+    ] = None,
+    price: Annotated[
+        Price, Field(description="New limit price: LIMIT and SL only. Omit to keep it.")
+    ] = None,
+    trigger_price: Annotated[
+        Price, Field(description="New trigger price: SL and SL-M only. Omit to keep it.")
+    ] = None,
+) -> ModifyOrderResult:
+    """Change a PENDING sandbox order's quantity, limit price or trigger
+    price; the margin it holds follows. Order type, symbol, side and product
+    can't change: cancel_order and place a new one. A change never fills the
+    order at once, even through the market: the next live price does, in
+    openticker-serve. Needs the exchange open."""
+    with _agent_facing_errors():
+        sandbox = order_broker(broker, os.environ, clock)
+        result = modify_order_use_case(
+            order_id,
+            OrderChanges(quantity=quantity, price=price, trigger_price=trigger_price),
+            sandbox,
+            event_bus(),
+            capital_cap(os.environ),
+            load_calendar(),
+            clock(),
+            "mcp",
+        )
+        order = get_order_status_use_case(sandbox, order_id)
+    return ModifyOrderResult.of(order_id, result, order)
 
 
 @mcp.tool(

@@ -8,7 +8,9 @@ as PENDING, with margin set aside for the part that would open a position,
 until the daemon's execution engine sees a live price cross them
 (`fill_pending`). A LIMIT the market is already through fills at once, as on
 an exchange; an SL or SL-M whose trigger is already crossed is refused, as
-exchanges refuse it.
+exchanges refuse it. A pending order's quantity, price and trigger can be
+changed (`modify_order`); the margin it holds follows, and it never fills on
+the change itself: the next live price decides.
 """
 
 import uuid
@@ -21,12 +23,14 @@ from sqlalchemy.orm import Session
 from openticker.core.orders.matching import limit_crossed, trigger_crossed
 from openticker.core.orders.models import (
     Order,
+    OrderChanges,
     OrderRequest,
     OrderResult,
     OrderStatus,
     OrderType,
     Trade,
 )
+from openticker.core.orders.modify import ChangeRefused, apply_changes
 from openticker.core.orders.sandbox import (
     Leverage,
     apply_fill,
@@ -162,11 +166,46 @@ class SandboxBroker:
             if (instrument := get_instrument(stored.symbol, stored.exchange)) is not None
         ]
 
-    def fill_pending(self, order_id: str, price: float, now: datetime) -> OrderResult:
+    def modify_order(self, order_id: str, changes: OrderChanges) -> OrderResult:
         with sandbox_repo.fill_transaction() as session:
             order = sandbox_repo.load_order(session, order_id)
             if order is None or order.status is not OrderStatus.PENDING:
                 return _not_pending(order_id, order)
+            instrument = get_instrument(order.symbol, order.exchange)
+            if instrument is None:
+                return _refused(order_id, f"{order.symbol} is no longer in the instrument master")
+            try:
+                request = apply_changes(order.to_order(instrument), changes)
+            except ChangeRefused as exc:
+                return _refused(order_id, str(exc))
+            changed = replace(
+                order,
+                quantity=request.quantity,
+                price=request.price,
+                trigger_price=request.trigger_price,
+                # A new trigger has to be crossed again before an SL arms.
+                triggered=order.triggered and request.trigger_price == order.trigger_price,
+            )
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            funds = replace(funds, used_margin=funds.used_margin - order.reserved_margin)
+            reserve = self._reserve(session, instrument, changed, funds)
+            if isinstance(reserve, str):
+                return _refused(order_id, reserve)
+            sandbox_repo.save_funds(
+                session, replace(funds, used_margin=funds.used_margin + reserve)
+            )
+            changed = replace(changed, reserved_margin=reserve)
+            sandbox_repo.update_order(session, changed, self._clock())
+        return _result(changed)
+
+    def fill_pending(self, pending: Order, price: float, now: datetime) -> OrderResult:
+        order_id = pending.order_id
+        with sandbox_repo.fill_transaction() as session:
+            order = sandbox_repo.load_order(session, order_id)
+            if order is None or order.status is not OrderStatus.PENDING:
+                return _not_pending(order_id, order)
+            if _changed_since(order, pending):
+                return _result(replace(order, reason=_CHANGED))
             instrument = get_instrument(order.symbol, order.exchange)
             funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
             funds = replace(funds, used_margin=funds.used_margin - order.reserved_margin)
@@ -187,10 +226,14 @@ class SandboxBroker:
             sandbox_repo.update_order(session, order, now)
         return _result(order)
 
-    def arm_pending(self, order_id: str, now: datetime) -> None:
+    def arm_pending(self, pending: Order, now: datetime) -> None:
         with sandbox_repo.fill_transaction() as session:
-            order = sandbox_repo.load_order(session, order_id)
-            if order is not None and order.status is OrderStatus.PENDING:
+            order = sandbox_repo.load_order(session, pending.order_id)
+            if (
+                order is not None
+                and order.status is OrderStatus.PENDING
+                and not _changed_since(order, pending)
+            ):
                 sandbox_repo.update_order(session, replace(order, triggered=True), now)
 
     def expire_order(self, order_id: str, reason: str, now: datetime) -> OrderResult:
@@ -382,6 +425,16 @@ class SandboxBroker:
     ) -> StoredOrder:
         """A PENDING order holding margin for what it would open, valued at
         its limit (or trigger, for SL-M)."""
+        reserve = self._reserve(session, instrument, order, funds)
+        if isinstance(reserve, str):
+            return replace(order, reason=reserve)
+        sandbox_repo.save_funds(session, replace(funds, used_margin=funds.used_margin + reserve))
+        return replace(order, status=OrderStatus.PENDING, reserved_margin=reserve)
+
+    def _reserve(
+        self, session: Session, instrument: Instrument, order: StoredOrder, funds: FundsState
+    ) -> float | str:
+        """The margin a resting order holds, or why the funds can't cover it."""
         reference = order.price if order.price is not None else order.trigger_price
         assert reference is not None  # validate_order: every resting type has one
         held = sandbox_repo.load_position(session, order.exchange, order.symbol, order.product)
@@ -393,15 +446,14 @@ class SandboxBroker:
             leverage_for(instrument, order.product, order.side, self._settings.leverage),
         )
         if order.product is Product.CNC and outcome.position.quantity < 0:
-            return replace(order, reason=_CNC_SHORT)
-        reserve = outcome.margin_required
-        if reserve > funds.available_cash:
-            return replace(order, reason=_insufficient(reserve, funds.available_cash))
-        sandbox_repo.save_funds(session, replace(funds, used_margin=funds.used_margin + reserve))
-        return replace(order, status=OrderStatus.PENDING, reserved_margin=reserve)
+            return _CNC_SHORT
+        if outcome.margin_required > funds.available_cash:
+            return _insufficient(outcome.margin_required, funds.available_cash)
+        return outcome.margin_required
 
 
 SETTLEMENT_TRIGGER = "expiry-settlement"
+_CHANGED = "changed since this price was matched; the next price decides"
 _CNC_SHORT = "delivery (CNC) shares can't be sold short; use MIS to short intraday"
 
 
@@ -415,6 +467,19 @@ def _result(order: StoredOrder) -> OrderResult:
         broker_order_id=order.order_id,
         reason=order.reason,
         fill_price=order.fill_price,
+    )
+
+
+def _refused(order_id: str, reason: str) -> OrderResult:
+    """A change not made: the order stays as it was."""
+    return OrderResult(status=OrderStatus.REJECTED, broker_order_id=order_id, reason=reason)
+
+
+def _changed_since(order: StoredOrder, seen: Order) -> bool:
+    return (order.quantity, order.price, order.trigger_price) != (
+        seen.quantity,
+        seen.price,
+        seen.trigger_price,
     )
 
 

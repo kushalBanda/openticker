@@ -497,6 +497,33 @@ class OrderbookEntryResult(BaseModel):
         )
 
 
+class ModifyOrderResult(BaseModel):
+    order_id: str
+    status: OrderStatus = Field(
+        description="PENDING: the change is made. REJECTED/FAILED: the order is unchanged, "
+        "for the reason given. FILLED/CANCELLED: it had already left the book."
+    )
+    reason: str | None
+    order: OrderbookEntryResult | None = Field(description="The order as it is now.")
+    next_step: str
+
+    @classmethod
+    def of(cls, order_id: str, result: OrderResult, order: Order | None) -> "ModifyOrderResult":
+        return cls(
+            order_id=order_id,
+            status=result.status,
+            reason=result.reason,
+            order=OrderbookEntryResult.of(order) if order is not None else None,
+            next_step=(
+                "Rests at its new terms until a live price crosses it; openticker-serve fills "
+                "it. get_order_status shows it."
+                if result.status is OrderStatus.PENDING
+                else "Nothing changed. Fix what the reason says, or cancel_order and place "
+                "a new one to change anything else."
+            ),
+        )
+
+
 class OrderbookResult(BaseModel):
     orders: list[OrderbookEntryResult] = Field(description="Most recent first.")
 

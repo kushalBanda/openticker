@@ -84,6 +84,15 @@ class Trade:
 
 
 @dataclass(frozen=True)
+class OrderChanges:
+    """A change to a resting order; None keeps the current value."""
+
+    quantity: int | None = None
+    price: float | None = None
+    trigger_price: float | None = None
+
+
+@dataclass(frozen=True)
 class ValidationResult:
     valid: bool
     reason: str | None

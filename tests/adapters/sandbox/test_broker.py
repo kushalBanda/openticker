@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
-from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.orders.models import Order, OrderRequest, OrderStatus, OrderType
 from openticker.ports.models import Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
@@ -26,6 +26,12 @@ def _order(side: Side, quantity: int, product: Product = Product.CNC) -> OrderRe
 
 def _sandbox(market: PricedBroker, capital: float = 100_000.0) -> SandboxBroker:
     return SandboxBroker("fake", market, SandboxSettings(starting_capital=capital))
+
+
+def _pending(sandbox: SandboxBroker, order_id: str) -> Order:
+    order = sandbox.get_order(order_id)
+    assert order is not None
+    return order
 
 
 def test_market_order_fills_at_the_live_price_and_blocks_margin() -> None:
@@ -201,8 +207,8 @@ def test_filling_a_pending_order_swaps_its_reservation_for_real_margin() -> None
     placed = sandbox.place_order(_resting(Side.BUY, 10, OrderType.LIMIT, price=950.0))
     assert placed.broker_order_id is not None
 
-    filled = sandbox.fill_pending(placed.broker_order_id, 948.0, NOW)
-    again = sandbox.fill_pending(placed.broker_order_id, 940.0, NOW)
+    filled = sandbox.fill_pending(_pending(sandbox, placed.broker_order_id), 948.0, NOW)
+    again = sandbox.fill_pending(_pending(sandbox, placed.broker_order_id), 940.0, NOW)
 
     assert (filled.status, filled.fill_price) == (OrderStatus.FILLED, 948.0)
     assert sandbox.get_funds().used_margin == 9_480.0
@@ -219,7 +225,8 @@ def test_a_pending_order_the_funds_no_longer_cover_is_rejected_and_releases_its_
     sandbox.place_order(_order(Side.BUY, 10))  # uses 10,000 more
     assert placed.broker_order_id is not None
 
-    result = sandbox.fill_pending(placed.broker_order_id, 1500.0, NOW)  # gapped far above
+    pending = _pending(sandbox, placed.broker_order_id)
+    result = sandbox.fill_pending(pending, 1500.0, NOW)  # gapped far above
 
     assert result.status is OrderStatus.REJECTED
     assert sandbox.get_funds().used_margin == 10_000.0
@@ -248,7 +255,7 @@ def test_arming_an_sl_is_remembered() -> None:
     )
     assert placed.broker_order_id is not None
 
-    sandbox.arm_pending(placed.broker_order_id, NOW)
+    sandbox.arm_pending(_pending(sandbox, placed.broker_order_id), NOW)
 
     [pending] = sandbox.pending_orders()
     assert pending.triggered

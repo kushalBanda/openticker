@@ -45,7 +45,7 @@ def execute_resting_orders(
             continue
         match = match_resting(order, tick.last_price)
         if match.triggered and not order.triggered:
-            sandbox.arm_pending(order.order_id, now)
+            sandbox.arm_pending(order, now)
         if match.fill:
             _fill(sandbox, order, tick.last_price, events, now)
 
@@ -65,7 +65,7 @@ def _expiry(order: Order, calendar: MarketCalendar) -> tuple[datetime, str]:
 def _fill(
     sandbox: SandboxPort, order: Order, price: float, events: EventPublisher, now: datetime
 ) -> None:
-    result = sandbox.fill_pending(order.order_id, price, now)
+    result = sandbox.fill_pending(order, price, now)
     if result.status is OrderStatus.FILLED and result.fill_price is not None:
         events.publish(
             OrderFilled(

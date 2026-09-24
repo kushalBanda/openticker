@@ -2,7 +2,13 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Protocol
 
-from openticker.core.orders.models import Order, OrderRequest, OrderResult, Trade
+from openticker.core.orders.models import (
+    Order,
+    OrderChanges,
+    OrderRequest,
+    OrderResult,
+    Trade,
+)
 from openticker.ports.models import Bar, Credentials, Funds, Instrument, Position, Quote
 
 
@@ -30,6 +36,12 @@ class BrokerPort(Protocol):
     def cancel_order(self, order_id: str) -> OrderResult:
         """Withdraws a pending order. The result carries the order's status
         afterwards, with a reason when there was nothing to cancel."""
+        ...
+
+    def modify_order(self, order_id: str, changes: OrderChanges) -> OrderResult:
+        """Changes a pending order's quantity, price or trigger; never fills
+        it. A refused change leaves the order as it was, and the result says
+        why."""
         ...
 
     def get_trades(self, since: datetime, limit: int) -> list[Trade]:

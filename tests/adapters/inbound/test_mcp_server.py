@@ -649,6 +649,33 @@ def test_script_tools_turn_mistakes_into_agent_facing_errors() -> None:
         )
 
 
+def test_modify_order_through_the_tool() -> None:
+    from openticker.core.orders.models import OrderType
+
+    mcp_server.sync_instruments(broker="fake")
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.SELL,
+        quantity=3,
+        product=Product.MIS,
+        order_type=OrderType.SL_M,
+        trigger_price=2400.0,
+    )
+    assert placed.order_id is not None
+
+    moved = mcp_server.modify_order(broker="fake", order_id=placed.order_id, trigger_price=2390.0)
+    refused = mcp_server.modify_order(broker="fake", order_id=placed.order_id, price=2390.0)
+
+    assert moved.status == "PENDING" and moved.order is not None
+    assert (moved.order.trigger_price, moved.order.status) == (2390.0, "PENDING")
+    assert refused.status == "REJECTED" and refused.reason == "SL-M orders take no price"
+    assert "cancel_order" in refused.next_step
+    with pytest.raises(ToolError, match="get_orderbook"):
+        mcp_server.modify_order(broker="fake", order_id="SBNOPE", price=1.0)
+
+
 def test_order_status_and_tradebook_through_the_tools() -> None:
     mcp_server.sync_instruments(broker="fake")
     placed = mcp_server.place_order(

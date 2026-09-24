@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
-from openticker.core.orders.models import OrderRequest, OrderType
+from openticker.core.orders.models import Order, OrderRequest, OrderType
 from openticker.ports.models import Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
@@ -29,6 +29,12 @@ def _request(
     side: Side, kind: OrderType = OrderType.MARKET, price: float | None = None
 ) -> OrderRequest:
     return OrderRequest(FAKE_INSTRUMENT, side, 1, Product.MIS, kind, price, "mcp", "s1", "r1")
+
+
+def _pending(sandbox: SandboxBroker, order_id: str) -> Order:
+    order = sandbox.get_order(order_id)
+    assert order is not None
+    return order
 
 
 def test_trades_since_newest_first_with_who_placed_them() -> None:
@@ -57,7 +63,7 @@ def test_a_resting_order_trades_when_it_fills_not_when_placed() -> None:
     assert placed.broker_order_id is not None and sandbox.get_trades(MORNING, 10) == []
 
     filled_at = MORNING + timedelta(hours=1)
-    sandbox.fill_pending(placed.broker_order_id, 95.0, filled_at)
+    sandbox.fill_pending(_pending(sandbox, placed.broker_order_id), 95.0, filled_at)
 
     [trade] = sandbox.get_trades(MORNING, 10)
     assert (trade.order_id, trade.price, trade.filled_at) == (

@@ -41,6 +41,7 @@ from openticker.adapters.inbound.mcp_models import (
     LoginUrlResult,
     MarketStatusesResult,
     MarketStatusResult,
+    ModifyOrderResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
@@ -72,7 +73,7 @@ from openticker.adapters.inbound.mcp_models import (
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
-from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
 from openticker.core.scripts.models import InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
@@ -105,6 +106,7 @@ from openticker.use_cases.get_orderbook import get_orderbook
 from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.get_tradebook import get_tradebook, session_start
+from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -203,7 +205,7 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
 
 # What a hosted script's key reaches (ADR 25 in docs/adr): prices, and placing,
-# reading and cancelling orders. Never broker login, strategies or scripts.
+# reading, changing and cancelling orders. Never broker login, strategies or scripts.
 _SCRIPT_ROUTES = frozenset(
     {
         ("GET", "/api/v1/instruments"),
@@ -215,6 +217,7 @@ _SCRIPT_ROUTES = frozenset(
         ("POST", "/api/v1/orders"),
         ("GET", "/api/v1/orders"),
         ("DELETE", "/api/v1/orders/{order_id}"),
+        ("PATCH", "/api/v1/orders/{order_id}"),
         ("GET", "/api/v1/orders/{order_id}"),
         ("GET", "/api/v1/trades"),
         ("GET", "/api/v1/positions"),
@@ -317,6 +320,13 @@ class PlaceOrderBody(BaseModel):
     quantity: int = Field(ge=1, description="Units, not lots.")
     product: Product
     order_type: OrderType = OrderType.MARKET
+    price: float | None = Field(default=None, gt=0, description="LIMIT and SL only.")
+    trigger_price: float | None = Field(default=None, gt=0, description="SL and SL-M only.")
+
+
+class ModifyOrderBody(BaseModel):
+    broker: str
+    quantity: int | None = Field(default=None, ge=1, description="Omit to keep it.")
     price: float | None = Field(default=None, gt=0, description="LIMIT and SL only.")
     trigger_price: float | None = Field(default=None, gt=0, description="SL and SL-M only.")
 
@@ -482,6 +492,24 @@ def create_app(
         """Withdraws a PENDING order; anything else is left as it is."""
         result = cancel_order(order_id, order_broker(broker, env, clock), events, _caller(key))
         return CancelOrderResult.of(order_id, result)
+
+    @api.patch("/orders/{order_id}")
+    def patch_order(order_id: str, body: ModifyOrderBody, key: ApiKey) -> ModifyOrderResult:
+        """Changes a PENDING order's quantity, price or trigger; never fills it."""
+        sandbox = order_broker(body.broker, env, clock)
+        result = modify_order(
+            order_id,
+            OrderChanges(
+                quantity=body.quantity, price=body.price, trigger_price=body.trigger_price
+            ),
+            sandbox,
+            events,
+            capital_cap(env),
+            load_calendar(),
+            clock(),
+            _caller(key),
+        )
+        return ModifyOrderResult.of(order_id, result, get_order_status(sandbox, order_id))
 
     @api.get("/market-status")
     def market_status(exchange: Exchange | None = None) -> MarketStatusesResult:

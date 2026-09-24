@@ -39,6 +39,17 @@ class OrderFailed:
 
 
 @dataclass(frozen=True)
+class OrderModified:
+    """A pending order's quantity, price or trigger changed. Audited, not notified."""
+
+    order_id: str
+    symbol: str
+    change: str  # "price 950.0 -> 960.0, quantity 10 -> 20"
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class OrderCancelled:
     """A pending order withdrawn by the user, or expired at the session's end."""
 

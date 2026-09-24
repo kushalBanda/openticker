@@ -210,10 +210,14 @@ def load_order(session: Session, order_id: str) -> StoredOrder | None:
 
 
 def update_order(session: Session, order: StoredOrder, now: datetime) -> None:
-    """Writes a resting order's new state; a fill also records its trade."""
+    """Writes a resting order's new state, including a changed quantity,
+    price or trigger; a fill also records its trade."""
     row = session.get(SandboxOrderRow, order.order_id)
     if row is None:
         raise LookupError(f"no sandbox order {order.order_id}")
+    row.quantity = order.quantity
+    row.price = order.price
+    row.trigger_price = order.trigger_price
     row.status = order.status.value
     row.fill_price = order.fill_price
     row.reason = order.reason
