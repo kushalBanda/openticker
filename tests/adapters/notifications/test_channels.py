@@ -9,8 +9,12 @@ from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import NotificationError, SlackAdapter
 
 _SETTINGS = SmtpSettings(
-    host="smtp.example.com", port=587, username="bot@example.com", password="pw",
-    sender="bot@example.com", recipient="me@example.com",
+    host="smtp.example.com",
+    port=587,
+    username="bot@example.com",
+    password="pw",
+    sender="bot@example.com",
+    recipient="me@example.com",
 )
 
 
@@ -53,7 +57,9 @@ class _FakeSmtp:
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
         pass

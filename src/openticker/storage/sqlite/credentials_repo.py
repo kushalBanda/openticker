@@ -6,6 +6,8 @@ that keeps a self-hosted single-user install from ever writing a plaintext
 broker token to disk, without requiring a separate secrets manager.
 """
 
+import os
+import tempfile
 from datetime import datetime
 
 from cryptography.fernet import Fernet
@@ -18,13 +20,24 @@ from openticker.storage.sqlite.models import CredentialRow
 
 
 def _get_or_create_key() -> bytes:
+    """The key, made on first use. The daemon's threads may all ask at once
+    on a new home: the key is written whole to a file of its own and linked
+    into place, which fails if another thread got there first, so nobody
+    reads a key half-written."""
     key_path = get_data_dir() / "secret.key"
     if key_path.exists():
         return key_path.read_bytes()
     key_path.parent.mkdir(parents=True, exist_ok=True)
     key = Fernet.generate_key()
-    key_path.write_bytes(key)
-    key_path.chmod(0o600)
+    fd, staged = tempfile.mkstemp(dir=key_path.parent, prefix=".secret.key.")
+    try:
+        with os.fdopen(fd, "wb") as staged_file:  # mkstemp's file is 0600
+            staged_file.write(key)
+        os.link(staged, key_path)
+    except FileExistsError:
+        return key_path.read_bytes()
+    finally:
+        os.unlink(staged)
     return key
 
 
@@ -42,7 +55,9 @@ def save_credentials(credentials: Credentials) -> None:
             if credentials.refresh_token is not None
             else None
         ),
-        expires_at=(credentials.expires_at.isoformat() if credentials.expires_at is not None else None),
+        expires_at=(
+            credentials.expires_at.isoformat() if credentials.expires_at is not None else None
+        ),
     )
     with Session(get_engine()) as session:
         session.merge(row)

@@ -5,6 +5,7 @@ channel never delays the use case that published the event."""
 from collections.abc import Callable, Sequence
 
 from openticker.events.types import (
+    AgentJobEnded,
     BrokerSessionExpired,
     ChargeRatesDiffer,
     OrderFailed,
@@ -33,6 +34,7 @@ NOTIFIED_EVENTS: tuple[type, ...] = (
     ScriptStarted,
     ScriptExited,
     ChargeRatesDiffer,
+    AgentJobEnded,
 )
 
 
@@ -79,6 +81,18 @@ def describe(event: object) -> tuple[str, str] | None:
             )
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
+        case AgentJobEnded():
+            cost = f" Cost ${event.cost_usd:.2f}." if event.cost_usd is not None else ""
+            if event.reason == "finished" and event.summary:
+                headline = event.summary.strip().splitlines()[0][:120]
+                return (
+                    f"{event.kind.capitalize()} of {event.strategy_name}: {headline}",
+                    f"{event.summary}\n\nJob {event.job_id}.{cost}",
+                )
+            return (
+                f"{event.kind.capitalize()} of {event.strategy_name} {event.reason}",
+                f"{event.detail}. Job {event.job_id}; get_agent_job_log shows its output.{cost}",
+            )
         case ChargeRatesDiffer():
             subject = (
                 f"Charge rates differ from {event.broker}'s: "

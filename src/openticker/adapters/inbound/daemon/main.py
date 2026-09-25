@@ -2,8 +2,8 @@
 commands that manage its API keys (ADR 17 in docs/adr).
 
     openticker-serve                     run the REST API, live prices, sandbox execution,
-                                         strategies, hosted scripts and the daily
-                                         charge-rate check
+                                         strategies, hosted scripts, agent jobs, the
+                                         daily charge-rate check, and MCP at /mcp
     openticker-serve keys create <name>  print a new key, once
     openticker-serve keys list
     openticker-serve keys revoke <name>
@@ -25,18 +25,25 @@ from typing import Any
 import uvicorn
 from dotenv import load_dotenv
 
+from openticker.adapters.agents.harness import HarnessProcesses
 from openticker.adapters.brokers.registry import FEED_REGISTRY, get_adapter, get_feed
+from openticker.adapters.inbound import mcp_server
+from openticker.adapters.inbound.daemon.agent_loop import AgentLoop
 from openticker.adapters.inbound.daemon.charge_check_loop import ChargeCheckLoop
 from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
+from openticker.adapters.inbound.mcp_scoped import MCP_PATH, WithMcp
 from openticker.adapters.inbound.rest_api import API_KEY_HEADER, HideAlertTokens, create_app
 from openticker.adapters.scripts.supervisor import ProcessSupervisor
 from openticker.composition import (
+    AgentConfigError,
+    agent_settings,
     build_event_bus,
     capital_cap,
+    labs_dir,
     order_broker,
     price_timeouts,
     sandbox_settings,
@@ -46,6 +53,7 @@ from openticker.composition import (
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
+from openticker.use_cases.agents.supervise import AgentContext
 from openticker.use_cases.api_keys import (
     InvalidApiKeyNameError,
     create_api_key,
@@ -164,6 +172,8 @@ def _serve(env: Mapping[str, str]) -> None:
     watch = watch_list(env)
     events = build_event_bus(env)  # now, so bad notification settings fail at startup
     limits = script_limits(env)  # likewise bad script limits
+    agents = agent_settings(env)  # and bad agent job settings
+    mcp_server.use_event_bus(events)  # MCP over HTTP publishes on this server's bus
     prices = LatestPrices()
     stop = threading.Event()
     feeds = [
@@ -225,6 +235,16 @@ def _serve(env: Mapping[str, str]) -> None:
             name="scripts",
         )
     )
+    try:
+        agent_context = AgentContext(
+            HarnessProcesses(), events, agents, labs_dir(env), local_url(host, port) + MCP_PATH
+        )
+    except AgentConfigError as exc:
+        print(f"warning: agent jobs won't run: {exc}", file=sys.stderr)
+    else:
+        feeds.append(
+            threading.Thread(target=AgentLoop(agent_context).run, args=(stop,), name="agents")
+        )
     for thread in feeds:
         thread.start()
     # uvicorn raises SIGTERM again once it has shut down. With the default
@@ -232,7 +252,12 @@ def _serve(env: Mapping[str, str]) -> None:
     # below, and hosted scripts would be left running with nothing watching.
     signal.signal(signal.SIGTERM, exit_on_signal)
     try:
-        uvicorn.run(create_app(events, env), host=host, port=port, log_config=_log_config())
+        uvicorn.run(
+            WithMcp(create_app(events, env), mcp_server.mcp),
+            host=host,
+            port=port,
+            log_config=_log_config(),
+        )
     finally:
         stop.set()
         for thread in feeds:

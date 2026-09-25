@@ -158,6 +158,9 @@ class StrategyRow(Base):
     # The broker scheduled entries go through; NULL: not scheduled (ADR 22 in
     # docs/adr). Nullable, so it can be added to an existing table (ADR 18).
     scheduled_broker: Mapped[str | None]
+    # When it is reviewed without being asked, as JSON; NULL: only on
+    # start_review (ADR 29 in docs/adr).
+    review_schedule: Mapped[str | None]
 
 
 # Strategy runs (ADR 21 in docs/adr). The MCP server and the REST API write
@@ -313,3 +316,26 @@ class ScriptRunRow(Base):
     stop_requested_at: Mapped[datetime | None]  # UTC, stored naive
     exit_code: Mapped[int | None]
     ended_at: Mapped[datetime | None]  # UTC, stored naive
+
+
+class AgentJobRow(Base):
+    """One headless run of the user's coding agent (ADR 29 in docs/adr)."""
+
+    __tablename__ = "agent_jobs"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    kind: Mapped[str]  # review
+    strategy_id: Mapped[str] = mapped_column(index=True)
+    harness: Mapped[str]  # claude, codex
+    status: Mapped[str] = mapped_column(index=True)  # pending, running, stopping, ended
+    trigger: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(index=True)  # UTC, stored naive
+    started_at: Mapped[datetime | None]  # UTC, stored naive
+    pid: Mapped[int | None]
+    stop_requested_at: Mapped[datetime | None]  # UTC, stored naive
+    end_reason: Mapped[str | None]
+    end_detail: Mapped[str | None]
+    exit_code: Mapped[int | None]
+    ended_at: Mapped[datetime | None]  # UTC, stored naive
+    summary: Mapped[str | None]  # the agent's final answer, capped
+    cost_usd: Mapped[float | None]

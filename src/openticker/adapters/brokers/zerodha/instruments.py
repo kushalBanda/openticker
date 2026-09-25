@@ -35,9 +35,7 @@ class KiteInstrumentsError(BrokerError):
 def download_instrument_csv() -> str:
     response = httpx.get(KITE_INSTRUMENTS_URL, timeout=60.0)
     if response.status_code >= HTTPStatus.BAD_REQUEST:
-        raise KiteInstrumentsError(
-            f"instrument CSV download failed: HTTP {response.status_code}"
-        )
+        raise KiteInstrumentsError(f"instrument CSV download failed: HTTP {response.status_code}")
     return response.text
 
 
@@ -55,10 +53,14 @@ def parse_instrument_csv(csv_text: str) -> list[Instrument]:
 
 def _to_instrument(row: dict[str, str]) -> Instrument:
     instrument_type = (
-        InstrumentType.INDEX if row["segment"] == "INDICES" else InstrumentType(row["instrument_type"])
+        InstrumentType.INDEX
+        if row["segment"] == "INDICES"
+        else InstrumentType(row["instrument_type"])
     )
     expiry = date.fromisoformat(row["expiry"]) if row["expiry"] else None
-    strike = float(row["strike"]) if instrument_type in (InstrumentType.CE, InstrumentType.PE) else None
+    strike = (
+        float(row["strike"]) if instrument_type in (InstrumentType.CE, InstrumentType.PE) else None
+    )
     return Instrument(
         symbol=_standard_symbol(row, instrument_type, expiry, strike),
         broker_symbol=row["tradingsymbol"],

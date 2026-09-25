@@ -1,4 +1,3 @@
-
 """REST routes end to end, over HTTP in-process, with `FakeBrokerPort`
 registered under its own name so nothing touches Kite."""
 
@@ -14,6 +13,7 @@ from fastapi.testclient import TestClient
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
+from openticker.adapters.inbound.scopes import TOOL_ROUTES
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
 from openticker.use_cases.api_keys import create_api_key, revoke
@@ -22,66 +22,7 @@ from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 
 # Every MCP tool and the route that mirrors it.
-ROUTE_FOR_TOOL = {
-    "get_broker_login_url": ("GET", "/api/v1/brokers/{broker}/login-url"),
-    "connect_broker": ("POST", "/api/v1/brokers/connect"),
-    "sync_instruments": ("POST", "/api/v1/instruments/sync"),
-    "search_instruments": ("GET", "/api/v1/instruments"),
-    "get_quote": ("GET", "/api/v1/quote"),
-    "get_quotes": ("POST", "/api/v1/quotes"),
-    "get_market_depth": ("GET", "/api/v1/depth"),
-    "get_historical_bars": ("GET", "/api/v1/bars"),
-    "get_option_chain": ("GET", "/api/v1/option-chain"),
-    "place_order": ("POST", "/api/v1/orders"),
-    "place_basket": ("POST", "/api/v1/orders/basket"),
-    "get_margin": ("POST", "/api/v1/margin"),
-    "preview_charges": ("GET", "/api/v1/charges/preview"),
-    "check_charge_rates": ("POST", "/api/v1/charges/check"),
-    "get_orderbook": ("GET", "/api/v1/orders"),
-    "get_positions": ("GET", "/api/v1/positions"),
-    "get_funds": ("GET", "/api/v1/funds"),
-    "evaluate_risk": ("POST", "/api/v1/risk/evaluate"),
-    "get_audit_log": ("GET", "/api/v1/audit"),
-    "get_market_status": ("GET", "/api/v1/market-status"),
-    "cancel_order": ("DELETE", "/api/v1/orders/{order_id}"),
-    "cancel_all_orders": ("POST", "/api/v1/orders/cancel-all"),
-    "close_position": ("POST", "/api/v1/positions/close"),
-    "close_all_positions": ("POST", "/api/v1/positions/close-all"),
-    "modify_order": ("PATCH", "/api/v1/orders/{order_id}"),
-    "get_order_status": ("GET", "/api/v1/orders/{order_id}"),
-    "get_tradebook": ("GET", "/api/v1/trades"),
-    "create_strategy": ("POST", "/api/v1/strategies"),
-    "list_strategies": ("GET", "/api/v1/strategies"),
-    "get_strategy": ("GET", "/api/v1/strategies/{strategy_id}"),
-    "update_strategy": ("PUT", "/api/v1/strategies/{strategy_id}"),
-    "delete_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}"),
-    "preview_strategy": ("GET", "/api/v1/strategies/{strategy_id}/preview"),
-    "start_strategy": ("POST", "/api/v1/strategies/{strategy_id}/start"),
-    "stop_strategy": ("POST", "/api/v1/strategies/{strategy_id}/stop"),
-    "kill_strategy": ("POST", "/api/v1/strategies/{strategy_id}/kill"),
-    "release_kill_switch": ("POST", "/api/v1/strategies/{strategy_id}/release"),
-    "schedule_strategy": ("POST", "/api/v1/strategies/{strategy_id}/schedule"),
-    "unschedule_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}/schedule"),
-    "close_strategy_leg": ("POST", "/api/v1/strategies/{strategy_id}/legs/{leg_id}/close"),
-    "get_strategy_runs": ("GET", "/api/v1/strategies/{strategy_id}/runs"),
-    "get_strategy_ledger": ("GET", "/api/v1/strategies/{strategy_id}/ledger"),
-    "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
-    "create_signal_strategy": ("POST", "/api/v1/signal-strategies"),
-    "update_signal_strategy": ("PUT", "/api/v1/signal-strategies/{strategy_id}"),
-    "rotate_strategy_webhook": ("POST", "/api/v1/strategies/{strategy_id}/webhook"),
-    "disable_strategy_webhook": ("DELETE", "/api/v1/strategies/{strategy_id}/webhook"),
-    "get_strategy_signals": ("GET", "/api/v1/strategies/{strategy_id}/signals"),
-    "upload_script": ("POST", "/api/v1/scripts"),
-    "list_scripts": ("GET", "/api/v1/scripts"),
-    "get_script": ("GET", "/api/v1/scripts/{script_id}"),
-    "update_script": ("PUT", "/api/v1/scripts/{script_id}"),
-    "delete_script": ("DELETE", "/api/v1/scripts/{script_id}"),
-    "start_script": ("POST", "/api/v1/scripts/{script_id}/start"),
-    "stop_script": ("POST", "/api/v1/scripts/{script_id}/stop"),
-    "schedule_script": ("POST", "/api/v1/scripts/{script_id}/schedule"),
-    "unschedule_script": ("DELETE", "/api/v1/scripts/{script_id}/schedule"),
-    "get_script_logs": ("GET", "/api/v1/scripts/{script_id}/logs"),
-}
+ROUTE_FOR_TOOL = TOOL_ROUTES
 
 
 def _routes(app: FastAPI) -> set[tuple[str, str]]:
@@ -344,7 +285,12 @@ def test_close_and_cancel_all_routes(client: TestClient) -> None:
 
 def test_charges_preview_route_matches_the_tool(client: TestClient) -> None:
     client.post("/api/v1/instruments/sync", json={"broker": "fake"})
-    order: dict[str, str | float] = {"symbol": "RELIANCE", "exchange": "NSE", "quantity": 10, "price": 1226.0}
+    order: dict[str, str | float] = {
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "quantity": 10,
+        "price": 1226.0,
+    }
 
     sold = client.get("/api/v1/charges/preview", params={**order, "side": "SELL", "product": "MIS"})
     unknown = client.get(
@@ -470,6 +416,37 @@ def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
     ledger = client.get(f"{base}/ledger", params={"limit": 1}).json()
     assert (ledger["total_runs"], ledger["uncharged"], len(ledger["runs"])) == (1, 1, 1)
     assert client.get("/api/v1/strategies/stg_nope/ledger").status_code == 404
+
+
+def test_review_routes_mirror_the_tools(client: TestClient) -> None:
+    from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    body = {"name": "reviewed", "definition": STRADDLE_JSON}
+    strategy_id = client.post("/api/v1/strategies", json=body).json()["strategy_id"]
+
+    started = client.post(f"/api/v1/strategies/{strategy_id}/review")
+    again = client.post(f"/api/v1/strategies/{strategy_id}/review")
+    job_id = started.json()["job"]["job_id"]
+    jobs = client.get("/api/v1/agent-jobs", params={"strategy_id": strategy_id}).json()
+
+    assert started.status_code == 200 and started.json()["job"]["trigger"] == "rest:tests"
+    assert again.status_code == 409
+    assert [job["job_id"] for job in jobs["jobs"]] == [job_id]
+    assert client.get(f"/api/v1/agent-jobs/{job_id}/log").json()["status"] == "pending"
+    assert client.get("/api/v1/agent-jobs/job_nope/log").status_code == 404
+    assert client.post("/api/v1/strategies/stg_nope/review").status_code == 404
+
+    schedule = f"/api/v1/strategies/{strategy_id}/review-schedule"
+    scheduled = client.post(schedule, json={"after_runs": 10})
+    bad = client.post(schedule, json={"every": "weekly"})
+    none = client.post(schedule, json={})
+
+    assert scheduled.json()["review_schedule"]["after_runs"] == 10
+    assert bad.status_code == none.status_code == 422
+    assert "like 30m" in bad.json()["detail"]
+    assert client.delete(schedule).json()["review_schedule"] is None
 
 
 def test_an_alert_posted_to_its_url_needs_no_api_key(client: TestClient, events: EventBus) -> None:

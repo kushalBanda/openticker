@@ -29,7 +29,9 @@ def exchange_request_token(api_key: str, api_secret: str, request_token: str) ->
             data={"api_key": api_key, "request_token": request_token, "checksum": checksum},
         )
     if response.status_code >= HTTPStatus.BAD_REQUEST:
-        raise KiteAuthError(f"Kite login exchange failed: HTTP {response.status_code} - {response.text}")
+        raise KiteAuthError(
+            f"Kite login exchange failed: HTTP {response.status_code} - {response.text}"
+        )
     access_token: str = response.json()["data"]["access_token"]
     return Credentials(
         broker="zerodha",

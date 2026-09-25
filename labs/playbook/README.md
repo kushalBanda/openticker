@@ -37,6 +37,14 @@ Once a strategy has run at least 10 times, ask:
 
 The `reviewer` agent reads the strategy's ledger (every run, its fills, charges and slippage), judges it after costs against what your note said would prove it wrong, and appends a dated verdict to the note: keep, change one thing, or retire. It suggests at most one change, as a new strategy you can create alongside the old one. It never starts, stops or edits anything.
 
+To have it done without you, ask the agent to "start a review" (`start_review`). `openticker-serve` runs your own Claude Code (or Codex, with `OPENTICKER_AGENT_HARNESS=codex`) in this folder, headless, and notifies you with the verdict. The job's key can read only that strategy. `get_agent_jobs` shows how it went.
+
+To have it reviewed on a schedule, say when:
+
+> Review my NIFTY iron condor every 10 runs, and straight away if it falls ₹5,000 below its best.
+
+The agent calls `schedule_review`. The triggers are every so many minutes, hours or days, after so many runs, and a drawdown in rupees; any one met is enough. A review is due only once a run has ended since the last one, so a strategy that isn't trading costs nothing. Scheduled reviews count against the same daily cap as the rest.
+
 ## What's where
 
 | Path | What |

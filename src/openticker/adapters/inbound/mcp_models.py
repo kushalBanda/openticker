@@ -10,6 +10,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
+from openticker.core.agents.jobs import AgentJob, AgentJobEndReason, AgentJobStatus
+from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
 from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
 from openticker.core.orders.models import (
@@ -84,6 +86,7 @@ from openticker.storage.sqlite.audit_repo import AuditEntry
 from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
+from openticker.use_cases.agents.manage import AgentJobLog
 from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
@@ -1283,6 +1286,45 @@ class SignalStrategyDefinition(_LimitFields):
         )
 
 
+class ReviewScheduleDefinition(BaseModel):
+    """When openticker-serve reviews a strategy without being asked. Any
+    trigger met is enough; each counts from the last review, or from when
+    the schedule was set. A review is due only once a run has ended since
+    the last one."""
+
+    every: str | None = Field(
+        default=None,
+        description="A review at most this often, like 30m, 4h or 1d (5 minutes to 90 days).",
+    )
+    after_runs: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_AFTER_RUNS,
+        description="A review once this many runs have ended after costs since the last one.",
+    )
+    drawdown: float | None = Field(
+        default=None,
+        gt=0,
+        description="A review when net P&L after charges falls this many rupees below its high.",
+    )
+
+
+class ReviewScheduleResult(BaseModel):
+    every: str | None
+    after_runs: int | None
+    drawdown: float | None
+    set_at: datetime
+
+    @classmethod
+    def of(cls, schedule: ReviewSchedule) -> "ReviewScheduleResult":
+        return cls(
+            every=every_text(schedule.every) if schedule.every is not None else None,
+            after_runs=schedule.after_runs,
+            drawdown=schedule.drawdown,
+            set_at=schedule.set_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
 class StrategyResult(BaseModel):
     strategy_id: str = Field(description="Pass this to the other strategy tools.")
     name: str
@@ -1295,6 +1337,10 @@ class StrategyResult(BaseModel):
     scheduled_broker: str | None = Field(
         description="The broker its scheduled entries go through; null when it enters only "
         "on start_strategy."
+    )
+    review_schedule: ReviewScheduleResult | None = Field(
+        description="When openticker-serve reviews it without being asked; null when only "
+        "start_review does."
     )
     definition: StrategyDefinition | SignalStrategyDefinition
     created_at: datetime
@@ -1310,6 +1356,9 @@ class StrategyResult(BaseModel):
             mode=stored.mode,
             locked=stored.locked,
             scheduled_broker=stored.scheduled_broker,
+            review_schedule=ReviewScheduleResult.of(stored.review_schedule)
+            if stored.review_schedule is not None
+            else None,
             definition=SignalStrategyDefinition.of(stored.spec)
             if isinstance(stored.spec, SignalStrategySpec)
             else StrategyDefinition.of(stored.spec),
@@ -1330,6 +1379,7 @@ class StrategySummary(BaseModel):
     horizon: Horizon
     locked: bool
     scheduled: bool = Field(description="True when it enters on its schedule.")
+    review_scheduled: bool = Field(description="True when it is reviewed on a schedule.")
     updated_at: datetime
 
     @classmethod
@@ -1345,6 +1395,7 @@ class StrategySummary(BaseModel):
             horizon=stored.spec.horizon,
             locked=stored.locked,
             scheduled=stored.scheduled_broker is not None,
+            review_scheduled=stored.review_schedule is not None,
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
         )
 
@@ -1603,6 +1654,74 @@ class StrategyLedgerResult(BaseModel):
             open_runs=ledger.open_runs,
             totals=LedgerTotalsResult.of(ledger.totals),
             runs=[LedgerRunResult.of(run) for run in ledger.runs],
+        )
+
+
+class AgentJobResult(BaseModel):
+    job_id: str
+    kind: str = Field(description="review: reads one strategy and writes its verdict in the note.")
+    strategy_id: str
+    harness: str = Field(description="The coding agent that runs it: claude or codex.")
+    status: AgentJobStatus = Field(
+        description="pending: waiting for openticker-serve, which runs one job at a time. "
+        "running, stopping, or ended."
+    )
+    trigger: str = Field(description="Who asked for it.")
+    created_at: datetime
+    started_at: datetime | None
+    ended_at: datetime | None
+    end_reason: AgentJobEndReason | None
+    end_detail: str | None
+    summary: str | None = Field(
+        description="The agent's final answer; a review's starts with its verdict."
+    )
+    cost_usd: float | None = Field(description="What the run cost, when the harness reports it.")
+
+    @classmethod
+    def of(cls, job: AgentJob) -> "AgentJobResult":
+        return cls(
+            job_id=job.id,
+            kind=job.kind,
+            strategy_id=job.strategy_id,
+            harness=job.harness,
+            status=job.status,
+            trigger=job.trigger,
+            created_at=job.created_at.astimezone(EXCHANGE_TIMEZONE),
+            started_at=_local(job.started_at),
+            ended_at=_local(job.ended_at),
+            end_reason=job.end_reason,
+            end_detail=job.end_detail,
+            summary=job.summary,
+            cost_usd=job.cost_usd,
+        )
+
+
+class StartReviewResult(BaseModel):
+    job: AgentJobResult
+    next_step: str = Field(
+        default="openticker-serve starts it within a few seconds if no other job is running; "
+        "it writes its verdict into the strategy's note in labs/notes/. get_agent_jobs shows "
+        "when it ends, get_agent_job_log what it printed."
+    )
+
+
+class AgentJobsResult(BaseModel):
+    jobs: list[AgentJobResult] = Field(description="Newest first.")
+
+
+class AgentJobLogResult(BaseModel):
+    job_id: str
+    status: AgentJobStatus
+    log: str = Field(description="The end of what the agent printed while it worked.")
+    truncated: bool = Field(description="True when older output was left out.")
+
+    @classmethod
+    def of(cls, job_log: AgentJobLog) -> "AgentJobLogResult":
+        return cls(
+            job_id=job_log.job.id,
+            status=job_log.job.status,
+            log=job_log.text,
+            truncated=job_log.truncated,
         )
 
 

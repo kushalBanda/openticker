@@ -130,6 +130,39 @@ def test_differing_charge_rates_are_notified_with_where_to_fix_them() -> None:
     assert "dated 2026-09-25" in message and "$OPENTICKER_HOME/charges.json" in message
 
 
+def test_an_ended_review_leads_with_its_verdict_and_a_failed_one_with_why() -> None:
+    from openticker.events.types import AgentJobEnded
+
+    finished = AgentJobEnded(
+        job_id="job_1",
+        kind="review",
+        strategy_id="stg_1",
+        strategy_name="nifty condor",
+        reason="finished",
+        detail="exited with code 0",
+        summary="Retire: the test is met.\nWorst run -3,259.",
+        cost_usd=0.38,
+    )
+    timed_out = AgentJobEnded(
+        job_id="job_2",
+        kind="review",
+        strategy_id="stg_1",
+        strategy_name="nifty condor",
+        reason="timeout",
+        detail="still running after 15 minutes",
+        summary=None,
+        cost_usd=None,
+    )
+
+    assert AgentJobEnded in NOTIFIED_EVENTS
+    subject, message = describe(finished) or ("", "")
+    assert subject == "Review of nifty condor: Retire: the test is met."
+    assert "Worst run -3,259." in message and "Cost $0.38." in message
+    subject, message = describe(timed_out) or ("", "")
+    assert subject == "Review of nifty condor timeout"
+    assert "still running after 15 minutes" in message and "get_agent_job_log" in message
+
+
 def test_a_strategy_start_leg_exit_and_stop_are_notified() -> None:
     started = StrategyStarted(
         strategy_id="stg_1",

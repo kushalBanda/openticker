@@ -5,7 +5,8 @@ a key has far too much entropy to guess from its hash, so a slow password
 hash would add nothing but latency to every request.
 
 Each run of a hosted script gets its own key, scoped to trading routes and
-revoked when the run ends (ADR 25 in docs/adr).
+revoked when the run ends (ADR 25 in docs/adr). Each agent job gets one too,
+scoped to what its kind may read: a review, its own strategy (ADR 29).
 """
 
 import hashlib
@@ -24,7 +25,9 @@ from openticker.storage.sqlite.api_keys_repo import (
 KEY_PREFIX = "otk_"
 FULL_SCOPE = "full"
 SCRIPT_SCOPE_PREFIX = "script:"  # then the script's id
+REVIEW_SCOPE_PREFIX = "review:"  # then the strategy's id
 _SCRIPT_KEY_NAME_PREFIX = "script-"  # then the run's id
+_AGENT_KEY_NAME_PREFIX = "agent-"  # then the job's id
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 _SHOWN_PREFIX_LENGTH = len(KEY_PREFIX) + 6
 
@@ -39,10 +42,12 @@ def create_api_key(name: str, now: datetime) -> tuple[StoredApiKey, str]:
         raise InvalidApiKeyNameError(
             f"key name {name!r} must be 1-40 lowercase letters, digits, '-' or '_'"
         )
-    if name.startswith(_SCRIPT_KEY_NAME_PREFIX):
-        raise InvalidApiKeyNameError(
-            f"key names starting {_SCRIPT_KEY_NAME_PREFIX!r} are kept for hosted scripts"
-        )
+    for reserved, owner in (
+        (_SCRIPT_KEY_NAME_PREFIX, "hosted scripts"),
+        (_AGENT_KEY_NAME_PREFIX, "agent jobs"),
+    ):
+        if name.startswith(reserved):
+            raise InvalidApiKeyNameError(f"key names starting {reserved!r} are kept for {owner}")
     key = KEY_PREFIX + secrets.token_urlsafe(32)
     stored = insert_api_key(name, _hash(key), key[:_SHOWN_PREFIX_LENGTH], FULL_SCOPE, now)
     return stored, key
@@ -75,6 +80,32 @@ def revoke_script_keys(keep_runs: set[str], now: datetime) -> int:
             and stored.scope.startswith(SCRIPT_SCOPE_PREFIX)
             and stored.name not in keep
         ):
+            revoked += revoke_api_key(stored.name, now)
+    return revoked
+
+
+def create_review_key(strategy_id: str, job_id: str, now: datetime) -> str:
+    """A key for one review job: reads that strategy and market data only."""
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    insert_api_key(
+        agent_key_name(job_id),
+        _hash(key),
+        key[:_SHOWN_PREFIX_LENGTH],
+        REVIEW_SCOPE_PREFIX + strategy_id,
+        now,
+    )
+    return key
+
+
+def agent_key_name(job_id: str) -> str:
+    return _AGENT_KEY_NAME_PREFIX + job_id
+
+
+def revoke_agent_keys(now: datetime) -> int:
+    """Revokes every agent job's key; how many were."""
+    revoked = 0
+    for stored in list_api_keys():
+        if stored.revoked_at is None and stored.name.startswith(_AGENT_KEY_NAME_PREFIX):
             revoked += revoke_api_key(stored.name, now)
     return revoked
 

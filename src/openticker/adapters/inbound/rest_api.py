@@ -30,6 +30,9 @@ from openticker.adapters.brokers.registry import (
 from openticker.adapters.inbound.mcp_models import (
     ALERT_NEXT_STEP,
     ALERT_PATH,
+    AgentJobLogResult,
+    AgentJobResult,
+    AgentJobsResult,
     AlertResult,
     AuditLogResult,
     BarsResult,
@@ -58,6 +61,7 @@ from openticker.adapters.inbound.mcp_models import (
     PositionsResult,
     QuoteResult,
     QuotesResult,
+    ReviewScheduleDefinition,
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
@@ -67,6 +71,7 @@ from openticker.adapters.inbound.mcp_models import (
     ScriptsResult,
     SearchResult,
     SignalStrategyDefinition,
+    StartReviewResult,
     StrategiesResult,
     StrategyCommandResult,
     StrategyDefinition,
@@ -82,7 +87,15 @@ from openticker.adapters.inbound.mcp_models import (
     WebhookResult,
     closing_result,
 )
-from openticker.composition import SandboxConfigError, capital_cap, order_broker
+from openticker.adapters.inbound.scopes import refusal
+from openticker.composition import (
+    AgentConfigError,
+    SandboxConfigError,
+    agent_settings,
+    capital_cap,
+    order_broker,
+)
+from openticker.core.agents.reviews import ReviewScheduleError
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
@@ -101,10 +114,18 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
+from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
-from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
+from openticker.use_cases.agents import manage as agent_jobs
+from openticker.use_cases.agents.manage import (
+    MAX_AGENT_JOBS,
+    AgentJobBusyError,
+    AgentJobCapError,
+    UnknownAgentJobError,
+)
+from openticker.use_cases.api_keys import FULL_SCOPE, authenticate
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.check_charge_rates import NoChargeSamplesError, check_charge_rates
@@ -183,11 +204,16 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ScriptRunningError, 409),
     (ScriptStateError, 409),
     (InvalidStrategyError, 422),
+    (ReviewScheduleError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
     (InvalidMarginOrderError, 422),
     (ChargesNotModelledError, 404),
     (NoChargeSamplesError, 404),
+    (UnknownAgentJobError, 404),
+    (AgentJobBusyError, 409),
+    (AgentJobCapError, 429),
+    (AgentConfigError, 503),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
@@ -242,49 +268,27 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
 
-# What a hosted script's key reaches (ADR 25 in docs/adr): prices, market depth and
-# margin, placing, reading, changing and cancelling orders, and closing one position. Never
-# broker login, strategies, scripts, or cancelling or closing everything at once.
-_SCRIPT_ROUTES = frozenset(
-    {
-        ("GET", "/api/v1/instruments"),
-        ("GET", "/api/v1/quote"),
-        ("POST", "/api/v1/quotes"),
-        ("GET", "/api/v1/depth"),
-        ("GET", "/api/v1/bars"),
-        ("GET", "/api/v1/option-chain"),
-        ("GET", "/api/v1/market-status"),
-        ("POST", "/api/v1/risk/evaluate"),
-        ("POST", "/api/v1/margin"),
-        ("POST", "/api/v1/orders"),
-        ("POST", "/api/v1/orders/basket"),
-        ("GET", "/api/v1/orders"),
-        ("DELETE", "/api/v1/orders/{order_id}"),
-        ("PATCH", "/api/v1/orders/{order_id}"),
-        ("GET", "/api/v1/orders/{order_id}"),
-        ("GET", "/api/v1/trades"),
-        ("GET", "/api/v1/positions"),
-        ("POST", "/api/v1/positions/close"),
-        ("GET", "/api/v1/funds"),
-    }
-)
-
 
 def require_scope(request: Request, key: ApiKey) -> StoredApiKey:
-    if key.scope.startswith(SCRIPT_SCOPE_PREFIX):
-        path = getattr(request.scope.get("route"), "path", None)
-        if (request.method, path) not in _SCRIPT_ROUTES:
-            raise HTTPException(
-                status_code=403,
-                detail="a script's key reaches prices, orders and positions only",
-            )
+    """Holds a script's or a review's key to its routes (adapters/inbound/scopes.py)."""
+    path = getattr(request.scope.get("route"), "path", None)
+    why = refusal(key.scope, request.method, path, request.path_params, _strategy_of_run)
+    if why is not None:
+        raise HTTPException(status_code=403, detail=why)
     return key
 
 
+def _strategy_of_run(run_id: str) -> str | None:
+    run = runs_repo.find_run(run_id)
+    return run.strategy_id if run is not None else None
+
+
 def _caller(key: StoredApiKey) -> str:
-    """Who an order came from, as the audit log records it: script:<id> for
-    a hosted script, rest:<key name> otherwise."""
-    return key.scope if key.scope.startswith(SCRIPT_SCOPE_PREFIX) else f"rest:{key.name}"
+    """Who an order came from, as the audit log records it: the scope of a
+    job's or a script's key (script:<id>), rest:<key name> for a full key."""
+    return key.scope if key.scope != FULL_SCOPE else f"rest:{key.name}"
+
+
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
@@ -581,9 +585,7 @@ def create_app(
         """Prices sample orders through the broker's contract note and compares
         them with the rates the sandbox charges. Nothing is placed."""
         return ChargeCheckResult.of(
-            check_charge_rates(
-                body.broker, get_adapter(body.broker), events, clock(), _caller(key)
-            )
+            check_charge_rates(body.broker, get_adapter(body.broker), events, clock(), _caller(key))
         )
 
     @api.post("/margin")
@@ -846,6 +848,39 @@ def create_app(
     ) -> StrategyLedgerResult:
         """Totals over every run after costs, and the newest runs with their fills."""
         return StrategyLedgerResult.of(get_strategy_ledger(strategy_id, limit))
+
+    @api.post("/strategies/{strategy_id}/review")
+    def review(strategy_id: str, key: ApiKey) -> StartReviewResult:
+        """Asks openticker-serve to review the strategy now with the user's coding agent."""
+        job = agent_jobs.start_review(strategy_id, agent_settings(env), _caller(key), clock())
+        return StartReviewResult(job=AgentJobResult.of(job))
+
+    @api.post("/strategies/{strategy_id}/review-schedule")
+    def schedule_review(strategy_id: str, body: ReviewScheduleDefinition) -> StrategyResult:
+        """Reviews the strategy without being asked when any trigger is met."""
+        stored = agent_jobs.schedule_review(
+            strategy_id, body.every, body.after_runs, body.drawdown, clock()
+        )
+        return StrategyResult.of(stored)
+
+    @api.delete("/strategies/{strategy_id}/review-schedule")
+    def unschedule_review(strategy_id: str) -> StrategyResult:
+        """Reviewed only on start_review again."""
+        return StrategyResult.of(agent_jobs.unschedule_review(strategy_id))
+
+    @api.get("/agent-jobs")
+    def jobs(
+        strategy_id: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AGENT_JOBS)] = 10,
+    ) -> AgentJobsResult:
+        """Agent jobs, newest first."""
+        found = agent_jobs.get_agent_jobs(limit, strategy_id)
+        return AgentJobsResult(jobs=[AgentJobResult.of(job) for job in found])
+
+    @api.get("/agent-jobs/{job_id}/log")
+    def job_log(job_id: str) -> AgentJobLogResult:
+        """The end of what an agent job printed."""
+        return AgentJobLogResult.of(agent_jobs.get_agent_job_log(job_id))
 
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:

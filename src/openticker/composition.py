@@ -7,11 +7,13 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.core.agents.jobs import AgentJobError, AgentSettings, Harness
 from openticker.core.orders.fills import FillSettings
 from openticker.core.scripts.models import InvalidScriptError, ScriptLimits
 from openticker.core.strategies.prices import PriceTimeouts
@@ -156,6 +158,65 @@ def script_limits(env: Mapping[str, str]) -> ScriptLimits:
         return ScriptLimits(values["SCRIPT_MEMORY_LIMIT_MB"], values["SCRIPT_CPU_SECONDS"])
     except InvalidScriptError as exc:
         raise ScriptConfigError(str(exc)) from exc
+
+
+class AgentConfigError(Exception):
+    pass
+
+
+def agent_settings(env: Mapping[str, str]) -> AgentSettings:
+    """How agent jobs run (ADR 29 in docs/adr): `OPENTICKER_AGENT_HARNESS`
+    (claude or codex, default claude), `OPENTICKER_AGENT_TIMEOUT_MINUTES`
+    (default 15), `OPENTICKER_AGENT_JOBS_PER_DAY` (default 20) and
+    `OPENTICKER_AGENT_MAX_BUDGET_USD` (Claude Code only; unset, no cap)."""
+    defaults = AgentSettings()
+    harness_name = (env.get("OPENTICKER_AGENT_HARNESS") or defaults.harness.value).strip()
+    if harness_name not in {harness.value for harness in Harness}:
+        raise AgentConfigError(
+            f"OPENTICKER_AGENT_HARNESS must be claude or codex, got {harness_name!r}"
+        )
+    whole = {}
+    for name, default in (
+        ("OPENTICKER_AGENT_TIMEOUT_MINUTES", int(defaults.timeout.total_seconds() // 60)),
+        ("OPENTICKER_AGENT_JOBS_PER_DAY", defaults.jobs_per_day),
+    ):
+        raw = (env.get(name) or "").strip()
+        if raw and not raw.isdigit():
+            raise AgentConfigError(f"{name} must be a whole number, got {raw!r}")
+        whole[name] = int(raw) if raw else default
+    raw_budget = (env.get("OPENTICKER_AGENT_MAX_BUDGET_USD") or "").strip()
+    try:
+        budget = float(raw_budget) if raw_budget else None
+    except ValueError:
+        raise AgentConfigError(
+            f"OPENTICKER_AGENT_MAX_BUDGET_USD must be a number of dollars, got {raw_budget!r}"
+        ) from None
+    try:
+        return AgentSettings(
+            harness=Harness(harness_name),
+            timeout=timedelta(minutes=whole["OPENTICKER_AGENT_TIMEOUT_MINUTES"]),
+            jobs_per_day=whole["OPENTICKER_AGENT_JOBS_PER_DAY"],
+            max_budget_usd=budget,
+        )
+    except AgentJobError as exc:
+        raise AgentConfigError(str(exc)) from exc
+
+
+def labs_dir(env: Mapping[str, str]) -> Path:
+    """Where agent jobs run: `OPENTICKER_LABS_DIR`, or the `labs/` folder of
+    the checkout OpenTicker runs from (ADR 27)."""
+    configured = (env.get("OPENTICKER_LABS_DIR") or "").strip()
+    folder = Path(configured).expanduser() if configured else _CHECKOUT_LABS
+    if not (folder / "AGENTS.md").is_file():
+        raise AgentConfigError(
+            f"no labs folder at {folder}: set OPENTICKER_LABS_DIR to the labs/ folder "
+            "of your OpenTicker checkout"
+        )
+    return folder
+
+
+# src/openticker/composition.py -> the checkout's labs/.
+_CHECKOUT_LABS = Path(__file__).resolve().parents[2] / "labs"
 
 
 def watch_list(env: Mapping[str, str]) -> list[tuple[str, Exchange]]:

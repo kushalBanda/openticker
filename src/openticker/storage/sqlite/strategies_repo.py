@@ -5,12 +5,13 @@ import secrets
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from openticker.core.agents.reviews import ReviewSchedule
 from openticker.core.risk.models import LockMode, ProfitLock, StrategyLimits
 from openticker.core.strategies.models import (
     Direction,
@@ -50,6 +51,7 @@ class StoredStrategy:
     created_at: datetime  # tz-aware UTC
     updated_at: datetime  # tz-aware UTC
     scheduled_broker: str | None = None  # None: enters only on start_strategy
+    review_schedule: ReviewSchedule | None = None  # None: reviewed only on start_review
 
 
 def insert_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrategy:
@@ -66,6 +68,7 @@ def insert_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrat
             updated_at=_naive(now),
             deleted_at=None,
             scheduled_broker=None,
+            review_schedule=None,
         )
         session.add(row)
         session.flush()
@@ -121,6 +124,24 @@ def set_scheduled(session: Session, strategy_id: str, broker: str | None) -> Non
 def list_scheduled() -> list[StoredStrategy]:
     statement = select(StrategyRow).where(
         StrategyRow.deleted_at.is_(None), StrategyRow.scheduled_broker.is_not(None)
+    )
+    with Session(get_engine()) as session:
+        return [_stored(row) for row in session.scalars(statement).all()]
+
+
+def set_review_schedule(
+    session: Session, strategy_id: str, schedule: ReviewSchedule | None
+) -> None:
+    row = _live(session, strategy_id)
+    if row is not None:
+        row.review_schedule = (
+            json.dumps(_encode_review_schedule(schedule)) if schedule is not None else None
+        )
+
+
+def list_review_scheduled() -> list[StoredStrategy]:
+    statement = select(StrategyRow).where(
+        StrategyRow.deleted_at.is_(None), StrategyRow.review_schedule.is_not(None)
     )
     with Session(get_engine()) as session:
         return [_stored(row) for row in session.scalars(statement).all()]
@@ -186,6 +207,9 @@ def _stored(row: StrategyRow) -> StoredStrategy:
         created_at=row.created_at.replace(tzinfo=UTC),
         updated_at=row.updated_at.replace(tzinfo=UTC),
         scheduled_broker=row.scheduled_broker,
+        review_schedule=_decode_review_schedule(json.loads(row.review_schedule))
+        if row.review_schedule
+        else None,
     )
 
 
@@ -250,6 +274,25 @@ def _encode_schedule(schedule: Schedule) -> dict[str, Any]:
         "weekdays": sorted(schedule.weekdays),
         "exit_on_expiry": schedule.exit_on_expiry,
     }
+
+
+def _encode_review_schedule(schedule: ReviewSchedule) -> dict[str, Any]:
+    return {
+        "set_at": schedule.set_at.astimezone(UTC).isoformat(),
+        "every_minutes": int(schedule.every.total_seconds() // 60) if schedule.every else None,
+        "after_runs": schedule.after_runs,
+        "drawdown": schedule.drawdown,
+    }
+
+
+def _decode_review_schedule(data: dict[str, Any]) -> ReviewSchedule:
+    minutes = data["every_minutes"]
+    return ReviewSchedule(
+        set_at=datetime.fromisoformat(data["set_at"]),
+        every=timedelta(minutes=minutes) if minutes is not None else None,
+        after_runs=data["after_runs"],
+        drawdown=data["drawdown"],
+    )
 
 
 def _encode_limits(limits: StrategyLimits) -> dict[str, Any]:

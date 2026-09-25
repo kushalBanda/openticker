@@ -166,3 +166,31 @@ class ChargeRatesDiffer:
     detail: str  # each differing figure, ours and the broker's
     triggered_by: str
     occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class AgentJobStarted:
+    """The daemon started the user's coding agent on a job (ADR 29). Audited."""
+
+    job_id: str
+    kind: str
+    strategy_id: str
+    harness: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class AgentJobEnded:
+    """An agent job ended, whatever the reason; a review's summary starts
+    with its verdict."""
+
+    job_id: str
+    kind: str
+    strategy_id: str
+    strategy_name: str
+    reason: str
+    detail: str
+    summary: str | None
+    cost_usd: float | None
+    occurred_at: datetime = field(default_factory=_now)

@@ -1,5 +1,3 @@
-
-
 from openticker.storage.sqlite import credentials_repo
 from openticker.use_cases.connect_broker import connect_broker
 from tests.fixtures.fake_broker import FakeBrokerPort

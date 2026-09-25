@@ -32,6 +32,20 @@ def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
         raise UnknownStrategyError(
             f"no strategy with id {strategy_id!r}; list_strategies shows the ones that exist"
         )
+    runs = ledger_runs(strategy_id)
+    ended = [r for r in runs if r.run.status is RunStatus.ENDED]
+    return StrategyLedger(
+        strategy=stored,
+        runs=runs[: min(limit, MAX_LEDGER_RUNS)],
+        total_runs=len(runs),
+        uncharged=sum(1 for r in ended if r.fills and not r.after_costs),
+        open_runs=len(runs) - len(ended),
+        totals=ledger_totals(runs),
+    )
+
+
+def ledger_runs(strategy_id: str) -> list[LedgerRun]:
+    """Every run it has had, newest first, each with its fills."""
     fills: dict[str, list[LedgerFill]] = defaultdict(list)
     for trade in sandbox_repo.list_strategy_trades(strategy_id):
         if trade.run_id is not None:
@@ -47,16 +61,7 @@ def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
                     charges=trade.charges,
                 )
             )
-    runs = [
+    return [
         LedgerRun(run, tuple(fills.get(run.id, ())))
         for run in runs_repo.list_runs(strategy_id, LEDGER_HISTORY)
     ]
-    ended = [r for r in runs if r.run.status is RunStatus.ENDED]
-    return StrategyLedger(
-        strategy=stored,
-        runs=runs[: min(limit, MAX_LEDGER_RUNS)],
-        total_runs=len(runs),
-        uncharged=sum(1 for r in ended if r.fills and not r.after_costs),
-        open_runs=len(runs) - len(ended),
-        totals=ledger_totals(runs),
-    )

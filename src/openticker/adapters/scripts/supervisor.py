@@ -84,7 +84,7 @@ class ProcessSupervisor:
                 return None
             del self._children[pid]
             return Exited(returncode)
-        if _alive(pid):
+        if alive(pid):
             return None
         self._adopted.discard(pid)
         return Exited(None)
@@ -92,13 +92,13 @@ class ProcessSupervisor:
     def adopt(self, pid: int, path: Path) -> bool:
         if pid in self._children or pid in self._adopted:
             return True
-        if not _alive(pid) or pid not in self.find(path):
+        if not alive(pid) or pid not in self.find(path):
             return False
         self._adopted.add(pid)
         return True
 
     def find(self, path: Path) -> list[int]:
-        listing = _ps("pid=", "command=")
+        listing = ps("pid=", "command=")
         found = []
         for line in listing:
             pid, _, command = line.strip().partition(" ")
@@ -115,7 +115,7 @@ class ProcessSupervisor:
     def memory_kb(self, leaders: Collection[int]) -> Mapping[int, int]:
         wanted = set(leaders)
         totals: dict[int, int] = {}
-        for line in _ps("pid=", "pgid=", "rss="):
+        for line in ps("pid=", "pgid=", "rss="):
             fields = line.split()
             if len(fields) != 3 or not all(field.isdigit() for field in fields):
                 continue
@@ -125,7 +125,7 @@ class ProcessSupervisor:
         return totals
 
 
-def _alive(pid: int) -> bool:
+def alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -170,7 +170,7 @@ def _footprint_kb(pid: int) -> int | None:
     return int(info.phys_footprint) // 1024
 
 
-def _ps(*columns: str) -> list[str]:
+def ps(*columns: str) -> list[str]:
     arguments = ["ps", "-A", "-ww"]
     for column in columns:
         arguments += ["-o", column]

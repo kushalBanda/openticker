@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from openticker.adapters.notifications.email import EmailAdapter
@@ -121,3 +123,38 @@ def test_slippage_ticks_are_a_whole_number() -> None:
     for bad in ("-1", "1.5", "lots"):
         with pytest.raises(SandboxConfigError, match="SANDBOX_SLIPPAGE_TICKS"):
             sandbox_settings({"SANDBOX_SLIPPAGE_TICKS": bad})
+
+
+def test_agent_settings_read_their_variables_with_defaults() -> None:
+    from datetime import timedelta
+
+    from openticker.composition import AgentConfigError, agent_settings
+    from openticker.core.agents.jobs import AgentSettings, Harness
+
+    assert agent_settings({}) == AgentSettings()
+    assert agent_settings(
+        {
+            "OPENTICKER_AGENT_HARNESS": "codex",
+            "OPENTICKER_AGENT_TIMEOUT_MINUTES": "5",
+            "OPENTICKER_AGENT_JOBS_PER_DAY": "2",
+            "OPENTICKER_AGENT_MAX_BUDGET_USD": "0.75",
+        }
+    ) == AgentSettings(Harness.CODEX, timedelta(minutes=5), 2, 0.75)
+    with pytest.raises(AgentConfigError, match="claude or codex"):
+        agent_settings({"OPENTICKER_AGENT_HARNESS": "gemini"})
+    with pytest.raises(AgentConfigError, match="whole number"):
+        agent_settings({"OPENTICKER_AGENT_JOBS_PER_DAY": "many"})
+    with pytest.raises(AgentConfigError, match="number of dollars"):
+        agent_settings({"OPENTICKER_AGENT_MAX_BUDGET_USD": "$1"})
+    with pytest.raises(AgentConfigError, match="at least a minute"):
+        agent_settings({"OPENTICKER_AGENT_TIMEOUT_MINUTES": "0"})
+
+
+def test_labs_is_the_checkouts_unless_set(tmp_path: Path) -> None:
+    from openticker.composition import AgentConfigError, labs_dir
+
+    assert labs_dir({}) == Path(__file__).resolve().parents[1] / "labs"
+    with pytest.raises(AgentConfigError, match="OPENTICKER_LABS_DIR"):
+        labs_dir({"OPENTICKER_LABS_DIR": str(tmp_path)})
+    (tmp_path / "AGENTS.md").write_text("x")
+    assert labs_dir({"OPENTICKER_LABS_DIR": str(tmp_path)}) == tmp_path

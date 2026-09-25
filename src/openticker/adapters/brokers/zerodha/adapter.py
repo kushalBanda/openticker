@@ -71,9 +71,7 @@ class ZerodhaAdapter:
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
     ) -> list[Bar]:
-        return fetch_candles(
-            self._api_key, self._session_token(), instrument, interval, start, end
-        )
+        return fetch_candles(self._api_key, self._session_token(), instrument, interval, start, end)
 
     # Live orders are not implemented: orders go through the sandbox, which
     # uses this adapter for prices only (ADR 11 in docs/adr).

@@ -69,3 +69,20 @@ def test_script_keys_are_scoped_named_by_their_run_and_their_names_reserved() ->
     assert authenticate(first) is None
     assert authenticate(second) is not None
     assert authenticate(laptop) is not None  # never a script's
+
+
+def test_review_keys_read_one_strategy_and_are_all_revoked_together() -> None:
+    from openticker.use_cases.api_keys import create_review_key, revoke_agent_keys
+
+    with pytest.raises(InvalidApiKeyNameError, match="kept for agent jobs"):
+        create_api_key("agent-mine", NOW)
+    _, laptop = create_api_key("laptop", NOW)
+    review = create_review_key("stg_a", "job_1", NOW)
+    stored = authenticate(review)
+    assert stored is not None
+    assert (stored.name, stored.scope) == ("agent-job_1", "review:stg_a")
+
+    assert revoke_agent_keys(NOW) == 1
+
+    assert authenticate(review) is None
+    assert authenticate(laptop) is not None

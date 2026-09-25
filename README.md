@@ -85,7 +85,7 @@ cd labs
 claude                    # or: codex
 ```
 
-Then describe an idea. Your notes go in `labs/notes/`, which is never committed. Once a strategy has run at least 10 times, ask the agent to review it: the `reviewer` judges its runs after costs against what your note said would prove it wrong, and writes a dated verdict (keep, change one thing, or retire) into the note. It can't change anything else. See [labs/playbook](labs/playbook/README.md).
+Then describe an idea. Your notes go in `labs/notes/`, which is never committed. Once a strategy has run at least 10 times, ask the agent to review it: the `reviewer` judges its runs after costs against what your note said would prove it wrong, and writes a dated verdict (keep, change one thing, or retire) into the note. It can't change anything else. `openticker-serve` can also run that review unattended, when you ask (`start_review`) or on a schedule you set per strategy (`schedule_review`: every so often, after so many runs, or when it falls a set amount below its high), with your own Claude Code or Codex, signed in as you. A scheduled review waits for a new run to have ended, so an idle strategy costs nothing. The job reaches OpenTicker over MCP at `/mcp` on the server, with a key that reads only that strategy. See [labs/playbook](labs/playbook/README.md).
 
 ### REST API (optional)
 

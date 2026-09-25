@@ -56,9 +56,7 @@ def test_event_bus_bounded_queue_rejects_or_blocks_at_cap() -> None:
         release.wait(timeout=5)
 
     bus.subscribe(RiskBreached, hold_slot)
-    bus.subscribe(
-        InstrumentSyncCompleted, lambda event: ran_on.append(threading.get_ident())
-    )
+    bus.subscribe(InstrumentSyncCompleted, lambda event: ran_on.append(threading.get_ident()))
 
     bus.publish(_EVENT)  # takes the only slot and holds it until `release`
     bus.publish(InstrumentSyncCompleted(broker="zerodha", count=1))  # no slot left

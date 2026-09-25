@@ -20,7 +20,9 @@ def test_zerodha_adapter_picks_up_the_stored_session(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("KITE_API_KEY", "key")
     monkeypatch.setenv("KITE_API_SECRET", "secret")
     save_credentials(
-        Credentials(broker="zerodha", access_token="stored-token", refresh_token=None, expires_at=None)
+        Credentials(
+            broker="zerodha", access_token="stored-token", refresh_token=None, expires_at=None
+        )
     )
 
     adapter = get_adapter("zerodha")

@@ -467,6 +467,54 @@ def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
     assert mcp_server.release_kill_switch(strategy_id=strategy_id).locked is False
 
 
+def test_review_tools_queue_a_job_and_read_it_back() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    strategy_id = mcp_server.create_strategy(
+        name="reviewed", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    ).strategy_id
+
+    started = mcp_server.start_review(strategy_id=strategy_id)
+    jobs = mcp_server.get_agent_jobs(strategy_id=strategy_id)
+    log = mcp_server.get_agent_job_log(job_id=started.job.job_id)
+
+    assert (started.job.status, started.job.harness, started.job.trigger) == (
+        "pending",
+        "claude",
+        "mcp",
+    )
+    assert "openticker-serve" in started.next_step
+    assert [job.job_id for job in jobs.jobs] == [started.job.job_id]
+    assert (log.status, log.log, log.truncated) == ("pending", "", False)
+    with pytest.raises(ToolError, match="already pending"):
+        mcp_server.start_review(strategy_id=strategy_id)
+    with pytest.raises(ToolError, match="get_agent_jobs lists them"):
+        mcp_server.get_agent_job_log(job_id="job_nope")
+
+
+def test_review_schedule_tools_set_show_and_clear_it() -> None:
+    from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    strategy_id = mcp_server.create_strategy(
+        name="reviewed", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
+    ).strategy_id
+
+    scheduled = mcp_server.schedule_review(strategy_id=strategy_id, every="1d", drawdown=3_000)
+    listed = mcp_server.list_strategies().strategies
+
+    assert scheduled.review_schedule is not None
+    assert (scheduled.review_schedule.every, scheduled.review_schedule.after_runs) == ("1d", None)
+    assert scheduled.review_schedule.drawdown == 3_000
+    assert [s.review_scheduled for s in listed] == [True]
+    with pytest.raises(ToolError, match="like 30m, 4h or 1d"):
+        mcp_server.schedule_review(strategy_id=strategy_id, every="weekly")
+    assert mcp_server.unschedule_review(strategy_id=strategy_id).review_schedule is None
+
+
 def test_schedule_tools_arm_and_disarm_scheduled_entries() -> None:
     from openticker.adapters.inbound.mcp_models import StrategyDefinition
     from tests.fixtures.strategies import list_nifty_market
@@ -840,7 +888,6 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
     assert book.trades[0].filled_at == TRADING_TIME  # the server's clock, not the wall's
     with pytest.raises(ToolError, match="get_orderbook"):
         mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
-
 
 
 def test_check_charge_rates_through_the_tool() -> None:

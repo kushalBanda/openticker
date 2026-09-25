@@ -81,9 +81,7 @@ def test_parse_raises_when_nothing_usable() -> None:
 
 
 def test_download_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        httpx, "get", lambda url, timeout: httpx.Response(503, text="unavailable")
-    )
+    monkeypatch.setattr(httpx, "get", lambda url, timeout: httpx.Response(503, text="unavailable"))
 
     with pytest.raises(instruments.KiteInstrumentsError):
         instruments.download_instrument_csv()

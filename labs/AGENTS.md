@@ -26,7 +26,7 @@ Hard facts that don't change:
 
 - `new-strategy`: from an idea in plain words to a saved, previewed strategy and its note.
 - `review-strategy`: judges a strategy by its ledger after costs (`get_strategy_ledger`), against the test in its note, and appends a dated verdict (keep, change one thing, or retire). It needs at least 10 runs after costs.
-- The `reviewer` agent (`.claude/agents/`, `.codex/agents/`) runs `review-strategy` with read-only OpenTicker tools. Hand it a review when the user asks for one, so it runs in its own context and can't change anything but the note.
+- The `reviewer` agent (`.claude/agents/`, `.codex/agents/`) runs `review-strategy` with read-only OpenTicker tools. Hand it a review when the user asks for one, so it runs in its own context and can't change anything but the note. `start_review` has `openticker-serve` run the same review unattended, and `get_agent_jobs` shows its verdict. `schedule_review` has it do so on the user's schedule for that strategy (every so often, after so many runs, or on a drawdown); set one only when the user asks.
 
 More arrive as OpenTicker adds them (news, check-ins). `playbook/` explains the workflow for the user.
 
