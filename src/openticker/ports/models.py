@@ -147,6 +147,19 @@ class Position:
 
 
 @dataclass(frozen=True)
+class MarginRequirement:
+    """What the broker would block for a set of orders, as it would place
+    them now. For several orders, with the hedge benefit they give each other
+    and the account's open positions taken into account."""
+
+    total: float
+    span: float
+    exposure: float
+    option_premium: float
+    benefit: float  # the broker's own hedge benefit for the set; 0 for one order
+
+
+@dataclass(frozen=True)
 class Funds:
     broker: str
     available_cash: float

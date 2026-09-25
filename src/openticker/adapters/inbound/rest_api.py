@@ -43,6 +43,7 @@ from openticker.adapters.inbound.mcp_models import (
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
+    MarginResult,
     MarketDepthResult,
     MarketStatusesResult,
     MarketStatusResult,
@@ -110,6 +111,7 @@ from openticker.use_cases.evaluate_risk import evaluate_risk
 from openticker.use_cases.get_audit_log import get_audit_log
 from openticker.use_cases.get_funds import get_funds
 from openticker.use_cases.get_historical_bars import get_historical_bars
+from openticker.use_cases.get_margin import MAX_MARGIN_ORDERS, InvalidMarginOrderError, get_margin
 from openticker.use_cases.get_market_depth import get_market_depth
 from openticker.use_cases.get_market_status import get_market_status
 from openticker.use_cases.get_option_chain import NoOptionsError, get_option_chain
@@ -176,6 +178,7 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (InvalidStrategyError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
+    (InvalidMarginOrderError, 422),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
@@ -229,8 +232,8 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Sto
 
 ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
 
-# What a hosted script's key reaches (ADR 25 in docs/adr): prices and market depth,
-# placing, reading, changing and cancelling orders, and closing one position. Never
+# What a hosted script's key reaches (ADR 25 in docs/adr): prices, market depth and
+# margin, placing, reading, changing and cancelling orders, and closing one position. Never
 # broker login, strategies, scripts, or cancelling or closing everything at once.
 _SCRIPT_ROUTES = frozenset(
     {
@@ -242,6 +245,7 @@ _SCRIPT_ROUTES = frozenset(
         ("GET", "/api/v1/option-chain"),
         ("GET", "/api/v1/market-status"),
         ("POST", "/api/v1/risk/evaluate"),
+        ("POST", "/api/v1/margin"),
         ("POST", "/api/v1/orders"),
         ("POST", "/api/v1/orders/basket"),
         ("GET", "/api/v1/orders"),
@@ -357,6 +361,11 @@ class PlaceOrderBody(BaseModel):
 class QuotesBody(BaseModel):
     broker: str
     instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_QUOTES)
+
+
+class MarginBody(BaseModel):
+    broker: str
+    orders: list[OrderInput] = Field(min_length=1, max_length=MAX_MARGIN_ORDERS)
 
 
 class ClosePositionBody(BaseModel):
@@ -542,6 +551,14 @@ def create_app(
             request,
             result,
             _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
+        )
+
+    @api.post("/margin")
+    def margin(body: MarginBody) -> MarginResult:
+        """What the broker would block for these orders together, hedge benefit
+        included. Nothing is placed."""
+        return MarginResult.of(
+            get_margin(get_adapter(body.broker), [o.to_order() for o in body.orders], clock())
         )
 
     @api.post("/orders/basket")

@@ -8,6 +8,7 @@ from openticker.adapters.brokers.zerodha.instruments import (
     download_instrument_csv,
     parse_instrument_csv,
 )
+from openticker.adapters.brokers.zerodha.margins import fetch_margin
 from openticker.adapters.brokers.zerodha.market_data import (
     KiteSessionError,
     fetch_candles,
@@ -21,6 +22,7 @@ from openticker.ports.models import (
     Credentials,
     Funds,
     Instrument,
+    MarginRequirement,
     MarketDepth,
     Position,
     Quote,
@@ -56,6 +58,9 @@ class ZerodhaAdapter:
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth:
         return fetch_depth(self._api_key, self._session_token(), instrument)
+
+    def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
+        return fetch_margin(self._api_key, self._session_token(), orders)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

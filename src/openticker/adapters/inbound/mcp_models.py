@@ -72,6 +72,7 @@ from openticker.ports.models import (
     Instrument,
     InstrumentType,
     Interval,
+    MarginRequirement,
     MarketDepth,
     Position,
     Product,
@@ -544,6 +545,31 @@ class BasketResult(BaseModel):
                 )
                 for placed in placements
             ]
+        )
+
+
+class MarginResult(BaseModel):
+    total: float = Field(description="What the broker would block, hedge benefit included.")
+    span: float
+    exposure: float
+    option_premium: float = Field(description="Premium paid for option buys.")
+    benefit: float = Field(
+        description="The broker's hedge benefit for the set (its initial margin less its "
+        "final one). Placing the orders one at a time would need more still. 0 for one order."
+    )
+    note: str = Field(
+        default="The broker's margin, for the real account (its open positions count). The "
+        "sandbox blocks by its own rule; get_funds shows what it holds."
+    )
+
+    @classmethod
+    def of(cls, margin: MarginRequirement) -> "MarginResult":
+        return cls(
+            total=margin.total,
+            span=margin.span,
+            exposure=margin.exposure,
+            option_premium=margin.option_premium,
+            benefit=margin.benefit,
         )
 
 

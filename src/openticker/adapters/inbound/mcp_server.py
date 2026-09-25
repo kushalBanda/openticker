@@ -40,6 +40,7 @@ from openticker.adapters.inbound.mcp_models import (
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
+    MarginResult,
     MarketDepthResult,
     MarketStatusesResult,
     MarketStatusResult,
@@ -129,6 +130,8 @@ from openticker.use_cases.get_funds import get_funds as get_funds_use_case
 from openticker.use_cases.get_historical_bars import (
     get_historical_bars as get_historical_bars_use_case,
 )
+from openticker.use_cases.get_margin import MAX_MARGIN_ORDERS, InvalidMarginOrderError
+from openticker.use_cases.get_margin import get_margin as get_margin_use_case
 from openticker.use_cases.get_market_depth import (
     get_market_depth as get_market_depth_use_case,
 )
@@ -318,6 +321,7 @@ _AGENT_FIXABLE_ERRORS = (
     CalendarError,
     UnknownOrderError,
     NoOpenPositionError,
+    InvalidMarginOrderError,
     BatchTooLargeError,
     UnknownStrategyError,
     LegResolutionError,
@@ -640,6 +644,35 @@ def place_order(
         result,
         _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
     )
+
+
+@mcp.tool(
+    title="Get broker margin",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def get_margin(
+    broker: Broker,
+    orders: Annotated[
+        list[OrderInput],
+        Field(
+            min_length=1,
+            max_length=MAX_MARGIN_ORDERS,
+            description="Each as place_order takes it: symbol, exchange, side, quantity, "
+            "product, order_type, price, trigger_price.",
+        ),
+    ],
+) -> MarginResult:
+    """The margin the broker would block for up to 50 orders together, e.g.
+    every leg of an iron condor, with the hedge benefit they give each other.
+    Nothing is placed; works with the market closed. Every order must be
+    known and well formed, or the call fails naming which one."""
+    with _agent_facing_errors():
+        margin = get_margin_use_case(
+            get_adapter(broker), [item.to_order() for item in orders], clock()
+        )
+    return MarginResult.of(margin)
 
 
 @mcp.tool(

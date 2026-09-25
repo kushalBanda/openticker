@@ -1,7 +1,7 @@
-"""Close a sandbox position at the market (ADR 11 in docs/adr). The quantity
-is what is held when the fill is written, not when it was asked for. A
-strategy holding the position is not stopped: its runner finds the leg
-already flat when it next exits."""
+"""Close a sandbox position at the market (ADR 26 in docs/adr). The quantity is
+what is held when the fill is written, not when it was asked for. A strategy
+holding the position is not stopped: its runner finds the leg already flat
+when it next exits."""
 
 from datetime import datetime
 

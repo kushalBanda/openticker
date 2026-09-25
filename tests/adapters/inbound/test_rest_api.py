@@ -34,6 +34,7 @@ ROUTE_FOR_TOOL = {
     "get_option_chain": ("GET", "/api/v1/option-chain"),
     "place_order": ("POST", "/api/v1/orders"),
     "place_basket": ("POST", "/api/v1/orders/basket"),
+    "get_margin": ("POST", "/api/v1/margin"),
     "get_orderbook": ("GET", "/api/v1/orders"),
     "get_positions": ("GET", "/api/v1/positions"),
     "get_funds": ("GET", "/api/v1/funds"),
@@ -336,6 +337,25 @@ def test_close_and_cancel_all_routes(client: TestClient) -> None:
     assert len(cancelled["cancelled"]) == 1 and cancelled["failed"] == []
 
 
+def test_margin_route_matches_the_tool(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    leg = {"symbol": "RELIANCE", "exchange": "NSE", "quantity": 2, "product": "MIS"}
+
+    margin = client.post(
+        "/api/v1/margin",
+        json={"broker": "fake", "orders": [{**leg, "side": "BUY"}, {**leg, "side": "SELL"}]},
+    ).json()
+    bad = client.post(
+        "/api/v1/margin",
+        json={"broker": "fake", "orders": [{**leg, "side": "BUY", "order_type": "LIMIT"}]},
+    )
+
+    assert (margin["total"], margin["benefit"]) == (2 * FAKE_LAST_PRICE * 1.2 - 1000, 1000)
+    assert "sandbox" in margin["note"]
+    assert bad.status_code == 422 and "order 1" in bad.json()["detail"]
+    assert client.get("/api/v1/orders", params={"broker": "fake"}).json()["orders"] == []
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -486,6 +506,7 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/option-chain"),
     ("GET", "/api/v1/market-status"),
     ("POST", "/api/v1/risk/evaluate"),
+    ("POST", "/api/v1/margin"),
     ("POST", "/api/v1/orders"),
     ("POST", "/api/v1/orders/basket"),
     ("GET", "/api/v1/orders"),

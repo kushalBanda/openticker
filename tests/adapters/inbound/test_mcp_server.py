@@ -771,6 +771,40 @@ def test_close_and_cancel_all_through_the_tools() -> None:
         )
 
 
+def test_get_margin_through_the_tool() -> None:
+    from openticker.adapters.inbound.mcp_models import OrderInput
+
+    mcp_server.sync_instruments(broker="fake")
+
+    one = mcp_server.get_margin(
+        broker="fake",
+        orders=[
+            OrderInput(
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                side=Side.SELL,
+                quantity=10,
+                product=Product.MIS,
+            )
+        ],
+    )
+
+    assert (one.total, one.benefit) == (10 * FAKE_LAST_PRICE * 0.2, 0.0)
+    with pytest.raises(ToolError, match="order 1: no instrument 'NOPE'"):
+        mcp_server.get_margin(
+            broker="fake",
+            orders=[
+                OrderInput(
+                    symbol="NOPE",
+                    exchange=Exchange.NSE,
+                    side=Side.BUY,
+                    quantity=1,
+                    product=Product.MIS,
+                )
+            ],
+        )
+
+
 def test_order_status_and_tradebook_through_the_tools() -> None:
     mcp_server.sync_instruments(broker="fake")
     placed = mcp_server.place_order(

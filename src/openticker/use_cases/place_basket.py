@@ -1,6 +1,6 @@
-"""Several sandbox orders placed as one set, buys first. Each goes through
-place_order on its own, one after another: the set is not atomic, and one
-refused order doesn't stop the rest."""
+"""Several sandbox orders placed as one set, buys first (ADR 26 in docs/adr).
+Each goes through place_order on its own, one after another: the set is not
+atomic, and one refused order doesn't stop the rest."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass

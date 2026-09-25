@@ -1,4 +1,4 @@
-"""Withdraw every pending sandbox order (ADR 11 in docs/adr), a strategy's
+"""Withdraw every pending sandbox order (ADR 26 in docs/adr), a strategy's
 included; the strategy itself is not stopped."""
 
 from openticker.core.orders.models import Order, OrderResult

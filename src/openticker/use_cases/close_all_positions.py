@@ -1,4 +1,4 @@
-"""Close every open sandbox position at the market (ADR 11 in docs/adr).
+"""Close every open sandbox position at the market (ADR 26 in docs/adr).
 Strategies are not stopped: each runner finds its legs already flat when it
 next exits, and a signal strategy may enter again on its next alert; the
 kill switch is what stops that."""

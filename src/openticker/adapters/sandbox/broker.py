@@ -43,6 +43,7 @@ from openticker.ports.models import (
     Credentials,
     Funds,
     Instrument,
+    MarginRequirement,
     MarketDepth,
     Position,
     Product,
@@ -89,6 +90,10 @@ class SandboxBroker:
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth:
         return self._market.get_market_depth(instrument)
+
+    def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
+        """The broker's figure, not the sandbox's own rule (get_funds)."""
+        return self._market.get_margin(orders)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date

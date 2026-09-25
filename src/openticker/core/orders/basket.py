@@ -1,6 +1,7 @@
-"""The order a basket's orders are placed in. Buys go first: a hedged set
-(a spread, an iron condor) holds its protection before it sells, and a sell
-placed before its hedge would be refused or blocked at the unhedged margin."""
+"""The order a basket's orders are placed in (ADR 26 in docs/adr). Buys go
+first: a hedged set (a spread, an iron condor) holds its protection before
+it sells, and a sell placed before its hedge would be refused or blocked at
+the unhedged margin."""
 
 from collections.abc import Sequence
 

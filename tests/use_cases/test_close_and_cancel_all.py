@@ -100,6 +100,21 @@ def test_close_one_without_a_fresh_price_is_refused_and_kept() -> None:
     assert sandbox.open_positions()[0].quantity == 10
 
 
+def test_an_expired_contract_is_left_for_settlement() -> None:
+    sandbox = _sandbox()
+    _fill(sandbox, _market(CRUDE, qty=1, product=Product.NRML))
+    after_expiry = datetime(2026, 10, 20, 5, 0, tzinfo=UTC)
+    events = _Recorder()
+
+    _, result = close_position(
+        sandbox, CRUDE, Product.NRML, events, NO_HOLIDAYS, after_expiry, "mcp"
+    )
+
+    assert result.status is OrderStatus.REJECTED
+    assert result.reason == "CRUDEOILM19OCT26FUT expired on 2026-10-19"
+    assert sandbox.open_positions()[0].quantity == 1
+
+
 def test_close_all_closes_what_it_can_and_says_why_not_for_the_rest() -> None:
     sandbox = _sandbox()
     _fill(sandbox, _market(product=Product.CNC))

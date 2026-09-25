@@ -14,6 +14,7 @@ from openticker.ports.models import (
     Credentials,
     Funds,
     Instrument,
+    MarginRequirement,
     MarketDepth,
     Position,
     Quote,
@@ -30,6 +31,10 @@ class BrokerPort(Protocol):
         ...
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth: ...
+    def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
+        """The broker's own figure; nothing is placed."""
+        ...
+
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
     ) -> list[Bar]: ...

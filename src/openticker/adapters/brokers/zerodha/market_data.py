@@ -239,14 +239,16 @@ def _get(
     params: dict[str, str] | tuple[tuple[str, str], ...],
 ) -> dict[str, Any]:
     with httpx.Client(base_url=KITE_BASE_URL, timeout=30.0) as client:
-        response = client.get(
-            path,
-            params=params,
-            headers={
-                "X-Kite-Version": "3",
-                "Authorization": f"token {api_key}:{access_token}",
-            },
-        )
+        response = client.get(path, params=params, headers=kite_headers(api_key, access_token))
+    return kite_payload(path, response)
+
+
+def kite_headers(api_key: str, access_token: str) -> dict[str, str]:
+    return {"X-Kite-Version": "3", "Authorization": f"token {api_key}:{access_token}"}
+
+
+def kite_payload(path: str, response: httpx.Response) -> dict[str, Any]:
+    """The JSON of a Kite answer; its refusals become the errors above."""
     if response.status_code == HTTPStatus.FORBIDDEN:
         raise KiteSessionError(
             "Kite rejected the session token (expired or revoked) — "

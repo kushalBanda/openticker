@@ -12,9 +12,11 @@ from openticker.ports.models import (
     Funds,
     Instrument,
     InstrumentType,
+    MarginRequirement,
     MarketDepth,
     Position,
     Quote,
+    Side,
 )
 
 FAKE_INSTRUMENT = Instrument(
@@ -56,6 +58,16 @@ class FakeBrokerPort:
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return [self.get_quote(instrument) for instrument in instruments]
+
+    def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
+        """A sell needs 20% of its value, a buy its premium; two or more
+        orders together save 1,000 as a hedge."""
+        needs = sum(
+            order.quantity * FAKE_LAST_PRICE * (0.2 if order.side is Side.SELL else 1.0)
+            for order in orders
+        )
+        benefit = 1000.0 if len(orders) > 1 else 0.0
+        return MarginRequirement(needs - benefit, needs * 0.8, needs * 0.2, 0.0, benefit)
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth:
         """Two bids and one ask around FAKE_LAST_PRICE."""
