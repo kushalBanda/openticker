@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
 from openticker.events.types import OrderModified, RiskBreached
 from openticker.ports.models import Product, Side
@@ -12,6 +12,7 @@ from openticker.use_cases.modify_order import modify_order
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 
 OPEN = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
 CLOSED = datetime(2026, 9, 22, 11, 0, tzinfo=UTC)  # Tuesday 16:30 IST
@@ -31,7 +32,7 @@ def _master() -> None:
 
 
 def _resting(product: Product = Product.CNC) -> tuple[SandboxBroker, str]:
-    sandbox = SandboxBroker("fake", PricedBroker(1000.0), SandboxSettings(), lambda: OPEN)
+    sandbox = SandboxBroker("fake", PricedBroker(1000.0), FRICTIONLESS, lambda: OPEN)
     result = sandbox.place_order(
         OrderRequest(FAKE_INSTRUMENT, Side.BUY, 10, product, OrderType.LIMIT, 950.0, "mcp")
     )

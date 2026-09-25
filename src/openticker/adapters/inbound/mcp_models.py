@@ -37,6 +37,7 @@ from openticker.core.scripts.models import (
     ScriptSchedule,
     ScriptStopReason,
 )
+from openticker.core.strategies.ledger import LedgerFill, LedgerRun, LedgerTotals
 from openticker.core.strategies.models import (
     MAX_LEGS,
     MAX_LOTS,
@@ -83,12 +84,15 @@ from openticker.storage.sqlite.audit_repo import AuditEntry
 from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
+from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
 from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
+from openticker.use_cases.preview_charges import ChargePreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
+from openticker.use_cases.strategies.ledger import StrategyLedger
 
 # Exchange-local wall-clock time, "09:20" or "09:20:00". JSON Schema's "time"
 # format (RFC 3339) requires a UTC offset, so clients that check formats,
@@ -573,6 +577,96 @@ class MarginResult(BaseModel):
         )
 
 
+class ChargesResult(BaseModel):
+    segment: str = Field(description="equity_delivery, equity_intraday, futures or options.")
+    exchange: Exchange
+    items: dict[str, float] = Field(
+        description="brokerage, transaction_tax (STT), exchange_txn, sebi, stamp_duty and gst, "
+        "in rupees."
+    )
+    total: float
+    rates_source: str = Field(description="Where the rates come from.")
+    rates_as_of: date = Field(description="When they were last confirmed.")
+
+    @classmethod
+    def of(cls, preview: ChargePreview) -> "ChargesResult":
+        schedule = preview.schedule
+        return cls(
+            segment=schedule.segment.value,
+            exchange=schedule.exchange,
+            items=dict(preview.charges.items),
+            total=preview.charges.total,
+            rates_source=schedule.source,
+            rates_as_of=schedule.as_of,
+        )
+
+
+class ChargeDifferenceResult(BaseModel):
+    item: str = Field(description="A charge (brokerage, transaction_tax, ...), gst or total.")
+    ours: float
+    broker: float
+
+
+class ChargeSampleResult(BaseModel):
+    segment: str
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    price: float
+    ours: float = Field(description="Total at the rates the sandbox charges.")
+    broker: float = Field(description="Total on the broker's contract note.")
+    differences: list[ChargeDifferenceResult] = Field(
+        description="Figures more than a paisa apart; empty when they agree."
+    )
+
+    @classmethod
+    def of(cls, check: SampleCheck) -> "ChargeSampleResult":
+        sample = check.sample
+        return cls(
+            segment=sample.segment.value,
+            symbol=sample.instrument.symbol,
+            exchange=sample.instrument.exchange,
+            side=sample.side,
+            quantity=sample.quantity,
+            price=sample.price,
+            ours=check.ours.total,
+            broker=check.broker.total,
+            differences=[
+                ChargeDifferenceResult(item=d.key, ours=d.ours, broker=d.broker)
+                for d in check.differences
+            ],
+        )
+
+
+class ChargeCheckResult(BaseModel):
+    broker: str
+    checked_at: datetime
+    matches: bool = Field(description="Every sample priced the same by both, to the paisa.")
+    rates_source: str
+    rates_as_of: date
+    samples: list[ChargeSampleResult]
+    skipped: list[str] = Field(description="Segments with no sample, and why.")
+    next_step: str
+
+    @classmethod
+    def of(cls, check: ChargeRateCheck) -> "ChargeCheckResult":
+        matches = not check.differing
+        return cls(
+            broker=check.broker,
+            checked_at=check.checked_at.astimezone(EXCHANGE_TIMEZONE),
+            matches=matches,
+            rates_source=check.rates_source,
+            rates_as_of=check.rates_as_of,
+            samples=[ChargeSampleResult.of(sample) for sample in check.samples],
+            skipped=list(check.skipped),
+            next_step="Nothing to do: paper fills pay what the broker would charge."
+            if matches
+            else "Tell the user: the charges file needs the broker's figures. They can put "
+            "corrected rates in $OPENTICKER_HOME/charges.json, which replaces the shipped file.",
+        )
+
+
 class CancelOrderResult(BaseModel):
     order_id: str
     status: OrderStatus = Field(description="CANCELLED, or the status that kept it from being.")
@@ -684,9 +778,14 @@ class PositionsResult(BaseModel):
 
 class FundsResult(BaseModel):
     total_capital: float = Field(description="Virtual starting capital.")
-    available_cash: float = Field(description="Capital - used margin + realized P&L.")
+    available_cash: float = Field(
+        description="Capital - used margin + realized P&L - charges paid."
+    )
     used_margin: float
-    realized_pnl: float
+    realized_pnl: float = Field(description="What closed trades made or lost, before charges.")
+    charges: float = Field(
+        description="Brokerage, taxes and exchange fees paid on every paper fill."
+    )
 
     @classmethod
     def of(cls, funds: Funds) -> "FundsResult":
@@ -695,6 +794,7 @@ class FundsResult(BaseModel):
             available_cash=round(funds.available_cash, 2),
             used_margin=round(funds.used_margin, 2),
             realized_pnl=round(funds.realized_pnl, 2),
+            charges=round(funds.charges, 2),
         )
 
 
@@ -779,8 +879,16 @@ class TradeResult(BaseModel):
     exchange: Exchange
     side: Side
     quantity: int
-    price: float = Field(description="Fill price.")
+    price: float = Field(description="Fill price: a market order pays the ask or gets the bid.")
+    expected_price: float | None = Field(
+        description="What the order was placed against: the last price for a market order, "
+        "the limit or trigger for a resting one. None for trades before costs were modelled."
+    )
     value: float = Field(description="price x quantity.")
+    charges: float | None = Field(
+        description="Brokerage, taxes and exchange fees on this fill. None: not modelled for "
+        "this instrument (MCX), or a trade from before charges were."
+    )
     product: Product
     triggered_by: str
     strategy_id: str | None
@@ -796,7 +904,9 @@ class TradeResult(BaseModel):
             side=trade.side,
             quantity=trade.quantity,
             price=trade.price,
+            expected_price=trade.expected_price,
             value=round(trade.price * trade.quantity, 2),
+            charges=trade.charges,
             product=trade.product,
             triggered_by=trade.triggered_by,
             strategy_id=trade.strategy_id,
@@ -1375,6 +1485,124 @@ class RunSummary(BaseModel):
             stop_reason=run.stop_reason,
             stop_detail=run.stop_detail,
             realized_pnl=run.realized_pnl,
+        )
+
+
+class LedgerFillResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    price: float
+    filled_at: datetime
+    expected_price: float | None = Field(
+        description="What the order was placed against; null: filled before costs were modelled."
+    )
+    slippage: float | None = Field(
+        description="Rupees paid beyond the expected price (negative: a better fill)."
+    )
+    charges: float | None = Field(description="null: filled before costs were modelled.")
+
+    @classmethod
+    def of(cls, fill: LedgerFill) -> "LedgerFillResult":
+        return cls(
+            symbol=fill.symbol,
+            exchange=Exchange(fill.exchange),
+            side=fill.side,
+            quantity=fill.quantity,
+            price=fill.price,
+            filled_at=fill.filled_at.astimezone(EXCHANGE_TIMEZONE),
+            expected_price=fill.expected_price,
+            slippage=fill.slippage,
+            charges=fill.charges,
+        )
+
+
+class LedgerRunResult(BaseModel):
+    run_id: str
+    status: RunStatus
+    trigger: str = Field(description="Who started it.")
+    started_at: datetime
+    ended_at: datetime | None
+    stop_reason: StrategyStopReason | None
+    stop_detail: str | None
+    gross_pnl: float = Field(description="Realized P&L of its legs, before charges.")
+    charges: float
+    net_pnl: float = Field(description="gross_pnl less charges.")
+    slippage: float = Field(description="Already inside gross_pnl; shown to tell fills from rules.")
+    peak_mtm: float = Field(description="Its best mark-to-market while open.")
+    trough_mtm: float = Field(description="Its worst mark-to-market while open.")
+    after_costs: bool = Field(description="Ended, every fill paid charges: counted in totals.")
+    fills: list[LedgerFillResult] = Field(description="Oldest first.")
+
+    @classmethod
+    def of(cls, entry: LedgerRun) -> "LedgerRunResult":
+        run = entry.run
+        return cls(
+            run_id=run.id,
+            status=run.status,
+            trigger=run.trigger,
+            started_at=run.started_at.astimezone(EXCHANGE_TIMEZONE),
+            ended_at=_local(run.ended_at),
+            stop_reason=run.stop_reason,
+            stop_detail=run.stop_detail,
+            gross_pnl=entry.gross_pnl,
+            charges=entry.charges,
+            net_pnl=entry.net_pnl,
+            slippage=entry.slippage,
+            peak_mtm=run.peak_mtm,
+            trough_mtm=run.trough_mtm,
+            after_costs=entry.after_costs,
+            fills=[LedgerFillResult.of(fill) for fill in entry.fills],
+        )
+
+
+class LedgerTotalsResult(BaseModel):
+    runs: int = Field(description="Runs after costs: the ones these totals judge.")
+    wins: int = Field(description="Runs with net P&L above zero.")
+    losses: int
+    gross_pnl: float
+    charges: float
+    net_pnl: float
+    slippage: float
+    average_win: float | None
+    average_loss: float | None
+    best_run: float | None
+    worst_run: float | None
+    max_drawdown: float = Field(
+        description="Deepest fall of cumulative net P&L from its high, run by run."
+    )
+    stop_reasons: dict[str, int] = Field(description="How the runs ended, most common first.")
+
+    @classmethod
+    def of(cls, totals: LedgerTotals) -> "LedgerTotalsResult":
+        return cls(**{field: getattr(totals, field) for field in cls.model_fields})
+
+
+class StrategyLedgerResult(BaseModel):
+    strategy_id: str
+    name: str
+    kind: str
+    total_runs: int = Field(description="Every run it has had.")
+    uncharged: int = Field(
+        description="Ended runs with a fill that recorded no charges (filled before costs were "
+        "modelled, or on MCX, whose charges aren't yet); left out of totals."
+    )
+    open_runs: int = Field(description="Not ended; left out of totals.")
+    totals: LedgerTotalsResult = Field(description="Over the runs after costs, all of them.")
+    runs: list[LedgerRunResult] = Field(description="The newest runs, newest first.")
+
+    @classmethod
+    def of(cls, ledger: StrategyLedger) -> "StrategyLedgerResult":
+        return cls(
+            strategy_id=ledger.strategy.id,
+            name=ledger.strategy.name,
+            kind=ledger.strategy.kind,
+            total_runs=ledger.total_runs,
+            uncharged=ledger.uncharged,
+            open_runs=ledger.open_runs,
+            totals=LedgerTotalsResult.of(ledger.totals),
+            runs=[LedgerRunResult.of(run) for run in ledger.runs],
         )
 
 

@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 
 from openticker.events.types import (
     BrokerSessionExpired,
+    ChargeRatesDiffer,
     OrderFailed,
     OrderFilled,
     PositionSettled,
@@ -31,6 +32,7 @@ NOTIFIED_EVENTS: tuple[type, ...] = (
     StrategyStopped,
     ScriptStarted,
     ScriptExited,
+    ChargeRatesDiffer,
 )
 
 
@@ -77,6 +79,15 @@ def describe(event: object) -> tuple[str, str] | None:
             )
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
+        case ChargeRatesDiffer():
+            subject = (
+                f"Charge rates differ from {event.broker}'s: "
+                f"{event.differing} of {event.checked} samples"
+            )
+            return subject, (
+                f"{event.detail}. The rates are dated {event.rates_as_of}; update "
+                "$OPENTICKER_HOME/charges.json, which replaces the shipped file."
+            )
     return None
 
 

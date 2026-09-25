@@ -3,7 +3,10 @@ docs/adr). Prices come from the real broker adapter it wraps; orders, fills,
 positions and funds live only in the local sandbox tables. No order ever
 reaches the broker.
 
-MARKET orders fill at once at a fresh quote. LIMIT, SL and SL-M orders rest
+MARKET orders fill at once against a fresh quote's book: a buy at the ask,
+a sell at the bid (ADR 28). Every fill pays the brokerage, taxes and fees in
+the charges file, kept on its trade and taken from available cash.
+LIMIT, SL and SL-M orders rest
 as PENDING, with margin set aside for the part that would open a position,
 until the daemon's execution engine sees a live price cross them
 (`fill_pending`). A LIMIT the market is already through fills at once, as on
@@ -20,7 +23,10 @@ from datetime import UTC, date, datetime
 
 from sqlalchemy.orm import Session
 
-from openticker.core.orders.matching import limit_crossed, trigger_crossed
+from openticker.core.orders.charge_check import ChargeSample
+from openticker.core.orders.charges import ChargeBook, Charges, charges_for
+from openticker.core.orders.fills import FillSettings, market_price, marketable_limit_price
+from openticker.core.orders.matching import trigger_crossed
 from openticker.core.orders.models import (
     Order,
     OrderChanges,
@@ -50,6 +56,7 @@ from openticker.ports.models import (
     Quote,
     Side,
 )
+from openticker.storage.charges_file import load_charge_book
 from openticker.storage.sqlite import sandbox_repo
 from openticker.storage.sqlite.instruments_repo import get_instrument
 from openticker.storage.sqlite.sandbox_repo import FundsState, StoredOrder
@@ -59,6 +66,8 @@ from openticker.storage.sqlite.sandbox_repo import FundsState, StoredOrder
 class SandboxSettings:
     starting_capital: float = 10_000_000.0  # one crore
     leverage: Leverage = field(default_factory=Leverage)
+    fills: FillSettings = field(default_factory=FillSettings)
+    charges: ChargeBook | None = None  # None: the charges file (ADR 28 in docs/adr)
 
 
 class SandboxBroker:
@@ -73,6 +82,7 @@ class SandboxBroker:
         self._market = market
         self._settings = settings
         self._clock = clock
+        self._charges = settings.charges if settings.charges is not None else load_charge_book()
 
     # Market data and login pass straight through to the real broker.
 
@@ -94,6 +104,10 @@ class SandboxBroker:
     def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
         """The broker's figure, not the sandbox's own rule (get_funds)."""
         return self._market.get_margin(orders)
+
+    def get_charges(self, orders: Sequence[ChargeSample]) -> list[Charges]:
+        """The broker's contract note, not the sandbox's rates (ADR 28)."""
+        return self._market.get_charges(orders)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
@@ -124,24 +138,31 @@ class SandboxBroker:
         )
         fresh = quote_is_fillable(quote)
         price = quote.last_price
+        tick = request.instrument.tick_size
+        fill_at: float | None = None
+        if fresh and request.order_type is OrderType.MARKET:
+            fill_at = market_price(request.side, quote, tick, self._settings.fills)
+        elif fresh and request.order_type is OrderType.LIMIT and request.price is not None:
+            fill_at = marketable_limit_price(
+                request.side, request.price, quote, tick, self._settings.fills
+            )
         with sandbox_repo.fill_transaction() as session:
             funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
-            if request.order_type is OrderType.MARKET or (
-                request.order_type is OrderType.LIMIT
-                and fresh
-                and request.price is not None
-                and limit_crossed(request.side, request.price, price)
-            ):
-                reason = (
-                    self._fill(session, request.instrument, order, price, funds)
-                    if fresh
-                    else f"no fresh price for {order.symbol} (last {price}); not filled"
-                )
+            if request.order_type is OrderType.MARKET or fill_at is not None:
+                if fill_at is None:
+                    reason: str | None = (
+                        f"no fresh price for {order.symbol} (last {price}); not filled"
+                    )
+                    charges = None
+                else:
+                    reason, charges = self._fill(session, request.instrument, order, fill_at, funds)
                 order = replace(
                     order,
                     status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
-                    fill_price=None if reason else price,
+                    fill_price=None if reason else fill_at,
                     reason=reason,
+                    charges=charges,
+                    expected_price=price,
                 )
             elif (
                 fresh
@@ -218,11 +239,11 @@ class SandboxBroker:
             instrument = get_instrument(order.symbol, order.exchange)
             funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
             funds = replace(funds, used_margin=funds.used_margin - order.reserved_margin)
-            reason = (
-                self._fill(session, instrument, order, price, funds)
-                if instrument is not None
-                else f"{order.symbol} is no longer in the instrument master"
-            )
+            if instrument is None:
+                reason: str | None = f"{order.symbol} is no longer in the instrument master"
+                charges = None
+            else:
+                reason, charges = self._fill(session, instrument, order, price, funds)
             if reason is not None:
                 sandbox_repo.save_funds(session, funds)
             order = replace(
@@ -231,6 +252,8 @@ class SandboxBroker:
                 fill_price=None if reason else price,
                 reason=reason,
                 reserved_margin=0.0,
+                charges=charges,
+                expected_price=order.price if order.price is not None else order.trigger_price,
             )
             sandbox_repo.update_order(session, order, now)
         return _result(order)
@@ -284,23 +307,37 @@ class SandboxBroker:
     def settle_position(
         self, instrument: Instrument, product: Product, price: float, reason: str, now: datetime
     ) -> OrderResult:
-        return self._close(instrument, product, price, reason, SETTLEMENT_TRIGGER, now)
+        """At the settlement price, with no charges: exercise and assignment
+        charges are not modelled (ADR 28 in docs/adr)."""
+        return self._close(
+            instrument, product, lambda side: price, price, False, reason, SETTLEMENT_TRIGGER, now
+        )
 
     def close_position(
         self,
         instrument: Instrument,
         product: Product,
-        price: float,
+        quote: Quote,
         now: datetime,
         triggered_by: str,
     ) -> OrderResult:
-        return self._close(instrument, product, price, None, triggered_by, now)
+        """At the market: the bid when selling what is held, the ask when
+        buying back a short."""
+
+        def at_market(side: Side) -> float:
+            return market_price(side, quote, instrument.tick_size, self._settings.fills)
+
+        return self._close(
+            instrument, product, at_market, quote.last_price, True, None, triggered_by, now
+        )
 
     def _close(
         self,
         instrument: Instrument,
         product: Product,
-        price: float,
+        price_for: Callable[[Side], float],
+        expected_price: float,
+        charged: bool,
         reason: str | None,
         triggered_by: str,
         now: datetime,
@@ -317,13 +354,18 @@ class SandboxBroker:
                     reason=f"no open {product} position in {instrument.symbol}",
                 )
             side = Side.SELL if held.quantity > 0 else Side.BUY
+            quantity = abs(held.quantity)
+            price = price_for(side)
+            charges = (
+                self._charges_of(instrument, product, side, quantity, price) if charged else None
+            )
             order = StoredOrder(
                 order_id=f"SB{uuid.uuid4().hex[:12].upper()}",
                 placed_at=now,
                 exchange=exchange,
                 symbol=instrument.symbol,
                 side=side,
-                quantity=abs(held.quantity),
+                quantity=quantity,
                 product=product,
                 order_type=OrderType.MARKET,
                 status=OrderStatus.FILLED,
@@ -332,12 +374,14 @@ class SandboxBroker:
                 triggered_by=triggered_by,
                 strategy_id=None,
                 run_id=None,
+                charges=charges,
+                expected_price=expected_price,
             )
             funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
             outcome = apply_fill(
                 held,
                 side,
-                order.quantity,
+                quantity,
                 price,
                 leverage_for(instrument, product, side, self._settings.leverage),
             )
@@ -350,6 +394,7 @@ class SandboxBroker:
                     funds,
                     used_margin=funds.used_margin - outcome.margin_released,
                     realized_pnl=funds.realized_pnl + outcome.realized_pnl,
+                    charges=funds.charges + (charges or 0.0),
                 ),
             )
             sandbox_repo.record_order(session, order)
@@ -398,6 +443,7 @@ class SandboxBroker:
             used_margin=funds.used_margin,
             total_capital=funds.total_capital,
             realized_pnl=funds.realized_pnl,
+            charges=funds.charges,
         )
 
     def get_orderbook(self, limit: int) -> list[Order]:
@@ -421,8 +467,10 @@ class SandboxBroker:
         order: StoredOrder,
         price: float,
         funds: FundsState,
-    ) -> str | None:
-        """Applies the fill to position and funds, or says why it can't."""
+    ) -> tuple[str | None, float | None]:
+        """Applies the fill and its charges to position and funds: why it
+        can't, or None and the charges paid (None when the charges file has
+        no schedule for it)."""
         held = sandbox_repo.load_position(session, order.exchange, order.symbol, order.product)
         outcome = apply_fill(
             held,
@@ -432,13 +480,14 @@ class SandboxBroker:
             leverage_for(instrument, order.product, order.side, self._settings.leverage),
         )
         if order.product is Product.CNC and outcome.position.quantity < 0:
-            return _CNC_SHORT
+            return _CNC_SHORT, None
+        charges = self._charges_of(instrument, order.product, order.side, order.quantity, price)
         # Closing is never refused for lack of funds; only the part that opens
         # a position needs margin.
         if outcome.opened_quantity and outcome.margin_required > (
             funds.available_cash + outcome.margin_released + outcome.realized_pnl
         ):
-            return _insufficient(outcome.margin_required, funds.available_cash)
+            return _insufficient(outcome.margin_required, funds.available_cash), None
         sandbox_repo.save_position(
             session, order.exchange, order.symbol, order.product, outcome.position
         )
@@ -448,9 +497,16 @@ class SandboxBroker:
                 funds,
                 used_margin=funds.used_margin - outcome.margin_released + outcome.margin_required,
                 realized_pnl=funds.realized_pnl + outcome.realized_pnl,
+                charges=funds.charges + (charges or 0.0),
             ),
         )
-        return None
+        return None, charges
+
+    def _charges_of(
+        self, instrument: Instrument, product: Product, side: Side, quantity: int, price: float
+    ) -> float | None:
+        schedule = self._charges.for_fill(instrument, product)
+        return charges_for(schedule, side, quantity, price).total if schedule else None
 
     def _rest(
         self, session: Session, instrument: Instrument, order: StoredOrder, funds: FundsState

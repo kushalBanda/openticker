@@ -17,7 +17,7 @@ from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
 from openticker.use_cases.api_keys import create_api_key, revoke
-from tests.fixtures.fake_broker import FAKE_LAST_PRICE, FakeBrokerPort
+from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 
@@ -35,6 +35,8 @@ ROUTE_FOR_TOOL = {
     "place_order": ("POST", "/api/v1/orders"),
     "place_basket": ("POST", "/api/v1/orders/basket"),
     "get_margin": ("POST", "/api/v1/margin"),
+    "preview_charges": ("GET", "/api/v1/charges/preview"),
+    "check_charge_rates": ("POST", "/api/v1/charges/check"),
     "get_orderbook": ("GET", "/api/v1/orders"),
     "get_positions": ("GET", "/api/v1/positions"),
     "get_funds": ("GET", "/api/v1/funds"),
@@ -62,6 +64,7 @@ ROUTE_FOR_TOOL = {
     "unschedule_strategy": ("DELETE", "/api/v1/strategies/{strategy_id}/schedule"),
     "close_strategy_leg": ("POST", "/api/v1/strategies/{strategy_id}/legs/{leg_id}/close"),
     "get_strategy_runs": ("GET", "/api/v1/strategies/{strategy_id}/runs"),
+    "get_strategy_ledger": ("GET", "/api/v1/strategies/{strategy_id}/ledger"),
     "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
     "create_signal_strategy": ("POST", "/api/v1/signal-strategies"),
     "update_signal_strategy": ("PUT", "/api/v1/signal-strategies/{strategy_id}"),
@@ -174,9 +177,10 @@ def test_sandbox_round_trip_over_rest(client: TestClient) -> None:
     book = client.get("/api/v1/orders", params={"broker": "fake"}).json()
     audit = client.get("/api/v1/audit", params={"event_type": "OrderFilled"}).json()
 
-    assert (placed["status"], placed["fill_price"]) == ("FILLED", FAKE_LAST_PRICE)
+    assert (placed["status"], placed["fill_price"]) == ("FILLED", FAKE_ASK)
     assert [(p["symbol"], p["quantity"]) for p in positions["positions"]] == [("RELIANCE", 4)]
-    assert funds["used_margin"] == 4 * FAKE_LAST_PRICE / 5
+    assert funds["used_margin"] == round(4 * FAKE_ASK / 5, 2)
+    assert funds["charges"] > 0
     assert [entry["order_id"] for entry in book["orders"]] == [placed["order_id"]]
     assert book["orders"][0]["triggered_by"] == "rest:tests"
     assert audit["entries"][0]["triggered_by"] == "rest:tests"
@@ -282,14 +286,15 @@ def test_order_status_and_tradebook_over_rest(client: TestClient) -> None:
     missing = client.get("/api/v1/orders/SBNOPE", params={"broker": "fake"})
     trades = client.get("/api/v1/trades", params={"broker": "fake"}).json()
 
-    assert (status.json()["status"], status.json()["fill_price"]) == ("FILLED", FAKE_LAST_PRICE)
+    assert (status.json()["status"], status.json()["fill_price"]) == ("FILLED", FAKE_ASK)
     assert missing.status_code == 404
     [trade] = trades["trades"]
     assert (trade["order_id"], trade["quantity"], trade["value"]) == (
         placed["order_id"],
         2,
-        2 * FAKE_LAST_PRICE,
+        2 * FAKE_ASK,
     )
+    assert (trade["expected_price"], trade["charges"] > 0) == (FAKE_LAST_PRICE, True)
     assert trade["triggered_by"] == "rest:tests"
     assert trade["filled_at"] == "2026-09-22T09:30:00+05:30"  # the app's clock, not the wall's
     assert trades["since"] == "2026-09-22T00:00:00+05:30"
@@ -335,6 +340,32 @@ def test_close_and_cancel_all_routes(client: TestClient) -> None:
     assert again.status_code == 404 and "get_positions" in again.json()["detail"]
     assert close_all == {"orders": []}
     assert len(cancelled["cancelled"]) == 1 and cancelled["failed"] == []
+
+
+def test_charges_preview_route_matches_the_tool(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order: dict[str, str | float] = {"symbol": "RELIANCE", "exchange": "NSE", "quantity": 10, "price": 1226.0}
+
+    sold = client.get("/api/v1/charges/preview", params={**order, "side": "SELL", "product": "MIS"})
+    unknown = client.get(
+        "/api/v1/charges/preview",
+        params={**order, "symbol": "NOPE", "side": "SELL", "product": "MIS"},
+    )
+
+    assert (sold.status_code, sold.json()["total"]) == (200, 7.86)
+    assert unknown.status_code == 404
+
+
+def test_charges_check_route_matches_the_tool(client: TestClient) -> None:
+    before_sync = client.post("/api/v1/charges/check", json={"broker": "fake"})
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+
+    checked = client.post("/api/v1/charges/check", json={"broker": "fake"})
+
+    assert before_sync.status_code == 404
+    assert "RELIANCE is not in the instrument list" in before_sync.json()["detail"]
+    assert checked.status_code == 200
+    assert checked.json()["matches"] is True and len(checked.json()["samples"]) == 4
 
 
 def test_margin_route_matches_the_tool(client: TestClient) -> None:
@@ -436,6 +467,9 @@ def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get(f"{base}/runs").json()["runs"][0]["stop_reason"] == "manual"
     assert client.post(f"{base}/stop").status_code == 409
     assert client.get("/api/v1/runs/run_missing").status_code == 404
+    ledger = client.get(f"{base}/ledger", params={"limit": 1}).json()
+    assert (ledger["total_runs"], ledger["uncharged"], len(ledger["runs"])) == (1, 1, 1)
+    assert client.get("/api/v1/strategies/stg_nope/ledger").status_code == 404
 
 
 def test_an_alert_posted_to_its_url_needs_no_api_key(client: TestClient, events: EventBus) -> None:

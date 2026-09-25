@@ -3,6 +3,8 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
+from openticker.core.orders.charge_check import ChargeSample
+from openticker.core.orders.charges import Charges, charges_for
 from openticker.core.orders.models import Order, OrderChanges, OrderRequest, OrderResult, Trade
 from openticker.ports.models import (
     Bar,
@@ -18,6 +20,7 @@ from openticker.ports.models import (
     Quote,
     Side,
 )
+from openticker.storage.charges_file import load_charge_book
 
 FAKE_INSTRUMENT = Instrument(
     symbol="RELIANCE",
@@ -33,6 +36,8 @@ FAKE_INSTRUMENT = Instrument(
 )
 
 FAKE_LAST_PRICE = 2500.0
+FAKE_BID = FAKE_LAST_PRICE - 0.05
+FAKE_ASK = FAKE_LAST_PRICE + 0.05
 
 # Two daily candles, stamped the way Kite stamps them (00:00 IST = 18:30 UTC the day before).
 FAKE_BAR_TIMES = (
@@ -54,7 +59,14 @@ class FakeBrokerPort:
         return [FAKE_INSTRUMENT]
 
     def get_quote(self, instrument: Instrument) -> Quote:
-        return Quote(instrument=instrument, last_price=FAKE_LAST_PRICE, as_of=datetime.now(UTC))
+        """A tick either side of FAKE_LAST_PRICE, as its market depth shows."""
+        return Quote(
+            instrument=instrument,
+            last_price=FAKE_LAST_PRICE,
+            as_of=datetime.now(UTC),
+            bid=FAKE_BID,
+            ask=FAKE_ASK,
+        )
 
     def get_quotes(self, instruments: Sequence[Instrument]) -> list[Quote]:
         return [self.get_quote(instrument) for instrument in instruments]
@@ -68,6 +80,16 @@ class FakeBrokerPort:
         )
         benefit = 1000.0 if len(orders) > 1 else 0.0
         return MarginRequirement(needs - benefit, needs * 0.8, needs * 0.2, 0.0, benefit)
+
+    def get_charges(self, orders: Sequence[ChargeSample]) -> list[Charges]:
+        """The shipped rates' figures, as if the broker agreed with them."""
+        book = load_charge_book()
+        charged = []
+        for order in orders:
+            schedule = book.for_fill(order.instrument, order.product)
+            assert schedule is not None, f"no rates for {order.instrument.symbol}"
+            charged.append(charges_for(schedule, order.side, order.quantity, order.price))
+        return charged
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth:
         """Two bids and one ask around FAKE_LAST_PRICE."""

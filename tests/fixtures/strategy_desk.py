@@ -16,6 +16,7 @@ from openticker.use_cases.strategies.runner import RunnerContext, process_comman
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_LAST_PRICE
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 from tests.fixtures.strategies import NOW, STRADDLE, list_nifty_market
 
 CE = "NIFTY22SEP262500CE"
@@ -35,12 +36,12 @@ class _Events:
 
 
 class Desk:
-    def __init__(self) -> None:
+    def __init__(self, settings: SandboxSettings = FRICTIONLESS) -> None:
         list_nifty_market()
         self.now = NOW
         self.market = PricedBroker(FAKE_LAST_PRICE)
         self.market.prices = {CE: 100.0, PE: 100.0}
-        self.sandbox = SandboxBroker("fake", self.market, SandboxSettings(), lambda: self.now)
+        self.sandbox = SandboxBroker("fake", self.market, settings, lambda: self.now)
         self.prices = LatestPrices()
         self.events = _Events()
         self.context = RunnerContext(

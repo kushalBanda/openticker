@@ -2,6 +2,8 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Protocol
 
+from openticker.core.orders.charge_check import ChargeSample
+from openticker.core.orders.charges import Charges
 from openticker.core.orders.models import (
     Order,
     OrderChanges,
@@ -33,6 +35,13 @@ class BrokerPort(Protocol):
     def get_market_depth(self, instrument: Instrument) -> MarketDepth: ...
     def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
         """The broker's own figure; nothing is placed."""
+        ...
+
+    def get_charges(self, orders: Sequence[ChargeSample]) -> list[Charges]:
+        """The broker's own charges for these orders as executed, in their
+        order, from its contract note. Nothing is placed. The orders are taken
+        as one day's trades: a buy and a sell of the same contract may be
+        charged as an intraday round trip."""
         ...
 
     def get_historical_bars(

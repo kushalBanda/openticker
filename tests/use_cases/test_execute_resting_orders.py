@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.events.types import OrderCancelled, OrderFilled
 from openticker.ports.models import Instrument, Product, Side, Tick
@@ -11,6 +11,7 @@ from openticker.use_cases.execute_resting_orders import execute_resting_orders
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 PLACED = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
 LATER = PLACED + timedelta(minutes=5)
@@ -41,9 +42,7 @@ def _master() -> None:
 
 
 def _sandbox() -> SandboxBroker:
-    return SandboxBroker(
-        "fake", PricedBroker(1000.0), SandboxSettings(starting_capital=100_000.0), lambda: PLACED
-    )
+    return SandboxBroker("fake", PricedBroker(1000.0), frictionless(100_000.0), lambda: PLACED)
 
 
 def _place(
@@ -71,7 +70,7 @@ def test_a_live_price_crossing_the_limit_fills_it_and_notifies() -> None:
     execute_resting_orders(sandbox, prices, events, NO_HOLIDAYS, LATER)
 
     [order] = sandbox.get_orderbook(5)
-    assert (order.order_id, order.status, order.fill_price) == (order_id, "FILLED", 949.5)
+    assert (order.order_id, order.status, order.fill_price) == (order_id, "FILLED", 950.0)
     [filled] = events.events
     assert isinstance(filled, OrderFilled) and filled.triggered_by == "mcp"
 
@@ -98,7 +97,7 @@ def test_an_sl_arms_on_its_trigger_and_fills_later_at_its_limit() -> None:
 
     assert armed.triggered
     [order] = sandbox.get_orderbook(1)
-    assert (order.status, order.fill_price) == ("FILLED", 1015.0)
+    assert (order.status, order.fill_price) == ("FILLED", 1030.0)  # at its limit
 
 
 def test_day_orders_expire_at_the_close_and_mis_at_the_square_off() -> None:

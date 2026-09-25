@@ -31,7 +31,8 @@ Before asking, look: `get_option_chain` for strikes, expiries and premiums, `get
 
 1. `create_strategy` (or `create_signal_strategy`) with the definition. It validates the shape and explains any error; fix and retry.
 2. `preview_strategy` (options strategies) shows the exact contracts each leg would trade right now and the net premium. Show the user a short table: leg, contract, side, quantity, last price. For a signal strategy, `get_quotes` on its contracts does the same job.
-3. If the user wants changes, `update_strategy` (or `update_signal_strategy`), then preview again.
+3. Show what a round trip costs: `preview_charges` for one entry and one exit of each leg at today's prices. Paper fills pay the bid or ask plus these charges, so a thin edge can vanish in costs; say so when it does.
+4. If the user wants changes, `update_strategy` (or `update_signal_strategy`), then preview again.
 
 A preview needs a connected broker. If a tool says to reconnect, walk the user through `get_broker_login_url` and `connect_broker` first.
 

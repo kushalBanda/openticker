@@ -92,6 +92,10 @@ class SandboxTradeRow(Base):
     product: Mapped[str]
     strategy_id: Mapped[str | None] = mapped_column(index=True)
     run_id: Mapped[str | None] = mapped_column(index=True)
+    # Costs (ADR 28 in docs/adr). Nullable, so they can be added to an existing
+    # table (ADR 18); NULL: filled before costs were modelled.
+    charges: Mapped[float | None]
+    expected_price: Mapped[float | None]  # what the order was placed against
 
 
 class SandboxPositionRow(Base):
@@ -110,7 +114,8 @@ class SandboxPositionRow(Base):
 
 
 class SandboxFundsRow(Base):
-    """One row. Available cash is derived: capital - used margin + realized P&L."""
+    """One row. Available cash is derived: capital - used margin + realized
+    P&L - charges paid."""
 
     __tablename__ = "sandbox_funds"
 
@@ -118,6 +123,7 @@ class SandboxFundsRow(Base):
     total_capital: Mapped[float]
     used_margin: Mapped[float]
     realized_pnl: Mapped[float]
+    charges: Mapped[float | None]  # added with costs (ADR 28); NULL is 0
 
 
 class ApiKeyRow(Base):

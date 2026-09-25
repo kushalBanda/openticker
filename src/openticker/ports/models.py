@@ -165,7 +165,8 @@ class Funds:
     available_cash: float
     used_margin: float
     total_capital: float
-    realized_pnl: float
+    realized_pnl: float  # before charges
+    charges: float = 0.0  # brokerage, taxes and fees paid on paper fills
 
 
 @dataclass(frozen=True)

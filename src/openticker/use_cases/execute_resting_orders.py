@@ -11,6 +11,7 @@ from datetime import datetime
 
 from openticker.core.calendar.calendar import session_hours, square_off_at
 from openticker.core.calendar.models import MarketCalendar
+from openticker.core.orders.fills import FillSettings
 from openticker.core.orders.matching import match_resting
 from openticker.core.orders.models import Order, OrderStatus
 from openticker.events.bus import EventPublisher
@@ -25,7 +26,9 @@ def execute_resting_orders(
     events: EventPublisher,
     calendar: MarketCalendar,
     now: datetime,
+    fills: FillSettings | None = None,
 ) -> None:
+    settings = fills or FillSettings()
     for order in sandbox.pending_orders():
         expiry = _expiry(order, calendar)
         if now >= expiry[0]:
@@ -43,11 +46,11 @@ def execute_resting_orders(
         tick = latest(order.instrument)
         if tick is None or tick.received_at <= order.placed_at:
             continue
-        match = match_resting(order, tick.last_price)
+        match = match_resting(order, tick.last_price, settings)
         if match.triggered and not order.triggered:
             sandbox.arm_pending(order, now)
-        if match.fill:
-            _fill(sandbox, order, tick.last_price, events, now)
+        if match.fill and match.price is not None:
+            _fill(sandbox, order, match.price, events, now)
 
 
 def _expiry(order: Order, calendar: MarketCalendar) -> tuple[datetime, str]:

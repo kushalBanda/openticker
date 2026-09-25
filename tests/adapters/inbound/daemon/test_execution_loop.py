@@ -7,7 +7,7 @@ from openticker.adapters.inbound.daemon.execution_loop import (
     ExecutionLoop,
 )
 from openticker.adapters.inbound.daemon.prices import LatestPrices
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderType
 from openticker.events.types import OrderFailed
 from openticker.ports.models import Product, Side
@@ -15,6 +15,7 @@ from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 
 OPEN = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
 AFTER_SQUARE_OFF = datetime(2026, 9, 22, 9, 50, tzinfo=UTC)
@@ -40,7 +41,7 @@ def test_a_failed_square_off_is_retried_after_a_pause_not_every_pass() -> None:
     upsert_instruments([FAKE_INSTRUMENT])
     market = PricedBroker(100.0)
     clock = _Clock(OPEN)
-    sandbox = SandboxBroker("fake", market, SandboxSettings(), clock)
+    sandbox = SandboxBroker("fake", market, FRICTIONLESS, clock)
     sandbox.place_order(
         OrderRequest(FAKE_INSTRUMENT, Side.BUY, 5, Product.MIS, OrderType.MARKET, None, "mcp")
     )
@@ -65,7 +66,7 @@ def test_repeated_square_off_failures_back_off_to_an_hour() -> None:
     upsert_instruments([FAKE_INSTRUMENT])
     market = PricedBroker(100.0)
     clock = _Clock(OPEN)
-    sandbox = SandboxBroker("fake", market, SandboxSettings(), clock)
+    sandbox = SandboxBroker("fake", market, FRICTIONLESS, clock)
     sandbox.place_order(
         OrderRequest(FAKE_INSTRUMENT, Side.BUY, 5, Product.MIS, OrderType.MARKET, None, "mcp")
     )
@@ -112,7 +113,7 @@ def test_a_settlement_waiting_for_its_close_is_retried_with_backoff() -> None:
         )
     market = _CountingMarket(100.0)
     clock = _Clock(OPEN)
-    sandbox = SandboxBroker("fake", market, SandboxSettings(), clock)
+    sandbox = SandboxBroker("fake", market, FRICTIONLESS, clock)
     loop = ExecutionLoop(lambda: sandbox, LatestPrices(), _Events(), lambda: NO_HOLIDAYS, clock)
 
     for _ in range(20):  # ten minutes of passes, 30 seconds apart

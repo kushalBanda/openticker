@@ -2,12 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import Order, OrderRequest, OrderType
 from openticker.ports.models import Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 
 MORNING = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)
 
@@ -39,7 +40,7 @@ def _pending(sandbox: SandboxBroker, order_id: str) -> Order:
 
 def test_trades_since_newest_first_with_who_placed_them() -> None:
     clock = _Clock()
-    sandbox = SandboxBroker("fake", PricedBroker(price=100.0), SandboxSettings(), clock)
+    sandbox = SandboxBroker("fake", PricedBroker(price=100.0), FRICTIONLESS, clock)
     first = sandbox.place_order(_request(Side.BUY))
     clock.now += timedelta(minutes=5)
     second = sandbox.place_order(_request(Side.SELL))
@@ -58,7 +59,7 @@ def test_trades_since_newest_first_with_who_placed_them() -> None:
 
 def test_a_resting_order_trades_when_it_fills_not_when_placed() -> None:
     clock = _Clock()
-    sandbox = SandboxBroker("fake", PricedBroker(price=100.0), SandboxSettings(), clock)
+    sandbox = SandboxBroker("fake", PricedBroker(price=100.0), FRICTIONLESS, clock)
     placed = sandbox.place_order(_request(Side.BUY, OrderType.LIMIT, 95.0))
     assert placed.broker_order_id is not None and sandbox.get_trades(MORNING, 10) == []
 

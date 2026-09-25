@@ -2,6 +2,7 @@
 OpenTicker's MCP server, the same skills, and instructions of its own, and
 the user's research never gets committed."""
 
+import asyncio
 import json
 import re
 import subprocess
@@ -75,3 +76,44 @@ def test_the_users_research_is_never_committed(folder: str) -> None:
     )
 
     assert ignored.returncode == 0
+
+
+def _claude_reviewer() -> tuple[dict[str, str], str]:
+    text = (LABS / ".claude" / "agents" / "reviewer.md").read_text()
+    front = re.match(r"---\n(.*?)\n---\n(.*)", text, re.DOTALL)
+    assert front, "reviewer.md starts with frontmatter"
+    return dict(line.split(": ", 1) for line in front.group(1).splitlines()), front.group(2)
+
+
+def _read_only_tools() -> set[str]:
+    from openticker.adapters.inbound.mcp_server import mcp
+
+    tools = asyncio.run(mcp.list_tools())
+    return {t.name for t in tools if t.annotations and t.annotations.read_only_hint}
+
+
+def test_the_reviewer_can_only_read_openticker() -> None:
+    fields, _ = _claude_reviewer()
+    tools = [tool.strip() for tool in fields["tools"].split(",")]
+    openticker = {t.removeprefix("mcp__openticker__") for t in tools if "openticker" in t}
+
+    assert "get_strategy_ledger" in openticker
+    assert openticker <= _read_only_tools()
+    assert not {t for t in tools if t.startswith("mcp__") and "openticker" not in t}
+
+
+def test_both_reviewers_follow_their_own_copy_of_the_skill_with_the_same_tools() -> None:
+    fields, body = _claude_reviewer()
+    codex = tomllib.loads((LABS / ".codex" / "agents" / "reviewer.toml").read_text())
+    claude_tools = {
+        t.strip().removeprefix("mcp__openticker__")
+        for t in fields["tools"].split(",")
+        if "openticker" in t
+    }
+    server = codex["mcp_servers"]["openticker"]
+
+    assert fields["name"] == codex["name"] == "reviewer"
+    assert ".claude/skills/review-strategy/SKILL.md" in body
+    assert ".agents/skills/review-strategy/SKILL.md" in codex["developer_instructions"]
+    assert set(server["enabled_tools"]) == claude_tools
+    assert {k: server[k] for k in ("command", "args")} == OPENTICKER_SERVER

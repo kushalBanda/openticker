@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.events.types import OrderFilled
 from openticker.ports.models import Product, Side
@@ -11,6 +11,7 @@ from openticker.use_cases.square_off import square_off_intraday
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 BEFORE = datetime(2026, 9, 22, 9, 44, tzinfo=UTC)  # 15:14 IST
 AT_SQUARE_OFF = datetime(2026, 9, 22, 9, 45, tzinfo=UTC)  # 15:15 IST
@@ -28,9 +29,7 @@ class _Events:
 @pytest.fixture
 def sandbox() -> SandboxBroker:
     upsert_instruments([FAKE_INSTRUMENT])
-    sandbox = SandboxBroker(
-        "fake", PricedBroker(100.0), SandboxSettings(starting_capital=100_000.0)
-    )
+    sandbox = SandboxBroker("fake", PricedBroker(100.0), frictionless(100_000.0))
     for side, product in ((Side.SELL, Product.MIS), (Side.BUY, Product.CNC)):
         sandbox.place_order(
             OrderRequest(FAKE_INSTRUMENT, side, 5, product, OrderType.MARKET, None, "mcp")
@@ -68,9 +67,7 @@ def test_an_expired_contract_is_left_for_settlement_not_retried() -> None:
         FAKE_INSTRUMENT, symbol="NIFTY22SEP2623400CE", token="1", expiry=date(2026, 9, 22)
     )
     upsert_instruments([option])
-    sandbox = SandboxBroker(
-        "fake", PricedBroker(100.0), SandboxSettings(starting_capital=100_000.0)
-    )
+    sandbox = SandboxBroker("fake", PricedBroker(100.0), frictionless(100_000.0))
     sandbox.place_order(
         OrderRequest(option, Side.BUY, 1, Product.MIS, OrderType.MARKET, None, "mcp")
     )

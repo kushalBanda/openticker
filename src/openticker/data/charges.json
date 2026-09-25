@@ -1,0 +1,280 @@
+{
+  "source": "https://zerodha.com/charges/",
+  "as_of": "2026-09-25",
+  "note": "Zerodha's published charges, confirmed against Kite's virtual contract note on 2026-09-25. Stamp duty is rounded to whole rupees. MCX is not listed: the sandbox has no contract multiplier yet, so MCX fills carry no charges. Replace with $OPENTICKER_HOME/charges.json to override.",
+  "gst_rate": 0.18,
+  "schedules": [
+    {
+      "segment": "equity_delivery",
+      "exchange": "NSE",
+      "charges": [
+        {
+          "key": "transaction_tax",
+          "basis": "turnover",
+          "rate": 0.001
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 3.07e-05,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 0.00015,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "equity_delivery",
+      "exchange": "BSE",
+      "charges": [
+        {
+          "key": "transaction_tax",
+          "basis": "turnover",
+          "rate": 0.001
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 3.75e-05,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 0.00015,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "equity_intraday",
+      "exchange": "NSE",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "rate": 0.0003,
+          "cap": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.00025
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 3.07e-05,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 3e-05,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "equity_intraday",
+      "exchange": "BSE",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "rate": 0.0003,
+          "cap": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.00025
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 3.75e-05,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 3e-05,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "futures",
+      "exchange": "NFO",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "rate": 0.0003,
+          "cap": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.0005
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 1.83e-05,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 2e-05,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "futures",
+      "exchange": "BFO",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "rate": 0.0003,
+          "cap": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.0005
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 0.0,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 2e-05,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "options",
+      "exchange": "NFO",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "flat": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.0015
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 0.0003553,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 3e-05,
+          "rounded": true
+        }
+      ]
+    },
+    {
+      "segment": "options",
+      "exchange": "BFO",
+      "charges": [
+        {
+          "key": "brokerage",
+          "basis": "order",
+          "flat": 20,
+          "taxed": true
+        },
+        {
+          "key": "transaction_tax",
+          "basis": "sell",
+          "rate": 0.0015
+        },
+        {
+          "key": "exchange_txn",
+          "basis": "turnover",
+          "rate": 0.000325,
+          "taxed": true
+        },
+        {
+          "key": "sebi",
+          "basis": "turnover",
+          "rate": 1e-06,
+          "taxed": true
+        },
+        {
+          "key": "stamp_duty",
+          "basis": "buy",
+          "rate": 3e-05,
+          "rounded": true
+        }
+      ]
+    }
+  ]
+}

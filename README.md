@@ -85,7 +85,7 @@ cd labs
 claude                    # or: codex
 ```
 
-Then describe an idea. Your notes go in `labs/notes/`, which is never committed. See [labs/playbook](labs/playbook/README.md).
+Then describe an idea. Your notes go in `labs/notes/`, which is never committed. Once a strategy has run at least 10 times, ask the agent to review it: the `reviewer` judges its runs after costs against what your note said would prove it wrong, and writes a dated verdict (keep, change one thing, or retire) into the note. It can't change anything else. See [labs/playbook](labs/playbook/README.md).
 
 ### REST API (optional)
 

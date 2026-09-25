@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import Order, OrderRequest, OrderStatus, OrderType
 from openticker.ports.models import Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 NOW = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
 
@@ -26,7 +27,7 @@ def _order(side: Side, quantity: int, product: Product = Product.CNC) -> OrderRe
 
 
 def _sandbox(market: PricedBroker, capital: float = 100_000.0) -> SandboxBroker:
-    return SandboxBroker("fake", market, SandboxSettings(starting_capital=capital))
+    return SandboxBroker("fake", market, frictionless(capital))
 
 
 def _pending(sandbox: SandboxBroker, order_id: str) -> Order:

@@ -81,6 +81,8 @@ class Trade:
     triggered_by: str
     strategy_id: str | None
     run_id: str | None
+    charges: float | None = None  # None: filled before costs were modelled (ADR 28)
+    expected_price: float | None = None  # what the order was placed against
 
 
 @dataclass(frozen=True)

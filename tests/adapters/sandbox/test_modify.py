@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import (
     Order,
     OrderChanges,
@@ -16,6 +16,7 @@ from openticker.use_cases.execute_resting_orders import execute_resting_orders
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 PLACED = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
 LATER = PLACED + timedelta(minutes=5)
@@ -35,9 +36,7 @@ def _master() -> None:
 
 
 def _sandbox(capital: float = 100_000.0) -> SandboxBroker:
-    return SandboxBroker(
-        "fake", PricedBroker(1000.0), SandboxSettings(starting_capital=capital), lambda: PLACED
-    )
+    return SandboxBroker("fake", PricedBroker(1000.0), frictionless(capital), lambda: PLACED)
 
 
 def _rest(
@@ -99,7 +98,7 @@ def test_a_change_through_the_market_fills_on_the_next_price_not_at_once() -> No
     tick = Tick(FAKE_INSTRUMENT, 1001.0, LATER)
     execute_resting_orders(sandbox, lambda _: tick, events, NO_HOLIDAYS, LATER)
     filled = _order(sandbox, order_id)
-    assert (filled.status, filled.fill_price) == (OrderStatus.FILLED, 1001.0)
+    assert (filled.status, filled.fill_price) == (OrderStatus.FILLED, 1005.0)  # at its limit
 
 
 def test_an_order_that_already_filled_cannot_change() -> None:

@@ -7,12 +7,12 @@ IMMEDIATE): a second writer waits for the first instead of both reading the
 same funds and one overwriting the other (ADR 11 in docs/adr).
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import literal_column, select
+from sqlalchemy import Row, literal_column, select
 from sqlalchemy.orm import Session
 
 from openticker.core.orders.models import Order, OrderStatus, OrderType, Trade
@@ -33,11 +33,12 @@ _FUNDS_ID = 1
 class FundsState:
     total_capital: float
     used_margin: float
-    realized_pnl: float
+    realized_pnl: float  # what trades made or lost, before charges
+    charges: float = 0.0  # brokerage, taxes and fees paid (ADR 28 in docs/adr)
 
     @property
     def available_cash(self) -> float:
-        return self.total_capital - self.used_margin + self.realized_pnl
+        return self.total_capital - self.used_margin + self.realized_pnl - self.charges
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,9 @@ class StoredOrder:
     trigger_price: float | None = None
     triggered: bool = False
     reserved_margin: float = 0.0
+    # Set when it fills and kept on its trade, not on the order row.
+    charges: float | None = None
+    expected_price: float | None = None
 
     def to_order(self, instrument: Instrument) -> Order:
         return Order(
@@ -103,6 +107,8 @@ class StoredTrade:
     triggered_by: str
     strategy_id: str | None
     run_id: str | None
+    charges: float | None = None  # None: filled before costs were modelled
+    expected_price: float | None = None
 
     def to_trade(self, instrument: Instrument) -> Trade:
         return Trade(
@@ -116,6 +122,8 @@ class StoredTrade:
             triggered_by=self.triggered_by,
             strategy_id=self.strategy_id,
             run_id=self.run_id,
+            charges=self.charges,
+            expected_price=self.expected_price,
         )
 
 
@@ -136,10 +144,14 @@ def load_funds(session: Session, starting_capital: float) -> FundsState:
     row = session.get(SandboxFundsRow, _FUNDS_ID)
     if row is None:
         row = SandboxFundsRow(
-            id=_FUNDS_ID, total_capital=starting_capital, used_margin=0.0, realized_pnl=0.0
+            id=_FUNDS_ID,
+            total_capital=starting_capital,
+            used_margin=0.0,
+            realized_pnl=0.0,
+            charges=0.0,
         )
         session.add(row)
-    return FundsState(row.total_capital, row.used_margin, row.realized_pnl)
+    return FundsState(row.total_capital, row.used_margin, row.realized_pnl, row.charges or 0.0)
 
 
 def save_funds(session: Session, funds: FundsState) -> None:
@@ -149,6 +161,7 @@ def save_funds(session: Session, funds: FundsState) -> None:
             total_capital=funds.total_capital,
             used_margin=funds.used_margin,
             realized_pnl=funds.realized_pnl,
+            charges=funds.charges,
         )
     )
 
@@ -241,6 +254,8 @@ def _add_trade(session: Session, order: StoredOrder, price: float, filled_at: da
             product=order.product.value,
             strategy_id=order.strategy_id,
             run_id=order.run_id,
+            charges=order.charges,
+            expected_price=order.expected_price,
         )
     )
 
@@ -289,6 +304,22 @@ def list_trades(since: datetime, limit: int) -> list[StoredTrade]:
             .order_by(SandboxTradeRow.filled_at.desc(), SandboxTradeRow.id.desc())
             .limit(limit)
         ).all()
+    return _trades(rows)
+
+
+def list_strategy_trades(strategy_id: str) -> list[StoredTrade]:
+    """Every fill of the strategy's runs, oldest first."""
+    with Session(get_engine()) as session:
+        rows = session.execute(
+            select(SandboxTradeRow, SandboxOrderRow.triggered_by)
+            .join(SandboxOrderRow, SandboxOrderRow.order_id == SandboxTradeRow.order_id)
+            .where(SandboxTradeRow.strategy_id == strategy_id)
+            .order_by(SandboxTradeRow.filled_at, SandboxTradeRow.id)
+        ).all()
+    return _trades(rows)
+
+
+def _trades(rows: Sequence[Row[tuple[SandboxTradeRow, str]]]) -> list[StoredTrade]:
     return [
         StoredTrade(
             order_id=trade.order_id,
@@ -302,6 +333,8 @@ def list_trades(since: datetime, limit: int) -> list[StoredTrade]:
             triggered_by=triggered_by,
             strategy_id=trade.strategy_id,
             run_id=trade.run_id,
+            charges=trade.charges,
+            expected_price=trade.expected_price,
         )
         for trade, triggered_by in rows
     ]

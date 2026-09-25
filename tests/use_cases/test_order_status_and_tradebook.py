@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.ports.models import Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
@@ -11,6 +11,7 @@ from openticker.use_cases.get_order_status import get_order_status
 from openticker.use_cases.get_tradebook import get_tradebook
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +20,7 @@ def _master() -> None:
 
 
 def _buy_at(moment: datetime) -> SandboxBroker:
-    sandbox = SandboxBroker("fake", PricedBroker(), SandboxSettings(), lambda: moment)
+    sandbox = SandboxBroker("fake", PricedBroker(), FRICTIONLESS, lambda: moment)
     sandbox.place_order(
         OrderRequest(FAKE_INSTRUMENT, Side.BUY, 1, Product.NRML, OrderType.MARKET, None, "mcp")
     )

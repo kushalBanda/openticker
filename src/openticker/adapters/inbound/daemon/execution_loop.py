@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.core.calendar.models import MarketCalendar
+from openticker.core.orders.fills import FillSettings
 from openticker.core.orders.models import OrderStatus
 from openticker.events.bus import EventPublisher
 from openticker.ports.sandbox_port import OrderSandbox
@@ -41,8 +42,10 @@ class ExecutionLoop:
         events: EventPublisher,
         calendar: Callable[[], MarketCalendar],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        fills: FillSettings | None = None,
     ) -> None:
         self._sandbox = sandbox
+        self._fills = fills or FillSettings()
         self._prices = prices
         self._events = events
         self._load_calendar = calendar
@@ -71,7 +74,9 @@ class ExecutionLoop:
             self._calendar = self._load_calendar()
             self._calendar_loaded_at = now
         sandbox = self._sandbox()
-        execute_resting_orders(sandbox, self._prices.get, self._events, self._calendar, now)
+        execute_resting_orders(
+            sandbox, self._prices.get, self._events, self._calendar, now, self._fills
+        )
         if now >= self._next_square_off:
             results = square_off_intraday(sandbox, sandbox, self._events, self._calendar, now)
             failed = [r.reason or "" for r in results if r.status is not OrderStatus.FILLED]

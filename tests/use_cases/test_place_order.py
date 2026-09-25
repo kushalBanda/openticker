@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
 from openticker.events.types import OrderFailed, OrderFilled, OrderPlaced, RiskBreached
 from openticker.ports.models import Product, Side
@@ -12,6 +12,7 @@ from openticker.use_cases.place_order import place_order
 from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 NOW = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
 
@@ -26,7 +27,7 @@ class _Recorder:
 
 class _CountingSandbox(SandboxBroker):
     def __init__(self, market: PricedBroker) -> None:
-        super().__init__("fake", market, SandboxSettings(starting_capital=1_000_000.0))
+        super().__init__("fake", market, frictionless(1_000_000.0))
         self.orders_placed = 0
 
     def place_order(self, request: OrderRequest) -> OrderResult:

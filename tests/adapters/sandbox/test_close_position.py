@@ -2,12 +2,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
-from openticker.ports.models import Product, Side
+from openticker.ports.models import Product, Quote, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import FRICTIONLESS
 
 NOW = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
 
@@ -19,7 +20,7 @@ def _master() -> None:
 
 def _holding(quantity: int, side: Side = Side.BUY) -> tuple[SandboxBroker, PricedBroker]:
     market = PricedBroker(1000.0)
-    sandbox = SandboxBroker("fake", market, SandboxSettings(), lambda: NOW)
+    sandbox = SandboxBroker("fake", market, FRICTIONLESS, lambda: NOW)
     sandbox.place_order(
         OrderRequest(FAKE_INSTRUMENT, side, quantity, Product.MIS, OrderType.MARKET, None, "mcp")
     )
@@ -29,7 +30,9 @@ def _holding(quantity: int, side: Side = Side.BUY) -> tuple[SandboxBroker, Price
 def test_closes_exactly_what_is_held_and_releases_its_margin() -> None:
     sandbox, _ = _holding(10)
 
-    result = sandbox.close_position(FAKE_INSTRUMENT, Product.MIS, 1010.0, NOW, "rest:bot")
+    result = sandbox.close_position(
+        FAKE_INSTRUMENT, Product.MIS, Quote(FAKE_INSTRUMENT, 1010.0, NOW), NOW, "rest:bot"
+    )
 
     assert (result.status, result.fill_price) == (OrderStatus.FILLED, 1010.0)
     assert result.broker_order_id is not None
@@ -44,7 +47,9 @@ def test_closes_exactly_what_is_held_and_releases_its_margin() -> None:
 def test_a_short_is_closed_by_buying() -> None:
     sandbox, _ = _holding(4, Side.SELL)
 
-    result = sandbox.close_position(FAKE_INSTRUMENT, Product.MIS, 990.0, NOW, "mcp")
+    result = sandbox.close_position(
+        FAKE_INSTRUMENT, Product.MIS, Quote(FAKE_INSTRUMENT, 990.0, NOW), NOW, "mcp"
+    )
 
     assert result.broker_order_id is not None
     order = sandbox.get_order(result.broker_order_id)
@@ -59,7 +64,9 @@ def test_the_quantity_is_read_when_the_fill_is_written() -> None:
         OrderRequest(FAKE_INSTRUMENT, Side.BUY, 5, Product.MIS, OrderType.MARKET, None, "mcp")
     )
 
-    result = sandbox.close_position(FAKE_INSTRUMENT, Product.MIS, 1000.0, NOW, "mcp")
+    result = sandbox.close_position(
+        FAKE_INSTRUMENT, Product.MIS, Quote(FAKE_INSTRUMENT, 1000.0, NOW), NOW, "mcp"
+    )
 
     assert seen == 10
     assert result.broker_order_id is not None
@@ -71,7 +78,9 @@ def test_the_quantity_is_read_when_the_fill_is_written() -> None:
 def test_nothing_held_is_refused_and_nothing_recorded() -> None:
     sandbox, _ = _holding(10)
 
-    result = sandbox.close_position(FAKE_INSTRUMENT, Product.CNC, 1000.0, NOW, "mcp")
+    result = sandbox.close_position(
+        FAKE_INSTRUMENT, Product.CNC, Quote(FAKE_INSTRUMENT, 1000.0, NOW), NOW, "mcp"
+    )
 
     assert result.status is OrderStatus.REJECTED
     assert result.reason == "no open CNC position in RELIANCE"

@@ -36,6 +36,8 @@ from openticker.adapters.inbound.mcp_models import (
     BasketResult,
     CancelAllResult,
     CancelOrderResult,
+    ChargeCheckResult,
+    ChargesResult,
     CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
@@ -68,6 +70,7 @@ from openticker.adapters.inbound.mcp_models import (
     StrategiesResult,
     StrategyCommandResult,
     StrategyDefinition,
+    StrategyLedgerResult,
     StrategyPreviewResult,
     StrategyResult,
     StrategyRunResult,
@@ -82,6 +85,7 @@ from openticker.adapters.inbound.mcp_models import (
 from openticker.composition import SandboxConfigError, capital_cap, order_broker
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
+from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
 from openticker.core.scripts.models import InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
@@ -103,6 +107,7 @@ from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.api_keys import SCRIPT_SCOPE_PREFIX, authenticate
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
+from openticker.use_cases.check_charge_rates import NoChargeSamplesError, check_charge_rates
 from openticker.use_cases.close_all_positions import close_all_positions
 from openticker.use_cases.close_position import NoOpenPositionError, close_position
 from openticker.use_cases.connect_broker import connect_broker
@@ -124,6 +129,7 @@ from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
+from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -149,6 +155,7 @@ from openticker.use_cases.strategies.define import (
     preview_strategy,
     update_strategy,
 )
+from openticker.use_cases.strategies.ledger import MAX_LEDGER_RUNS, get_strategy_ledger
 from openticker.use_cases.strategies.signals import SignalResult, accept_signal
 from openticker.use_cases.sync_instruments import sync_instruments
 
@@ -179,10 +186,13 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
     (InvalidMarginOrderError, 422),
+    (ChargesNotModelledError, 404),
+    (NoChargeSamplesError, 404),
     (BrokerError, 502),
     (BrokerConfigError, 503),
     (SandboxConfigError, 503),
     (CalendarError, 503),
+    (ChargeBookError, 503),
 )
 
 _NEXT_STEP = {
@@ -553,6 +563,29 @@ def create_app(
             _NEXT_STEP.get(result.status, "Fix what the reason says and place the order again."),
         )
 
+    @api.get("/charges/preview")
+    def charges_preview(
+        symbol: str,
+        exchange: Exchange,
+        side: Side,
+        quantity: Annotated[int, Query(gt=0)],
+        price: Annotated[float, Query(gt=0)],
+        product: Product,
+    ) -> ChargesResult:
+        """What one paper fill of this order would pay in brokerage, taxes and
+        fees, at the rates the sandbox charges."""
+        return ChargesResult.of(preview_charges(symbol, exchange, side, quantity, price, product))
+
+    @api.post("/charges/check")
+    def charges_check(body: BrokerBody, key: ApiKey) -> ChargeCheckResult:
+        """Prices sample orders through the broker's contract note and compares
+        them with the rates the sandbox charges. Nothing is placed."""
+        return ChargeCheckResult.of(
+            check_charge_rates(
+                body.broker, get_adapter(body.broker), events, clock(), _caller(key)
+            )
+        )
+
     @api.post("/margin")
     def margin(body: MarginBody) -> MarginResult:
         """What the broker would block for these orders together, hedge benefit
@@ -806,6 +839,13 @@ def create_app(
         strategy_id: str, limit: Annotated[int, Query(ge=1, le=100)] = 10
     ) -> StrategyRunsResult:
         return StrategyRunsResult.of(*control.get_runs(strategy_id, limit))
+
+    @api.get("/strategies/{strategy_id}/ledger")
+    def ledger(
+        strategy_id: str, limit: Annotated[int, Query(ge=1, le=MAX_LEDGER_RUNS)] = 20
+    ) -> StrategyLedgerResult:
+        """Totals over every run after costs, and the newest runs with their fills."""
+        return StrategyLedgerResult.of(get_strategy_ledger(strategy_id, limit))
 
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:

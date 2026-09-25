@@ -110,3 +110,14 @@ def test_script_limits_are_whole_numbers_with_defaults() -> None:
         script_limits({"SCRIPT_MEMORY_LIMIT_MB": "10"})
     with pytest.raises(ScriptConfigError, match="at least 1 second"):
         script_limits({"SCRIPT_CPU_SECONDS": "0"})
+
+
+def test_slippage_ticks_are_a_whole_number() -> None:
+    from openticker.composition import SandboxConfigError, sandbox_settings
+
+    assert sandbox_settings({}).fills.slippage_ticks == 1
+    assert sandbox_settings({"SANDBOX_SLIPPAGE_TICKS": "0"}).fills.slippage_ticks == 0
+    assert sandbox_settings({"SANDBOX_SLIPPAGE_TICKS": "3"}).fills.slippage_ticks == 3
+    for bad in ("-1", "1.5", "lots"):
+        with pytest.raises(SandboxConfigError, match="SANDBOX_SLIPPAGE_TICKS"):
+            sandbox_settings({"SANDBOX_SLIPPAGE_TICKS": bad})

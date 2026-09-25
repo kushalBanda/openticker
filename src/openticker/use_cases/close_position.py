@@ -84,9 +84,7 @@ def close_held(
             f"no fresh price for {instrument.symbol}{last}; not closed",
             triggered_by,
         )
-    result = sandbox.close_position(
-        instrument, position.product, quote.last_price, now, triggered_by
-    )
+    result = sandbox.close_position(instrument, position.product, quote, now, triggered_by)
     order = sandbox.get_order(result.broker_order_id) if result.broker_order_id else None
     if result.status is not OrderStatus.FILLED or order is None or result.fill_price is None:
         return _refused(events, instrument, result.reason or result.status.value, triggered_by)

@@ -2,7 +2,8 @@
 commands that manage its API keys (ADR 17 in docs/adr).
 
     openticker-serve                     run the REST API, live prices, sandbox execution,
-                                         strategies and hosted scripts
+                                         strategies, hosted scripts and the daily
+                                         charge-rate check
     openticker-serve keys create <name>  print a new key, once
     openticker-serve keys list
     openticker-serve keys revoke <name>
@@ -24,7 +25,8 @@ from typing import Any
 import uvicorn
 from dotenv import load_dotenv
 
-from openticker.adapters.brokers.registry import FEED_REGISTRY, get_feed
+from openticker.adapters.brokers.registry import FEED_REGISTRY, get_adapter, get_feed
+from openticker.adapters.inbound.daemon.charge_check_loop import ChargeCheckLoop
 from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
@@ -37,6 +39,7 @@ from openticker.composition import (
     capital_cap,
     order_broker,
     price_timeouts,
+    sandbox_settings,
     script_limits,
     watch_list,
 )
@@ -180,10 +183,22 @@ def _serve(env: Mapping[str, str]) -> None:
     feeds += [
         threading.Thread(
             target=ExecutionLoop(
-                partial(order_broker, broker, env), prices, events, load_calendar
+                partial(order_broker, broker, env),
+                prices,
+                events,
+                load_calendar,
+                fills=sandbox_settings(env).fills,
             ).run,
             args=(stop,),
             name=f"execution-{broker}",
+        )
+        for broker in FEED_REGISTRY
+    ]
+    feeds += [
+        threading.Thread(
+            target=ChargeCheckLoop(broker, partial(get_adapter, broker), events).run,
+            args=(stop,),
+            name=f"charge-check-{broker}",
         )
         for broker in FEED_REGISTRY
     ]

@@ -152,3 +152,17 @@ class ScriptExited:
     reason: str
     detail: str
     occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ChargeRatesDiffer:
+    """The broker's contract note charged a sample order differently from the
+    rates the sandbox charges: the rates file needs updating (ADR 28)."""
+
+    broker: str
+    rates_as_of: str  # the rates file's date
+    differing: int  # samples that differ
+    checked: int  # samples the broker priced
+    detail: str  # each differing figure, ours and the broker's
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)

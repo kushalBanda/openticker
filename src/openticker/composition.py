@@ -5,12 +5,14 @@ nothing else does."""
 
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.core.orders.fills import FillSettings
 from openticker.core.scripts.models import InvalidScriptError, ScriptLimits
 from openticker.core.strategies.prices import PriceTimeouts
 from openticker.events.bus import EventBus
@@ -89,9 +91,19 @@ def notification_channels(env: Mapping[str, str]) -> list[NotificationPort]:
 
 
 def sandbox_settings(env: Mapping[str, str]) -> SandboxSettings:
-    """`SANDBOX_STARTING_CAPITAL` applies when sandbox funds are first created."""
+    """`SANDBOX_STARTING_CAPITAL` applies when sandbox funds are first created.
+    `SANDBOX_SLIPPAGE_TICKS` is how far a fill without a book moves against
+    the order (ADR 28 in docs/adr)."""
     capital = _positive_number(env, "SANDBOX_STARTING_CAPITAL")
-    return SandboxSettings() if capital is None else SandboxSettings(starting_capital=capital)
+    settings = SandboxSettings() if capital is None else SandboxSettings(starting_capital=capital)
+    ticks = env.get("SANDBOX_SLIPPAGE_TICKS")
+    if ticks:
+        if not ticks.strip().isdigit():
+            raise SandboxConfigError(
+                f"SANDBOX_SLIPPAGE_TICKS must be a whole number of ticks, got {ticks!r}"
+            )
+        settings = replace(settings, fills=FillSettings(slippage_ticks=int(ticks)))
+    return settings
 
 
 def order_broker(

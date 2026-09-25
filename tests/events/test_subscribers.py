@@ -110,6 +110,26 @@ def test_a_refused_broker_session_asks_the_user_to_log_in() -> None:
     assert describe(event) == ("Log in to zerodha: live prices stopped", "log in again")
 
 
+def test_differing_charge_rates_are_notified_with_where_to_fix_them() -> None:
+    from openticker.events.types import ChargeRatesDiffer
+
+    event = ChargeRatesDiffer(
+        broker="zerodha",
+        rates_as_of="2026-09-25",
+        differing=1,
+        checked=16,
+        detail="options SELL 65 NIFTY29SEP2625000CE (NFO) @ 86.70: "
+        "transaction_tax ours 8.45, broker 9.10",
+        triggered_by="daemon",
+    )
+
+    assert ChargeRatesDiffer in NOTIFIED_EVENTS
+    subject, message = describe(event) or ("", "")
+    assert subject == "Charge rates differ from zerodha's: 1 of 16 samples"
+    assert "transaction_tax ours 8.45, broker 9.10" in message
+    assert "dated 2026-09-25" in message and "$OPENTICKER_HOME/charges.json" in message
+
+
 def test_a_strategy_start_leg_exit_and_stop_are_notified() -> None:
     started = StrategyStarted(
         strategy_id="stg_1",

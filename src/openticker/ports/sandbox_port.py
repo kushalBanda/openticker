@@ -7,7 +7,7 @@ from typing import Protocol
 
 from openticker.core.orders.models import Order, OrderResult
 from openticker.ports.broker_port import BrokerPort
-from openticker.ports.models import Instrument, Position, Product
+from openticker.ports.models import Instrument, Position, Product, Quote
 
 
 class SandboxPort(Protocol):
@@ -42,13 +42,14 @@ class SandboxPort(Protocol):
         self,
         instrument: Instrument,
         product: Product,
-        price: float,
+        quote: Quote,
         now: datetime,
         triggered_by: str,
     ) -> OrderResult:
-        """A MARKET order at `price` for exactly the quantity held, read under
-        the write lock. Nothing held: REJECTED, nothing recorded. Whether the
-        exchange is open and `price` fresh is the caller's to check."""
+        """A MARKET order against `quote`'s book for exactly the quantity
+        held, read under the write lock, with its charges. Nothing held:
+        REJECTED, nothing recorded. Whether the exchange is open and `quote`
+        fresh is the caller's to check."""
         ...
 
     def settle_position(

@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
 from openticker.ports.models import Exchange, Instrument, InstrumentType, Product, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
@@ -12,6 +12,7 @@ from tests.fixtures.calendar import NO_HOLIDAYS
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.options import NIFTY_INDEX, option
 from tests.fixtures.priced_broker import PricedBroker
+from tests.fixtures.sandbox import frictionless
 
 EXPIRY = date(2026, 9, 22)
 TRADING = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # 10:30 IST on expiry day
@@ -44,7 +45,7 @@ def market() -> PricedBroker:
 
 
 def _sandbox(market: PricedBroker) -> SandboxBroker:
-    return SandboxBroker("fake", market, SandboxSettings(starting_capital=10_000_000.0))
+    return SandboxBroker("fake", market, frictionless(10_000_000.0))
 
 
 def _hold(

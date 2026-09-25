@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -16,7 +16,7 @@ from mcp.types import Tool
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
-from tests.fixtures.fake_broker import FAKE_LAST_PRICE, FakeBrokerPort
+from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
 TRADING_TIME = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
 
@@ -224,10 +224,14 @@ def test_sandbox_round_trip_through_the_tools() -> None:
     book = mcp_server.get_orderbook(broker="fake")
     audit = mcp_server.get_audit_log(event_type="OrderFilled")
 
-    assert (placed.status, placed.fill_price) == ("FILLED", FAKE_LAST_PRICE)
+    assert (placed.status, placed.fill_price) == ("FILLED", FAKE_ASK)  # a buy pays the ask
     assert [(p.symbol, p.quantity) for p in positions.positions] == [("RELIANCE", 4)]
-    assert positions.total_unrealized_pnl == 0.0
-    assert funds.used_margin == 4 * FAKE_LAST_PRICE / 5  # intraday equity: 5x leverage
+    assert positions.total_unrealized_pnl == pytest.approx(4 * (FAKE_LAST_PRICE - FAKE_ASK))
+    assert funds.used_margin == round(4 * FAKE_ASK / 5, 2)  # intraday equity: 5x leverage
+    assert funds.charges > 0
+    assert funds.available_cash == pytest.approx(
+        funds.total_capital - funds.used_margin - funds.charges
+    )
     assert [order.order_id for order in book.orders] == [placed.order_id]
     assert audit.entries[0].triggered_by == "mcp"
 
@@ -451,6 +455,13 @@ def test_strategy_run_tools_start_watch_and_stop_a_run() -> None:
     process_commands(desk.context, desk.now)
     ended = mcp_server.get_strategy_runs(strategy_id=strategy_id).runs[0]
     assert (ended.status, ended.stop_reason) == ("ended", "kill")
+    ledger = mcp_server.get_strategy_ledger(strategy_id=strategy_id)
+    # The test desk charges nothing, so its run can't be judged after costs.
+    assert (ledger.total_runs, ledger.uncharged, ledger.totals.runs) == (1, 1, 0)
+    assert [len(r.fills) for r in ledger.runs] == [4]
+    assert ledger.runs[0].started_at.utcoffset() == timedelta(hours=5, minutes=30)
+    with pytest.raises(ToolError, match="list_strategies"):
+        mcp_server.get_strategy_ledger(strategy_id="stg_nope")
     with pytest.raises(ToolError, match="release_kill_switch"):
         mcp_server.start_strategy(broker="fake", strategy_id=strategy_id)
     assert mcp_server.release_kill_switch(strategy_id=strategy_id).locked is False
@@ -820,7 +831,9 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
     status = mcp_server.get_order_status(broker="fake", order_id=placed.order_id)
     book = mcp_server.get_tradebook(broker="fake")
 
-    assert (status.status, status.fill_price) == ("FILLED", FAKE_LAST_PRICE)
+    assert (status.status, status.fill_price) == ("FILLED", FAKE_ASK)
+    assert book.trades[0].expected_price == FAKE_LAST_PRICE
+    assert book.trades[0].charges is not None and book.trades[0].charges > 0
     assert [(t.order_id, t.quantity, t.triggered_by) for t in book.trades] == [
         (placed.order_id, 3, "mcp")
     ]
@@ -828,3 +841,59 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
     with pytest.raises(ToolError, match="get_orderbook"):
         mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
 
+
+
+def test_check_charge_rates_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")  # RELIANCE on NSE only
+
+    checked = mcp_server.check_charge_rates(broker="fake")
+
+    assert checked.matches and checked.next_step.startswith("Nothing to do")
+    assert {(s.segment, s.side) for s in checked.samples} == {
+        ("equity_delivery", Side.BUY),
+        ("equity_delivery", Side.SELL),
+        ("equity_intraday", Side.BUY),
+        ("equity_intraday", Side.SELL),
+    }
+    assert all(s.ours == s.broker and s.differences == [] for s in checked.samples)
+    assert "futures on NFO: no NIFTY future listed" in checked.skipped
+    assert checked.checked_at.utcoffset() == timedelta(hours=5, minutes=30)
+
+
+def test_check_charge_rates_before_any_sync_says_why() -> None:
+    with pytest.raises(ToolError, match="RELIANCE is not in the instrument list"):
+        mcp_server.check_charge_rates(broker="fake")
+
+
+def test_preview_charges_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    bought = mcp_server.preview_charges(
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=10,
+        price=1226.0,
+        product=Product.MIS,
+    )
+    sold = mcp_server.preview_charges(
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.SELL,
+        quantity=10,
+        price=1226.0,
+        product=Product.MIS,
+    )
+
+    assert (bought.segment, bought.total, sold.total) == ("equity_intraday", 4.80, 7.86)
+    assert sold.items["transaction_tax"] > 0 and bought.items["transaction_tax"] == 0
+    assert bought.rates_source.startswith("https://zerodha.com")
+    with pytest.raises(ToolError, match="no instrument 'NOPE'"):
+        mcp_server.preview_charges(
+            symbol="NOPE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=1,
+            price=1.0,
+            product=Product.MIS,
+        )

@@ -29,6 +29,14 @@ Describe an idea in plain words, for example:
 
 The `new-strategy` skill asks what it needs, shows you the real contracts and prices, saves the strategy and writes a note about it in `notes/`. It doesn't start anything. Say "start it" or "schedule it" when you're ready.
 
+## Reviewing a strategy
+
+Once a strategy has run at least 10 times, ask:
+
+> Review my NIFTY iron condor.
+
+The `reviewer` agent reads the strategy's ledger (every run, its fills, charges and slippage), judges it after costs against what your note said would prove it wrong, and appends a dated verdict to the note: keep, change one thing, or retire. It suggests at most one change, as a new strategy you can create alongside the old one. It never starts, stops or edits anything.
+
 ## What's where
 
 | Path | What |
@@ -36,6 +44,7 @@ The `new-strategy` skill asks what it needs, shows you the real contracts and pr
 | `AGENTS.md`, `CLAUDE.md` | Instructions both agents read |
 | `.mcp.json`, `.codex/config.toml` | How each agent reaches OpenTicker |
 | `.claude/skills/`, `.agents/skills/` | The same skills, for Claude Code and Codex |
+| `.claude/agents/`, `.codex/agents/` | The reviewer, for each agent |
 | `notes/` | Your research log, one note per strategy (not committed) |
 | `research/` | Scratch work (not committed) |
 

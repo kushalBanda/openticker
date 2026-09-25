@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 
 from openticker.adapters.brokers.zerodha.auth import exchange_request_token
+from openticker.adapters.brokers.zerodha.charges import fetch_charges
 from openticker.adapters.brokers.zerodha.instruments import (
     download_instrument_csv,
     parse_instrument_csv,
@@ -16,6 +17,8 @@ from openticker.adapters.brokers.zerodha.market_data import (
     fetch_quote,
     fetch_quotes,
 )
+from openticker.core.orders.charge_check import ChargeSample
+from openticker.core.orders.charges import Charges
 from openticker.core.orders.models import Order, OrderChanges, OrderRequest, OrderResult, Trade
 from openticker.ports.models import (
     Bar,
@@ -61,6 +64,9 @@ class ZerodhaAdapter:
 
     def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
         return fetch_margin(self._api_key, self._session_token(), orders)
+
+    def get_charges(self, orders: Sequence[ChargeSample]) -> list[Charges]:
+        return fetch_charges(self._api_key, self._session_token(), orders)
 
     def get_historical_bars(
         self, instrument: Instrument, interval: str, start: date, end: date
