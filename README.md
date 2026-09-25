@@ -75,6 +75,18 @@ claude mcp add openticker -- uv --directory /absolute/path/to/openticker run ope
 
 Then ask the agent to connect Zerodha. It walks you through login and instrument sync.
 
+### Research with your agent: `labs/`
+
+The repository ships a `labs/` folder set up for Claude Code and Codex: the OpenTicker server already configured, shared instructions, and skills such as `new-strategy`, which turns an idea in plain words into a paper strategy previewed against today's market.
+
+```bash
+uv run openticker-serve   # in its own terminal: watches strategies once they run
+cd labs
+claude                    # or: codex
+```
+
+Then describe an idea. Your notes go in `labs/notes/`, which is never committed. See [labs/playbook](labs/playbook/README.md).
+
 ### REST API (optional)
 
 Everything the tools do is also available over HTTP, for scripts and tools that aren't MCP clients:

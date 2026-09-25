@@ -1,0 +1,5 @@
+# Codex reads this only once you trust the labs folder (it asks on first use).
+
+[mcp_servers.openticker]
+command = "uv"
+args = ["run", "--directory", "..", "openticker-mcp"]

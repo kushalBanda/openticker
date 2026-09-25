@@ -1,0 +1,3 @@
+{
+  "claudeMdExcludes": ["**/!(labs|.claude*)/CLAUDE.md", "**/!(labs)/CLAUDE.local.md"]
+}
