@@ -33,6 +33,7 @@ secret.key
 # Local tooling
 .codegraph/
 .playwright-mcp/
+DESIGN.md
 CLAUDE.local.md
 
 # Maintainer-only working docs
