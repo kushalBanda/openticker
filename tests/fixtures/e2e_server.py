@@ -6,7 +6,7 @@ the same path it does in production.
 
     uv run python -m tests.fixtures.e2e_server --port 8751 --home <dir> --links <file>
 
-Writes 80 sign-in links, one per line, to `--links` once it is serving.
+Writes 120 sign-in links, one per line, to `--links` once it is serving.
 
 The broker's login page is served on the next port, under `localhost`, so
 its redirect back reaches the app from another site, as Kite's does.
@@ -19,7 +19,8 @@ come from `e2e_strategies`. Its
 order book is the Orders mock's: a resting HDFCBANK limit, a hosted script's
 RELIANCE stop, Codex's refused NIFTY future and a cancelled RELIANCE limit.
 Its trades add a TCS round trip today, and one yesterday from before fills
-kept their realized P&L and charge breakdown.
+kept their realized P&L and charge breakdown. Hosted scripts run for real
+(`e2e_hosted` seeds them, the MCP clients seen and more review jobs).
 """
 
 import argparse
@@ -44,11 +45,15 @@ from sqlalchemy import update
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
+from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
 from openticker.adapters.inbound.rest_api import create_app
 from openticker.adapters.inbound.web.app import DIST
 from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
-from openticker.composition import build_event_bus, order_broker
+from openticker.adapters.scripts.supervisor import ProcessSupervisor
+from openticker.composition import build_event_bus, order_broker, script_limits
+from openticker.core.options.chain import years_to_expiry
+from openticker.core.options.greeks import black76_price
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
 from openticker.core.pnl import DayPnl, IntradayPoint
 from openticker.core.strategies.models import (
@@ -66,6 +71,7 @@ from openticker.ports.models import (
     Exchange,
     Instrument,
     InstrumentType,
+    MarginRequirement,
     MarketDepth,
     Product,
     Quote,
@@ -73,7 +79,7 @@ from openticker.ports.models import (
     Tick,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import runs_repo, scripts_repo
+from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.models import SandboxTradeRow
@@ -83,13 +89,15 @@ from openticker.storage.sqlite.watchlists_repo import WatchlistItem, add_items, 
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
 from openticker.use_cases.place_order import place_order
+from openticker.use_cases.scripts.manage import upload_script
 from openticker.use_cases.watched_instruments import watched_instruments
 from openticker.use_cases.web_sessions import create_sign_in_link
+from tests.fixtures.e2e_hosted import REL_TRAIL, seed_agents, seed_scripts
 from tests.fixtures.e2e_strategies import STRADDLE_E2E, TREND, seed_strategies
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
 
 SESSION_START = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
-E2E_ENV = {"SANDBOX_STARTING_CAPITAL": "2500000"}
+E2E_ENV = {"SANDBOX_STARTING_CAPITAL": "2500000", "SCRIPT_MEMORY_LIMIT_MB": "256"}
 MONTHLY = date(2026, 9, 29)
 CLOSES = {
     "NIFTY 50": 24708.75,
@@ -142,6 +150,28 @@ PE = _derivative("NIFTY29SEP2624800PE", InstrumentType.PE, MONTHLY, 24800.0)
 HDFCBANK = replace(FAKE_INSTRUMENT, symbol="HDFCBANK", broker_symbol="HDFCBANK", token="e2e-hdfc")
 TCS = replace(FAKE_INSTRUMENT, symbol="TCS", broker_symbol="TCS", token="e2e-tcs")
 
+NEAR_FUT = _derivative("NIFTY29SEP26FUT", InstrumentType.FUT, MONTHLY, None)
+# The Option chain mock's NIFTY: four expiries, strikes 50 apart from 23,800
+# to 25,800, priced by Black-76 off the walking NIFTY 50 (`_modelled`).
+CHAIN_EXPIRIES = (MONTHLY, date(2026, 10, 6), date(2026, 10, 13), date(2026, 10, 27))
+CHAIN = {
+    option.symbol: option
+    for expiry in CHAIN_EXPIRIES
+    for strike in range(23800, 25801, 50)
+    for kind in (InstrumentType.CE, InstrumentType.PE)
+    for option in [
+        _derivative(
+            f"NIFTY{expiry.strftime('%d%b%y').upper()}{strike}{kind.value}",
+            kind,
+            expiry,
+            float(strike),
+        )
+    ]
+    if option.symbol not in CLOSES
+}
+CHAIN[NEAR_FUT.symbol] = NEAR_FUT
+CARRY = 1.0004  # the futures' premium over the index
+
 INSTRUMENTS = [
     FAKE_INSTRUMENT,
     HDFCBANK,
@@ -149,10 +179,35 @@ INSTRUMENTS = [
     FUT,
     CE,
     PE,
+    *CHAIN.values(),
     _index("NIFTY 50", Exchange.NSE, "256265"),
     _index("NIFTY BANK", Exchange.NSE, "260105"),
     _index("SENSEX", Exchange.BSE, "265"),
 ]
+
+
+def _modelled(instrument: Instrument) -> float:
+    """A chain contract's price now: the NIFTY 50 carried to its forward, and
+    for an option Black-76 at a smile that rises away from the money."""
+    forward = PRICES["NIFTY 50"] * CARRY
+    if instrument.instrument_type is InstrumentType.FUT or instrument.strike is None:
+        return round(forward, 2)
+    assert instrument.expiry is not None
+    moneyness = math.log(instrument.strike / forward)
+    volatility = 0.1 - 0.15 * moneyness + 1.6 * moneyness * moneyness
+    years = years_to_expiry(instrument.expiry, SESSION_START)
+    value = black76_price(
+        instrument.instrument_type, forward, instrument.strike, years, 0.0, volatility
+    )
+    return max(round(round(value / 0.05) * 0.05, 2), 0.05)
+
+
+def _price(instrument: Instrument) -> float:
+    if instrument.symbol in PRICES:
+        return PRICES[instrument.symbol]
+    if instrument.symbol in CHAIN:
+        return _modelled(instrument)
+    return 2500.0
 
 
 START_PRICES = dict(PRICES)  # where each price stood at SESSION_START
@@ -187,7 +242,7 @@ def _minutes(symbol: str) -> tuple[tuple[datetime, float], ...]:
                     break
                 stamps.append(stamp)
         day += timedelta(days=1)
-    closes = [START_PRICES[symbol]]
+    closes = [START_PRICES[symbol] if symbol in START_PRICES else _modelled(CHAIN[symbol])]
     for later, earlier in zip(reversed(stamps), list(reversed(stamps))[1:], strict=False):
         gap = 0.004 if later.date() != earlier.date() else 0.0006
         closes.append(closes[-1] * math.exp(-rng.gauss(0, gap)))
@@ -235,6 +290,24 @@ def _bars(instrument: Instrument, interval: str, start: date, end: date) -> list
     ]
 
 
+def _open_interest(instrument: Instrument) -> int | None:
+    """Futures and options only: most near the money, calls more above it,
+    puts more below it, in whole lots."""
+    if instrument.expiry is None:
+        return None
+    if instrument.strike is None:
+        return 1_245_600
+    spot = CLOSES["NIFTY 50"]
+    away = (
+        (instrument.strike - spot)
+        / spot
+        * (1 if instrument.instrument_type is InstrumentType.CE else -1)
+    )
+    lots = 60_000 * math.exp(-((away * 40) ** 2)) * (1.4 if away > 0 else 0.8)
+    lots += zlib.crc32(instrument.symbol.encode()) % 20_000
+    return int(lots) * 75
+
+
 class E2EBroker(FakeBrokerPort):
     """The fake broker quoting the walking prices, a tick either side, with
     a year of candles behind them and five levels of depth around them."""
@@ -248,7 +321,7 @@ class E2EBroker(FakeBrokerPort):
         return _bars(instrument, interval, start, end)
 
     def get_market_depth(self, instrument: Instrument) -> MarketDepth:
-        last = PRICES.get(instrument.symbol, 2500.0)
+        last = _price(instrument)
         tick = instrument.tick_size
         rng = random.Random()
         today = _bars(instrument, "day", SESSION_START.date(), SESSION_START.date())[-1]
@@ -270,21 +343,45 @@ class E2EBroker(FakeBrokerPort):
             low=round(min(today.low, last), 2),
             close=CLOSES.get(instrument.symbol),
             volume=6_124_318,
-            open_interest=None if instrument.instrument_type is InstrumentType.EQ else 1_245_600,
+            open_interest=_open_interest(instrument),
+        )
+
+    def get_margin(self, orders: Sequence[OrderRequest]) -> MarginRequirement:
+        """A sell needs 11% of what it's written on, a buy its premium; a set
+        with both saves 78% of what its sells need, as a hedge."""
+        spot = PRICES["NIFTY 50"]
+        sells = sum(o.quantity * spot * 0.11 for o in orders if o.side is Side.SELL)
+        buys = sum(o.quantity * _price(o.instrument) for o in orders if o.side is Side.BUY)
+        benefit = sells * 0.78 if sells and buys else 0.0
+        total = sells + buys - benefit
+        return MarginRequirement(
+            round(total, 2),
+            round(sells * 0.8, 2),
+            round(sells * 0.2, 2),
+            round(buys, 2),
+            round(benefit, 2),
         )
 
     def get_quote(self, instrument: Instrument) -> Quote:
         """A tick either side, the day's range from today's candle; an index,
-        as on the exchange, has no book and no volume."""
-        last = PRICES.get(instrument.symbol, 2500.0)
+        as on the exchange, has no book and no volume. A chain contract, quoted
+        forty at a time, skips the candles: a year of minutes each is slow."""
+        last = _price(instrument)
         index = instrument.instrument_type is InstrumentType.INDEX
-        today = _bars(instrument, "day", SESSION_START.date(), SESSION_START.date())[-1]
+        today = (
+            Bar(instrument, "day", last, last, last, last, 0, SESSION_START)
+            if instrument.symbol in CHAIN
+            else _bars(instrument, "day", SESSION_START.date(), SESSION_START.date())[-1]
+        )
+        # An option's book is wider: 0.35 either side, as in the mock.
+        spread = 0.35 if instrument.strike is not None else instrument.tick_size
         return Quote(
             instrument,
             last,
             datetime.now(UTC),
-            bid=None if index else round(last - instrument.tick_size, 2),
-            ask=None if index else round(last + instrument.tick_size, 2),
+            open_interest=_open_interest(instrument),
+            bid=None if index else max(round(last - spread, 2), 0.05),
+            ask=None if index else round(last + spread, 2),
             open=today.open,
             day_high=round(max(today.high, last), 2),
             day_low=round(min(today.low, last), 2),
@@ -334,9 +431,12 @@ class WalkingFeed:
         time.sleep(min(timeout, 0.3))
         ticks = []
         for symbol, instrument in list(self._subscribed.items()):
-            step = PRICES[symbol] * self._random.uniform(-0.0004, 0.0004)
-            PRICES[symbol] = round(PRICES[symbol] + step, 2)
-            ticks.append(Tick(instrument, PRICES[symbol], self._clock()))
+            if symbol in PRICES:
+                step = PRICES[symbol] * self._random.uniform(-0.0004, 0.0004)
+                # On the tick, as an exchange's prices are; an index has none.
+                tick = instrument.tick_size or 0.01
+                PRICES[symbol] = round(round((PRICES[symbol] + step) / tick) * tick, 2)
+            ticks.append(Tick(instrument, _price(instrument), self._clock()))
         return ticks
 
     def close(self) -> None:
@@ -428,14 +528,13 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
         [(CE, Side.SELL, 75), (PE, Side.SELL, 75)],
     )
     trend = run("NIFTY futures trend", TREND, Product.NRML, [(FUT, Side.BUY, 75)])
-    seed_strategies(clock, straddle, trend)
+    strategies = seed_strategies(clock, straddle, trend)
     fill(FUT, Side.BUY, 75, Product.NRML, "ui")
     fill(FAKE_INSTRUMENT, Side.BUY, 10, Product.MIS, "ui")
     fill(HDFCBANK, Side.SELL, 20, Product.MIS, "mcp:claude-code")
 
     # The Orders mock's book: a resting limit, a script's stop, a refusal, a cancel.
-    with write_transaction() as session:
-        trail = scripts_repo.insert_script(session, "rel_trail.py", "0" * 64, 1, clock())
+    trail = upload_script("rel_trail.py", REL_TRAIL, clock())
     place(HDFCBANK, Side.BUY, 25, Product.CNC, OrderType.LIMIT, "ui", price=1640.0)
     stop = place(
         FAKE_INSTRUMENT,
@@ -467,6 +566,8 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
             .where(SandboxTradeRow.filled_at < SESSION_START.replace(tzinfo=None))
             .values(realized_pnl=None, charges_detail=None)
         )
+    seed_scripts(trail.id, clock)
+    seed_agents(strategies, clock)
     events.close()
 
 
@@ -566,7 +667,9 @@ def main() -> None:
     stop = threading.Event()
 
     def quote(instruments: Sequence[Instrument]) -> list[Quote]:
-        return [E2EBroker().get_quote(i) for i in instruments if i.symbol in PRICES]
+        return [
+            E2EBroker().get_quote(i) for i in instruments if i.symbol in PRICES or i.symbol in CHAIN
+        ]
 
     hub = StreamHub(
         prices,
@@ -585,10 +688,19 @@ def main() -> None:
         wake=wake,
     )
     threading.Thread(target=loop.run, args=(stop,), daemon=True).start()
+    scripts = ScriptLoop(
+        ProcessSupervisor(),
+        events,
+        load_calendar,
+        script_limits(env),
+        f"http://127.0.0.1:{args.port}",
+        clock,
+    )
+    threading.Thread(target=scripts.run, args=(stop,), daemon=True).start()
 
     web = WebSettings(f"http://127.0.0.1:{args.port}", args.port, None, DIST)
     app = create_app(events, env, clock=clock, hub=hub, web=web)
-    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(80)]
+    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(120)]
     Path(args.links).write_text("\n".join(links) + "\n")
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

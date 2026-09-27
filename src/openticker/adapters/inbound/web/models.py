@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 from openticker.adapters.inbound.mcp_models import AuditEntryResult, InstrumentRef
 from openticker.adapters.sandbox.broker import SandboxSettings
+from openticker.core.agents.jobs import AgentSettings, Harness
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Tick
+from openticker.storage.sqlite.agent_clients_repo import AgentClient
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.storage.sqlite.web_repo import WebSession
 from openticker.use_cases.api_keys import FULL_SCOPE
@@ -259,6 +261,50 @@ class SetupResult(BaseModel):
             agent_seen=state.agent_seen,
             first_fill_at=_local(state.first_fill_at),
             done=state.done,
+        )
+
+
+class AgentClientResult(BaseModel):
+    name: str = Field(description="As the client gave it: claude-code, codex, ...")
+    transport: str = Field(description="stdio or http.")
+    version: str | None
+    first_seen_at: datetime
+    last_seen_at: datetime = Field(description="Written at most once a minute per client.")
+    calls: int
+    calls_today: int
+    last_tool: str | None
+
+    @classmethod
+    def of(cls, client: AgentClient) -> "AgentClientResult":
+        return cls(
+            name=client.name,
+            transport=client.transport,
+            version=client.version,
+            first_seen_at=client.first_seen_at.astimezone(EXCHANGE_TIMEZONE),
+            last_seen_at=client.last_seen_at.astimezone(EXCHANGE_TIMEZONE),
+            calls=client.calls,
+            calls_today=client.calls_today,
+            last_tool=client.last_tool,
+        )
+
+
+class AgentsResult(BaseModel):
+    clients: list[AgentClientResult] = Field(description="Most recently seen first.")
+    harness: Harness = Field(description="What review jobs run: claude or codex.")
+    timeout_minutes: int
+    jobs_per_day: int
+    started_today: int
+
+    @classmethod
+    def of(
+        cls, clients: list[AgentClient], settings: AgentSettings, started_today: int
+    ) -> "AgentsResult":
+        return cls(
+            clients=[AgentClientResult.of(c) for c in clients],
+            harness=settings.harness,
+            timeout_minutes=int(settings.timeout.total_seconds() // 60),
+            jobs_per_day=settings.jobs_per_day,
+            started_today=started_today,
         )
 
 

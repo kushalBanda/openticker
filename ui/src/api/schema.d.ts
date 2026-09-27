@@ -200,6 +200,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/options/payoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Options Payoff
+         * @description The payoff of up to 20 option and futures legs on one underlying, at
+         *     expiry and today, with breakevens and the most it makes and loses.
+         *     Nothing is placed.
+         */
+        post: operations["options_payoff_api_v1_options_payoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders": {
         parameters: {
             query?: never;
@@ -1018,6 +1040,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-jobs/{job_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Job
+         * @description Ends a waiting job at once; asks a running one to stop.
+         */
+        post: operations["stop_job_api_v1_agent_jobs__job_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1380,6 +1422,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agents
+         * @description MCP clients seen, and how review jobs run: the harness and the day's cap.
+         */
+        get: operations["agents_api_v1_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications": {
         parameters: {
             query?: never;
@@ -1455,11 +1517,43 @@ export interface components {
             /** Legs */
             legs: components["schemas"]["RunLegResult"][];
         };
+        /** AgentClientResult */
+        AgentClientResult: {
+            /**
+             * Name
+             * @description As the client gave it: claude-code, codex, ...
+             */
+            name: string;
+            /**
+             * Transport
+             * @description stdio or http.
+             */
+            transport: string;
+            /** Version */
+            version: string | null;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            first_seen_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             * @description Written at most once a minute per client.
+             */
+            last_seen_at: string;
+            /** Calls */
+            calls: number;
+            /** Calls Today */
+            calls_today: number;
+            /** Last Tool */
+            last_tool: string | null;
+        };
         /**
          * AgentJobEndReason
          * @enum {string}
          */
-        AgentJobEndReason: "finished" | "failed" | "timeout" | "refused" | "start_failed" | "daemon_stopped" | "lost";
+        AgentJobEndReason: "finished" | "failed" | "timeout" | "stopped" | "refused" | "start_failed" | "daemon_stopped" | "lost";
         /** AgentJobLogResult */
         AgentJobLogResult: {
             /** Job Id */
@@ -1536,6 +1630,22 @@ export interface components {
              * @description Newest first.
              */
             jobs: components["schemas"]["AgentJobResult"][];
+        };
+        /** AgentsResult */
+        AgentsResult: {
+            /**
+             * Clients
+             * @description Most recently seen first.
+             */
+            clients: components["schemas"]["AgentClientResult"][];
+            /** @description What review jobs run: claude or codex. */
+            harness: components["schemas"]["Harness"];
+            /** Timeout Minutes */
+            timeout_minutes: number;
+            /** Jobs Per Day */
+            jobs_per_day: number;
+            /** Started Today */
+            started_today: number;
         };
         /** ApiKeyResult */
         ApiKeyResult: {
@@ -1717,6 +1827,24 @@ export interface components {
             status: components["schemas"]["OrderStatus"];
             /** Reason */
             reason: string | null;
+        };
+        /** ChainFutureResult */
+        ChainFutureResult: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * Expiry
+             * Format: date
+             */
+            expiry: string;
+            /** Last Price */
+            last_price: number;
+            /** Bid */
+            bid: number | null;
+            /** Ask */
+            ask: number | null;
+            /** Lot Size */
+            lot_size: number;
         };
         /** ChainRowResult */
         ChainRowResult: {
@@ -2078,6 +2206,11 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * Harness
+         * @enum {string}
+         */
+        Harness: "claude" | "codex";
         /** HealthResult */
         HealthResult: {
             /** Status */
@@ -2622,6 +2755,16 @@ export interface components {
              * @description Unexpired expiries, earliest first.
              */
             available_expiries: string[];
+            /**
+             * Lot Size
+             * @description Units in one lot of these options.
+             */
+            lot_size: number | null;
+            /**
+             * Futures
+             * @description The nearest two futures on the same underlying, earliest first.
+             */
+            futures: components["schemas"]["ChainFutureResult"][];
         };
         /** OptionQuoteResult */
         OptionQuoteResult: {
@@ -2665,6 +2808,16 @@ export interface components {
              * @description Price change per 1 point of interest rate.
              */
             rho: number | null;
+            /**
+             * Bid
+             * @description Best bid; None when nobody is bidding.
+             */
+            bid: number | null;
+            /**
+             * Ask
+             * @description Best offer; None when nobody is offering.
+             */
+            ask: number | null;
         };
         /**
          * OrderInput
@@ -2803,6 +2956,106 @@ export interface components {
              * @description The funds cover it; a fill at this price wouldn't be refused for margin.
              */
             fits: boolean;
+        };
+        /** PayoffBody */
+        PayoffBody: {
+            /** Broker */
+            broker: string;
+            /** Legs */
+            legs: components["schemas"]["PayoffLegInput"][];
+        };
+        /**
+         * PayoffLegInput
+         * @description One leg of a position to preview: an option or a future.
+         */
+        PayoffLegInput: {
+            /**
+             * Symbol
+             * @description OpenTicker's symbol, e.g. NIFTY29SEP2624800CE.
+             */
+            symbol: string;
+            /** @description NFO or BFO. */
+            exchange: components["schemas"]["Exchange"];
+            /** @description BUY or SELL. */
+            side: components["schemas"]["Side"];
+            /**
+             * Quantity
+             * @description Units, not lots.
+             */
+            quantity: number;
+            /**
+             * Price
+             * @description The price to assume; omit for the last price.
+             */
+            price?: number | null;
+        };
+        /** PayoffLegResult */
+        PayoffLegResult: {
+            /** Symbol */
+            symbol: string;
+            exchange: components["schemas"]["Exchange"];
+            side: components["schemas"]["Side"];
+            /** Quantity */
+            quantity: number;
+            /**
+             * Price
+             * @description The price the payoff assumes.
+             */
+            price: number;
+            /**
+             * Implied Volatility
+             * @description Percent, from the last price; None for a future or an unpriced option.
+             */
+            implied_volatility: number | null;
+        };
+        /** PayoffPointResult */
+        PayoffPointResult: {
+            /** Underlying */
+            underlying: number;
+            /** At Expiry */
+            at_expiry: number;
+            /** Today */
+            today: number | null;
+        };
+        /** PayoffResult */
+        PayoffResult: {
+            /** Underlying */
+            underlying: string;
+            exchange: components["schemas"]["Exchange"];
+            /** Underlying Price */
+            underlying_price: number;
+            /** Legs */
+            legs: components["schemas"]["PayoffLegResult"][];
+            /**
+             * Net Premium
+             * @description Rupees; positive is a credit.
+             */
+            net_premium: number;
+            /**
+             * Max Profit
+             * @description Rupees at expiry; None: unbounded.
+             */
+            max_profit: number | null;
+            /**
+             * Max Loss
+             * @description The lowest P&L at expiry, rupees, negative for a loss; None: unbounded.
+             */
+            max_loss: number | null;
+            /**
+             * Breakevens
+             * @description Underlying prices at expiry, ascending.
+             */
+            breakevens: number[];
+            /**
+             * Net Delta
+             * @description Rupees per point of the underlying, today; None when an option is unpriced.
+             */
+            net_delta: number | null;
+            /**
+             * Points
+             * @description P&L at expiry and today (Black-76 at each leg's IV) across the underlying, 161 points, ±8% of it or wider to take in every strike.
+             */
+            points: components["schemas"]["PayoffPointResult"][];
         };
         /** PlaceOrderBody */
         PlaceOrderBody: {
@@ -3387,6 +3640,19 @@ export interface components {
              */
             source: string | null;
         };
+        /** ScriptLimitsResult */
+        ScriptLimitsResult: {
+            /**
+             * Memory Mb
+             * @description Resident memory of a run, script and children.
+             */
+            memory_mb: number;
+            /**
+             * Cpu Seconds
+             * @description CPU time of one run.
+             */
+            cpu_seconds: number;
+        };
         /** ScriptLogsResult */
         ScriptLogsResult: {
             /** Script Id */
@@ -3461,6 +3727,11 @@ export interface components {
             exit_code: number | null;
             /** Ended At */
             ended_at: string | null;
+            /**
+             * Peak Memory Mb
+             * @description The most memory it was measured using, script and children; null: never measured.
+             */
+            peak_memory_mb?: number | null;
         };
         /**
          * ScriptRunStatus
@@ -3506,6 +3777,8 @@ export interface components {
         ScriptsResult: {
             /** Scripts */
             scripts: components["schemas"]["ScriptResult"][];
+            /** @description What every run is held to: SCRIPT_MEMORY_LIMIT_MB and SCRIPT_CPU_SECONDS. */
+            limits?: components["schemas"]["ScriptLimitsResult"] | null;
         };
         /** SearchResult */
         SearchResult: {
@@ -4796,6 +5069,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OptionChainResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    options_payoff_api_v1_options_payoff_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayoffBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoffResult"];
                 };
             };
             /** @description Validation Error */
@@ -6509,6 +6815,37 @@ export interface operations {
             };
         };
     };
+    stop_job_api_v1_agent_jobs__job_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_api_v1_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -7186,6 +7523,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agents_api_v1_agents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentsResult"];
                 };
             };
         };

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
 
-from openticker.ports.models import Instrument
+from openticker.ports.models import Instrument, Quote
 
 
 class GreeksModel(StrEnum):
@@ -31,6 +31,8 @@ class OptionQuote:
     last_price: float | None  # None when the contract has no usable price
     open_interest: int | None
     greeks: Greeks | None  # None when last_price is None
+    bid: float | None = None  # best bid; None when nobody is bidding
+    ask: float | None = None
 
 
 @dataclass(frozen=True)
@@ -50,3 +52,4 @@ class OptionChain:
     atm_strike: float
     interest_rate: float  # annualized, as a fraction
     rows: tuple[ChainRow, ...]  # ascending strike
+    futures: tuple[Quote, ...] = ()  # the nearest futures on the same underlying

@@ -46,6 +46,7 @@ class AgentJobEndReason(StrEnum):
     FINISHED = "finished"  # the agent exited with code 0
     FAILED = "failed"  # exited with an error, or was killed by a signal we didn't send
     TIMEOUT = "timeout"
+    STOPPED = "stopped"  # stop_agent_job
     REFUSED = "refused"  # never started: the day's cap, or the strategy is gone
     START_FAILED = "start_failed"  # the harness couldn't be started
     DAEMON_STOPPED = "daemon_stopped"

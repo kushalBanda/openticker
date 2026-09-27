@@ -107,6 +107,11 @@ const MONTH_NAMES = [
   "Dec",
 ];
 
+/** 6 Oct: a plain date ("2026-10-06"), an expiry, in Kite's months. */
+export function dayMonth(iso: string): string {
+  return `${Number(iso.slice(8, 10))} ${MONTH_NAMES[Number(iso.slice(5, 7)) - 1] ?? ""}`;
+}
+
 /** 1,500 / -75: quantities, no decimals. */
 export function qty(v: Num): string {
   return present(v) ? none.format(v) : MISSING;

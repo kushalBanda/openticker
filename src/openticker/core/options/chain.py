@@ -78,6 +78,11 @@ def forward_price(
     return fallback
 
 
+def _book(price: float | None) -> float | None:
+    """An empty side of the book comes as 0 from Kite."""
+    return price if price else None
+
+
 def build_option_chain(
     underlying: Instrument,
     underlying_price: float,
@@ -134,6 +139,8 @@ def build_option_chain(
                 if price is not None
                 else None
             ),
+            bid=_book(quote.bid if quote is not None else None),
+            ask=_book(quote.ask if quote is not None else None),
         )
 
     return OptionChain(

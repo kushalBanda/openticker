@@ -22,6 +22,7 @@ from openticker.use_cases.agents.manage import (
     get_agent_job_log,
     get_agent_jobs,
     start_review,
+    stop_agent_job,
 )
 from openticker.use_cases.agents.supervise import (
     STOP_GRACE,
@@ -180,6 +181,56 @@ def test_a_job_past_its_timeout_is_stopped_then_killed(tmp_path: Path) -> None:
     ended = agent_jobs_repo.find_job(job.id)
     assert ended is not None and ended.end_reason is AgentJobEndReason.TIMEOUT
     assert ended.end_detail == "still running after 15 minutes; killed by SIGKILL"
+
+
+def test_a_waiting_job_stopped_ends_at_once_and_is_never_started(tmp_path: Path) -> None:
+    job = start_review(_strategy(), SETTINGS, "mcp", NOW)
+    processes, events = _Processes(), _Events()
+
+    stopped = stop_agent_job(job.id, events, "ui", NOW)
+    start_next_job(_context(processes, events, tmp_path), NOW)
+
+    assert (stopped.status, stopped.end_reason) == (AgentJobStatus.ENDED, AgentJobEndReason.STOPPED)
+    assert stopped.end_detail == "stopped by ui before it started"
+    assert processes.launches == []
+    [ended] = events.of(AgentJobEnded)
+    assert isinstance(ended, AgentJobEnded) and ended.strategy_name == "straddle"
+
+
+def test_a_running_job_stopped_gets_sigterm_then_sigkill(tmp_path: Path) -> None:
+    job = start_review(_strategy(), SETTINGS, "mcp", NOW)
+    processes, events = _Processes(), _Events()
+    context = _context(processes, events, tmp_path)
+    start_next_job(context, NOW)
+
+    asked = stop_agent_job(job.id, events, "mcp:claude-code", NOW)
+    watch_jobs(context, NOW + timedelta(seconds=1))
+    watch_jobs(context, NOW + STOP_GRACE)
+    processes.exited[1001] = -9
+    watch_jobs(context, NOW + STOP_GRACE)
+
+    assert asked.status is AgentJobStatus.STOPPING
+    assert processes.stopped == [(1001, False), (1001, True)]
+    ended = agent_jobs_repo.find_job(job.id)
+    assert ended is not None and ended.end_reason is AgentJobEndReason.STOPPED
+    assert ended.end_detail == "stopped by mcp:claude-code; killed by SIGKILL"
+
+
+def test_stopping_an_ended_job_changes_nothing_and_an_unknown_one_says_where_to_look(
+    tmp_path: Path,
+) -> None:
+    job = start_review(_strategy(), SETTINGS, "mcp", NOW)
+    processes, events = _Processes(), _Events()
+    context = _context(processes, events, tmp_path)
+    start_next_job(context, NOW)
+    processes.exited[1001] = 0
+    watch_jobs(context, NOW)
+
+    again = stop_agent_job(job.id, events, "ui", NOW)
+
+    assert (again.status, again.end_reason) == (AgentJobStatus.ENDED, AgentJobEndReason.FINISHED)
+    with pytest.raises(UnknownAgentJobError, match="get_agent_jobs"):
+        stop_agent_job("agj_nope", events, "ui", NOW)
 
 
 def test_the_days_cap_counts_jobs_started_today(tmp_path: Path) -> None:

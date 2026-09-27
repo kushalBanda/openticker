@@ -319,6 +319,7 @@ class ScriptRunRow(Base):
     stop_requested_at: Mapped[datetime | None]  # UTC, stored naive
     exit_code: Mapped[int | None]
     ended_at: Mapped[datetime | None]  # UTC, stored naive
+    peak_memory_kb: Mapped[int | None]  # highest measured; NULL: never measured
 
 
 class AgentJobRow(Base):
@@ -383,6 +384,9 @@ class AgentClientRow(Base):
     first_seen_at: Mapped[datetime]  # UTC, stored naive
     last_seen_at: Mapped[datetime]
     calls: Mapped[int]
+    last_tool: Mapped[str | None]  # NULL on rows from before it was kept
+    day: Mapped[date | None]  # exchange-local day `calls_today` counts
+    calls_today: Mapped[int | None]
 
 
 # The paper account's P&L by day and by minute (ADR 34 in docs/adr).

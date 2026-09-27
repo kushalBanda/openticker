@@ -44,6 +44,20 @@ export const keys = {
   // Watchlists (ADR 36).
   watchlists: ["watchlists"] as const,
   quotes: (broker: string, instruments: string) => ["quotes", broker, instruments] as const,
+  // Option chain (ADR 38).
+  chain: (broker: string, exchange: string, underlying: string, expiry: string, strikes: number) =>
+    ["option-chain", broker, exchange, underlying, expiry, strikes] as const,
+  payoff: (broker: string, legs: string) => ["payoff", broker, legs] as const,
+  basketMargin: (broker: string, orders: string) => ["basket-margin", broker, orders] as const,
+  basketCharges: (orders: string) => ["basket-charges", orders] as const,
+  // Scripts (ADR 25) and agents (ADR 29, ADR 35).
+  scripts: ["scripts"] as const,
+  script: (id: string) => ["script", id] as const,
+  scriptSource: (id: string, sha: string) => ["script-source", id, sha] as const,
+  scriptLogs: (id: string, runId: string) => ["script-logs", id, runId] as const,
+  agents: ["agents"] as const,
+  agentJobs: ["agent-jobs"] as const,
+  agentJobLog: (id: string) => ["agent-job-log", id] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -371,6 +385,7 @@ function useRefreshStrategies() {
         client.invalidateQueries({ queryKey: ["ledger"] }),
         client.invalidateQueries({ queryKey: ["signals"] }),
         client.invalidateQueries({ queryKey: ["reviews"] }),
+        client.invalidateQueries({ queryKey: keys.agentJobs }),
       ]);
     setTimeout(() => {
       again();
@@ -883,4 +898,280 @@ export function useWatch() {
       );
     },
   );
+}
+
+// Option chain (ADR 38): the chain polled, its basket priced as it changes.
+
+export type Chain = Schemas["OptionChainResult"];
+export type ChainQuote = Schemas["OptionQuoteResult"];
+export type Payoff = Schemas["PayoffResult"];
+type OrderInput = Schemas["OrderInput"];
+
+/**
+ * One expiry's chain, `strikes` either side of the money, with the nearest
+ * futures, every 3 s: the book and the Greeks come only from quotes, and two
+ * calls a poll keep under Kite's quote limit of one a second.
+ */
+export function useOptionChain(
+  broker: string | undefined,
+  exchange: Exchange,
+  underlying: string,
+  expiry: string | undefined,
+  strikes: number,
+) {
+  return useQuery({
+    queryKey: keys.chain(broker ?? "", exchange, underlying, expiry ?? "", strikes),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/option-chain", {
+          params: {
+            query: {
+              broker: broker ?? "",
+              underlying,
+              exchange,
+              expiry: expiry ?? null,
+              strike_count: strikes,
+            },
+          },
+        }),
+      ),
+    enabled: broker !== undefined,
+    refetchInterval: 3_000,
+    retry: false,
+    // More strikes of the same chain keep the rows up; another chain starts clean.
+    placeholderData: (previous, query) =>
+      query?.queryKey[3] === underlying && query.queryKey[4] === (expiry ?? "")
+        ? previous
+        : undefined,
+  });
+}
+
+/** A basket's payoff at expiry and today, fetched again when a leg changes. */
+export function usePayoff(broker: string | undefined, legs: Schemas["PayoffLegInput"][]) {
+  const joined = JSON.stringify(legs);
+  return useQuery({
+    queryKey: keys.payoff(broker ?? "", joined),
+    queryFn: () =>
+      unwrap(api.POST("/api/v1/options/payoff", { body: { broker: broker ?? "", legs } })),
+    enabled: broker !== undefined && legs.length > 0,
+    staleTime: 10_000,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** The broker's margin for the whole basket, hedge benefit included (ADR 26). */
+export function useBasketMargin(broker: string | undefined, orders: OrderInput[]) {
+  return useQuery({
+    queryKey: keys.basketMargin(broker ?? "", JSON.stringify(orders)),
+    queryFn: () => unwrap(api.POST("/api/v1/margin", { body: { broker: broker ?? "", orders } })),
+    enabled: broker !== undefined && orders.length > 0,
+    staleTime: 10_000,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** What the basket's fills would pay, summed over its orders, at the sandbox's rates. */
+export function useBasketCharges(orders: OrderInput[]) {
+  return useQuery({
+    queryKey: keys.basketCharges(JSON.stringify(orders)),
+    queryFn: async () => {
+      const each = await Promise.all(
+        orders.map((o) =>
+          unwrap(
+            api.GET("/api/v1/charges/preview", {
+              params: {
+                query: {
+                  symbol: o.symbol,
+                  exchange: o.exchange,
+                  side: o.side,
+                  quantity: o.quantity,
+                  price: o.price ?? 0,
+                  product: o.product,
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      return each.reduce((sum, c) => sum + c.total, 0);
+    },
+    enabled: orders.length > 0 && orders.every((o) => (o.price ?? 0) > 0),
+    staleTime: 60_000,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function usePlaceBasket() {
+  const refresh = useRefreshAccount();
+  return useMutation({
+    mutationFn: (body: Schemas["BasketBody"]) =>
+      unwrap(api.POST("/api/v1/orders/basket", { body })),
+    onSettled: refresh,
+  });
+}
+
+// Hosted scripts (ADR 25): only the daemon starts and stops them, so a
+// command shows once it has acted, within about a second.
+
+export type Script = Schemas["ScriptResult"];
+export type ScriptRun = Schemas["ScriptRunResult"];
+
+/** Every script and the limits each run is held to; refetched every 3 s. */
+export function useScripts() {
+  return useQuery({
+    queryKey: keys.scripts,
+    queryFn: () => unwrap(api.GET("/api/v1/scripts")),
+    refetchInterval: 3_000,
+  });
+}
+
+const scriptPath = (id: string) => ({ params: { path: { script_id: id } } });
+
+/** One script, its latest 50 runs and start / stop requests. */
+export function useScript(id: string) {
+  return useQuery({
+    queryKey: keys.script(id),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/scripts/{script_id}", {
+          params: { path: { script_id: id }, query: { runs: 50 } },
+        }),
+      ),
+    refetchInterval: 2_000,
+  });
+}
+
+/** Its source, read once per version (the hash changes with every upload). */
+export function useScriptSource(id: string, sha: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.scriptSource(id, sha ?? ""),
+    queryFn: async () => {
+      const found = await unwrap(
+        api.GET("/api/v1/scripts/{script_id}", {
+          params: { path: { script_id: id }, query: { runs: 1, include_source: true } },
+        }),
+      );
+      return found.source ?? "";
+    },
+    enabled: enabled && sha !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** A run's last 1,000 lines; while it runs, read again every second. */
+export function useScriptLogs(id: string, runId: string | undefined, live: boolean) {
+  return useQuery({
+    queryKey: keys.scriptLogs(id, runId ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/scripts/{script_id}/logs", {
+          params: { path: { script_id: id }, query: { run_id: runId, lines: 1000 } },
+        }),
+      ),
+    enabled: runId !== undefined,
+    refetchInterval: live ? 1_000 : false,
+  });
+}
+
+function useRefreshScripts() {
+  const client = useQueryClient();
+  return () => {
+    const again = () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.scripts }),
+        client.invalidateQueries({ queryKey: ["script"] }),
+        client.invalidateQueries({ queryKey: ["script-logs"] }),
+      ]);
+    setTimeout(again, 1_200);
+    return again();
+  };
+}
+
+export function useStartScript() {
+  const refresh = useRefreshScripts();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/api/v1/scripts/{script_id}/start", scriptPath(id))),
+    onSettled: refresh,
+  });
+}
+
+export function useStopScript() {
+  const refresh = useRefreshScripts();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/api/v1/scripts/{script_id}/stop", scriptPath(id))),
+    onSettled: refresh,
+  });
+}
+
+/** A schedule, or null to run it only when started. */
+export function useScheduleScript() {
+  const refresh = useRefreshScripts();
+  return useMutation({
+    mutationFn: ({
+      id,
+      schedule,
+    }: {
+      id: string;
+      schedule: Schemas["ScriptScheduleDefinition"] | null;
+    }) =>
+      schedule === null
+        ? unwrap(api.DELETE("/api/v1/scripts/{script_id}/schedule", scriptPath(id)))
+        : unwrap(
+            api.POST("/api/v1/scripts/{script_id}/schedule", { ...scriptPath(id), body: schedule }),
+          ),
+    onSettled: refresh,
+  });
+}
+
+// Agents: the MCP clients seen (ADR 35) and review jobs (ADR 29).
+
+export type AgentJob = Schemas["AgentJobResult"];
+
+export function useAgents() {
+  return useQuery({
+    queryKey: keys.agents,
+    queryFn: () => unwrap(api.GET("/api/v1/agents")),
+    refetchInterval: 10_000,
+  });
+}
+
+/** Every strategy's jobs, newest 50; refetched every 3 s while one waits or runs. */
+export function useAgentJobs() {
+  return useQuery({
+    queryKey: keys.agentJobs,
+    queryFn: () => unwrap(api.GET("/api/v1/agent-jobs", { params: { query: { limit: 50 } } })),
+    refetchInterval: (query) =>
+      query.state.data?.jobs.some((j) => j.status !== "ended") ? 3_000 : 15_000,
+  });
+}
+
+export function useAgentJobLog(id: string | null) {
+  return useQuery({
+    queryKey: keys.agentJobLog(id ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/agent-jobs/{job_id}/log", { params: { path: { job_id: id ?? "" } } }),
+      ),
+    enabled: id !== null,
+    refetchInterval: 2_000,
+  });
+}
+
+export function useStopAgentJob() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/api/v1/agent-jobs/{job_id}/stop", { params: { path: { job_id: id } } })),
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.agentJobs }),
+        client.invalidateQueries({ queryKey: keys.agents }),
+        client.invalidateQueries({ queryKey: ["reviews"] }),
+      ]),
+  });
 }

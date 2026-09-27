@@ -61,6 +61,8 @@ from openticker.adapters.inbound.mcp_models import (
     OrderbookResult,
     OrderInput,
     PaperMarginResult,
+    PayoffLegInput,
+    PayoffResult,
     PlaceOrderResult,
     PnlHistoryResult,
     PositionsResult,
@@ -70,6 +72,7 @@ from openticker.adapters.inbound.mcp_models import (
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
+    ScriptLimitsResult,
     ScriptLogsResult,
     ScriptResult,
     ScriptScheduleDefinition,
@@ -107,9 +110,11 @@ from openticker.composition import (
     agent_settings,
     capital_cap,
     order_broker,
+    script_limits,
 )
 from openticker.core.agents.reviews import ReviewScheduleError
 from openticker.core.calendar.calendar import CalendarError
+from openticker.core.options.payoff import PayoffInputError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
@@ -182,6 +187,11 @@ from openticker.use_cases.pnl_history import (
 from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
 from openticker.use_cases.preview_paper_margin import preview_paper_margin
+from openticker.use_cases.preview_payoff import (
+    MAX_PAYOFF_LEGS,
+    MixedUnderlyingsError,
+    preview_payoff,
+)
 from openticker.use_cases.reset_paper_account import ResetConfirmationError, ResetRefusedError
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -259,6 +269,8 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ReviewScheduleError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
+    (PayoffInputError, 422),
+    (MixedUnderlyingsError, 422),
     (InvalidMarginOrderError, 422),
     (ChargesNotModelledError, 404),
     (NoChargeSamplesError, 404),
@@ -402,6 +414,11 @@ class PlaceOrderBody(BaseModel):
 class QuotesBody(BaseModel):
     broker: str
     instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_QUOTES)
+
+
+class PayoffBody(BaseModel):
+    broker: str
+    legs: list[PayoffLegInput] = Field(min_length=1, max_length=MAX_PAYOFF_LEGS)
 
 
 class MarginBody(BaseModel):
@@ -563,7 +580,7 @@ def create_app(
         strike_count: Annotated[int, Query(ge=1, le=50)] = 10,
         interest_rate: Annotated[float, Query(ge=0, le=20, description="Percent.")] = 0.0,
     ) -> OptionChainResult:
-        now = datetime.now(UTC)
+        now = clock()
         chain, expiries = get_option_chain(
             get_adapter(broker),
             underlying,
@@ -574,6 +591,17 @@ def create_app(
             now,
         )
         return OptionChainResult.of(chain, expiries, now)
+
+    @api.post("/options/payoff")
+    def options_payoff(body: PayoffBody) -> PayoffResult:
+        """The payoff of up to 20 option and futures legs on one underlying, at
+        expiry and today, with breakevens and the most it makes and loses.
+        Nothing is placed."""
+        return PayoffResult.of(
+            preview_payoff(
+                [leg.to_request() for leg in body.legs], get_adapter(body.broker), clock()
+            )
+        )
 
     @api.post("/orders")
     def create_order(body: PlaceOrderBody, caller: Caller) -> PlaceOrderResult:
@@ -1025,6 +1053,13 @@ def create_app(
         """The end of what an agent job printed."""
         return AgentJobLogResult.of(agent_jobs.get_agent_job_log(job_id))
 
+    @api.post("/agent-jobs/{job_id}/stop")
+    def stop_job(job_id: str, caller: Caller) -> AgentJobResult:
+        """Ends a waiting job at once; asks a running one to stop."""
+        return AgentJobResult.of(
+            agent_jobs.stop_agent_job(job_id, events, caller.triggered_by, clock())
+        )
+
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:
         return StrategyRunResult.of_detail(control.get_run(run_id))
@@ -1039,7 +1074,10 @@ def create_app(
 
     @api.get("/scripts")
     def all_scripts() -> ScriptsResult:
-        return ScriptsResult(scripts=[ScriptResult.of(s) for s in scripts.list_scripts()])
+        return ScriptsResult(
+            scripts=[ScriptResult.of(s) for s in scripts.list_scripts()],
+            limits=ScriptLimitsResult.of(script_limits(env)),
+        )
 
     @api.get("/scripts/{script_id}")
     def script(

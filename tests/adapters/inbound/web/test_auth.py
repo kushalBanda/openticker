@@ -27,6 +27,7 @@ WEB_ONLY = [
     ("GET", "/api/v1/notifications"),
     ("GET", "/api/v1/today"),
     ("GET", "/api/v1/setup"),
+    ("GET", "/api/v1/agents"),
 ]
 
 

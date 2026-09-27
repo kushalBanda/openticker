@@ -4,7 +4,7 @@ registered under its own name so nothing touches Kite."""
 import asyncio
 import logging
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -342,6 +342,39 @@ def test_margin_route_matches_the_tool(client: TestClient) -> None:
     assert client.get("/api/v1/orders", params={"broker": "fake"}).json()["orders"] == []
 
 
+def test_payoff_route_matches_the_tool(client: TestClient) -> None:
+    from openticker.ports.models import InstrumentType
+    from openticker.storage.sqlite.instruments_repo import upsert_instruments
+    from tests.fixtures.options import NIFTY_INDEX, chain_contracts, option
+
+    expiry = date(2099, 1, 1)
+    upsert_instruments(
+        [NIFTY_INDEX, option("BANKNIFTY", expiry, 2500.0, InstrumentType.CE)]
+        + chain_contracts("NIFTY", expiry, [2500.0])
+    )
+    leg = {"exchange": "NFO", "side": "BUY", "quantity": 65, "price": 30.0}
+
+    bought = client.post(
+        "/api/v1/options/payoff",
+        json={"broker": "fake", "legs": [{**leg, "symbol": "NIFTY01JAN992500CE"}]},
+    )
+    mixed = client.post(
+        "/api/v1/options/payoff",
+        json={
+            "broker": "fake",
+            "legs": [
+                {**leg, "symbol": "NIFTY01JAN992500CE"},
+                {**leg, "symbol": "BANKNIFTY01JAN992500CE"},
+            ],
+        },
+    )
+
+    assert bought.status_code == 200
+    assert bought.json()["breakevens"] == [2530.0]
+    assert bought.json()["max_loss"] == -30.0 * 65 and bought.json()["max_profit"] is None
+    assert mixed.status_code == 422 and "one underlying" in mixed.json()["detail"]
+
+
 def test_paper_margin_route_matches_the_tool(client: TestClient) -> None:
     client.post("/api/v1/instruments/sync", json={"broker": "fake"})
     order: dict[str, str | int] = {
@@ -467,6 +500,12 @@ def test_review_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get(f"/api/v1/agent-jobs/{job_id}/log").json()["status"] == "pending"
     assert client.get("/api/v1/agent-jobs/job_nope/log").status_code == 404
     assert client.post("/api/v1/strategies/stg_nope/review").status_code == 404
+    stopped = client.post(f"/api/v1/agent-jobs/{job_id}/stop").json()
+    assert (stopped["end_reason"], stopped["end_detail"]) == (
+        "stopped",
+        "stopped by rest:tests before it started",
+    )
+    assert client.post("/api/v1/agent-jobs/job_nope/stop").status_code == 404
 
     schedule = f"/api/v1/strategies/{strategy_id}/review-schedule"
     scheduled = client.post(schedule, json={"after_runs": 10})
@@ -545,6 +584,7 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/depth"),
     ("GET", "/api/v1/bars"),
     ("GET", "/api/v1/option-chain"),
+    ("POST", "/api/v1/options/payoff"),
     ("GET", "/api/v1/market-status"),
     ("POST", "/api/v1/risk/evaluate"),
     ("POST", "/api/v1/margin"),
@@ -645,7 +685,9 @@ def test_script_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.delete(f"/api/v1/scripts/{script_id}/schedule").json()["schedule"] is None
     detail = client.get(f"/api/v1/scripts/{script_id}", params={"include_source": True}).json()
     assert detail["source"] == "print(1)\n"
-    assert [s["name"] for s in client.get("/api/v1/scripts").json()["scripts"]] == ["pinger"]
+    listed = client.get("/api/v1/scripts").json()
+    assert [s["name"] for s in listed["scripts"]] == ["pinger"]
+    assert listed["limits"] == {"memory_mb": 1024, "cpu_seconds": 3600}
     assert client.delete(f"/api/v1/scripts/{script_id}").json() == {
         "script_id": script_id,
         "deleted": True,

@@ -57,6 +57,8 @@ from openticker.adapters.inbound.mcp_models import (
     OrderbookResult,
     OrderInput,
     PaperMarginResult,
+    PayoffLegInput,
+    PayoffResult,
     PlaceOrderResult,
     PnlHistoryResult,
     PositionsResult,
@@ -65,6 +67,7 @@ from openticker.adapters.inbound.mcp_models import (
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
+    ScriptLimitsResult,
     ScriptLogsResult,
     ScriptResult,
     ScriptScheduleDefinition,
@@ -97,9 +100,11 @@ from openticker.composition import (
     build_event_bus,
     capital_cap,
     order_broker,
+    script_limits,
 )
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewScheduleError
 from openticker.core.calendar.calendar import CalendarError
+from openticker.core.options.payoff import PayoffInputError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
@@ -189,6 +194,8 @@ from openticker.use_cases.preview_charges import preview_charges as preview_char
 from openticker.use_cases.preview_paper_margin import (
     preview_paper_margin as preview_paper_margin_use_case,
 )
+from openticker.use_cases.preview_payoff import MAX_PAYOFF_LEGS, MixedUnderlyingsError
+from openticker.use_cases.preview_payoff import preview_payoff as preview_payoff_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -230,7 +237,9 @@ Typical flow:
 3. search_instruments to find the exact symbol, then get_quote (get_quotes for up
    to 50 at once; get_market_depth for the order book) / get_historical_bars.
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
-   strikes, prices, IV and Greeks around at-the-money.
+   strikes, prices, bid and ask, IV and Greeks around at-the-money, and the nearest
+   futures. preview_payoff shows what a set of its legs makes or loses (at expiry and
+   today, breakevens, max profit and loss) before place_basket places them.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
    never sends anything to the broker, and works only while the exchange is open
    (get_market_status). MARKET orders fill at once at the ask (buy) or bid
@@ -255,7 +264,8 @@ Typical flow:
    get_strategy_ledger judges it: every run after charges, with its fills.
    start_review has openticker-serve run the user's own coding agent to
    review it unattended; schedule_review has it do so every so often, after
-   so many runs or on a drawdown; get_agent_jobs shows how that went.
+   so many runs or on a drawdown; get_agent_jobs shows how that went, and
+   stop_agent_job stops one.
 7. Signal strategies: create_signal_strategy saves one whose legs name their
    contracts (stocks, futures, options); rotate_strategy_webhook gives it an
    alert URL for TradingView or ChartInk alerts, served by openticker-serve.
@@ -299,8 +309,8 @@ def _who() -> str:
     return f"mcp:{client}" if client else "mcp"
 
 
-def _note_client(name: str, transport: str, version: str | None) -> None:
-    note_agent_client(name, transport, version, clock())
+def _note_client(name: str, transport: str, version: str | None, tool: str) -> None:
+    note_agent_client(name, transport, version, clock(), tool)
 
 
 mcp.on_client = _note_client
@@ -383,6 +393,8 @@ _AGENT_FIXABLE_ERRORS = (
     NoOpenPositionError,
     InvalidMarginOrderError,
     BatchTooLargeError,
+    PayoffInputError,
+    MixedUnderlyingsError,
     ChargesNotModelledError,
     ChargeBookError,
     NoChargeSamplesError,
@@ -624,7 +636,7 @@ def get_option_chain(
     """Calls and puts for one expiry around at-the-money: live price, open
     interest, implied volatility and Greeks (Black-76 on the forward implied by
     the ATM pair). Needs sync_instruments to have run today."""
-    now = datetime.now(UTC)
+    now = clock()
     with _agent_facing_errors():
         chain, expiries = get_option_chain_use_case(
             get_adapter(broker),
@@ -636,6 +648,36 @@ def get_option_chain(
             now,
         )
     return OptionChainResult.of(chain, expiries, now)
+
+
+@mcp.tool(
+    title="Preview payoff",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def preview_payoff(
+    broker: Broker,
+    legs: Annotated[
+        list[PayoffLegInput],
+        Field(
+            min_length=1,
+            max_length=MAX_PAYOFF_LEGS,
+            description="Options and futures on one underlying, the options of one expiry: "
+            "symbol, exchange, side, quantity in units, and the price to assume (omit for the "
+            "last price).",
+        ),
+    ],
+) -> PayoffResult:
+    """What a set of legs makes or loses across the underlying, at expiry and
+    today (Black-76 at each option's implied volatility): breakevens, the most
+    it makes and loses (None when unbounded), the net premium and net delta.
+    Nothing is placed; use it before place_basket."""
+    with _agent_facing_errors():
+        preview = preview_payoff_use_case(
+            [leg.to_request() for leg in legs], get_adapter(broker), clock()
+        )
+    return PayoffResult.of(preview)
 
 
 _NEXT_STEP = {
@@ -1804,6 +1846,23 @@ def get_agent_job_log(
 
 
 @mcp.tool(
+    title="Stop agent job",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def stop_agent_job(
+    job_id: Annotated[str, Field(description="From get_agent_jobs or start_review.")],
+) -> AgentJobResult:
+    """Stops an agent job: a waiting one ends at once, never started; a
+    running one is stopped by openticker-serve within seconds (killed after
+    10 s), without a verdict. An ended job is returned as it is."""
+    with _agent_facing_errors():
+        job = agent_jobs.stop_agent_job(job_id, event_bus(), _who(), clock())
+    return AgentJobResult.of(job)
+
+
+@mcp.tool(
     title="Get strategy run",
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
@@ -1885,8 +1944,11 @@ def delete_script(script_id: ScriptId) -> DeleteScriptResult:
 )
 def list_scripts() -> ScriptsResult:
     """Every uploaded script: whether it runs now, its schedule and its
-    latest run."""
-    return ScriptsResult(scripts=[ScriptResult.of(summary) for summary in scripts.list_scripts()])
+    latest run, and the memory and CPU limits every run is held to."""
+    return ScriptsResult(
+        scripts=[ScriptResult.of(summary) for summary in scripts.list_scripts()],
+        limits=ScriptLimitsResult.of(script_limits(os.environ)),
+    )
 
 
 @mcp.tool(

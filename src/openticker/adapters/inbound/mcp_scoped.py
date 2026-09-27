@@ -90,10 +90,10 @@ class ScopedMCPServer(MCPServer):
     """An MCPServer whose HTTP callers see and call only what their key allows.
     A call without an HTTP request is the stdio session, the user's own.
 
-    `on_client(name, transport, version)` hears of every call from a named
-    client."""
+    `on_client(name, transport, version, tool)` hears of every call from a
+    named client."""
 
-    on_client: Callable[[str, str, str | None], None] | None = None
+    on_client: Callable[[str, str, str | None, str], None] | None = None
 
     async def _handle_list_tools(
         self, ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
@@ -121,7 +121,7 @@ class ScopedMCPServer(MCPServer):
                 raise ToolError(f"{name} refused: {why}")
         client, client_version = _client_of(context)
         if client is not None and self.on_client is not None:
-            self.on_client(client, "stdio" if request is None else "http", client_version)
+            self.on_client(client, "stdio" if request is None else "http", client_version, name)
         with as_client(client):  # sync tools run in a thread, which copies it
             return await super().call_tool(name, arguments, context)
 

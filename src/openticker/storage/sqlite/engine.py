@@ -20,8 +20,11 @@ _prepare_lock = threading.Lock()
 
 
 def get_data_dir() -> Path:
-    """Read at call time, not import time, so tests can override `OPENTICKER_HOME`."""
-    return Path(os.environ.get("OPENTICKER_HOME", str(Path.home() / ".openticker")))
+    """Read at call time, not import time, so tests can override `OPENTICKER_HOME`.
+    Always absolute: a hosted script's process gets this as its `cwd` and its
+    file path as an argument (ADR 25), and a relative `OPENTICKER_HOME` would
+    make the child resolve that path against its own (already-moved) cwd."""
+    return Path(os.environ.get("OPENTICKER_HOME", str(Path.home() / ".openticker"))).resolve()
 
 
 def get_engine() -> Engine:

@@ -2059,3 +2059,433 @@
     cursor: default;
   }
 }
+
+/* Option chain (DESIGN.md Option chain, ADR 38) */
+@layer components {
+  .chain-toolbar {
+    flex-wrap: wrap;
+  }
+  .underlying-btn {
+    min-width: 150px;
+    justify-content: space-between;
+    font-weight: 600;
+  }
+  .select {
+    height: 32px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--fill);
+    color: var(--ink);
+    font: 500 13px / 1 var(--font-text);
+  }
+  .chain-stats .stat .value {
+    font-size: 24px;
+    line-height: 30px;
+  }
+  .chain-tile {
+    margin-bottom: 24px;
+  }
+  .chain {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chain th {
+    height: 34px;
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-muted);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .chain .chain-sides th {
+    height: 30px;
+    text-align: center;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .chain td {
+    height: 36px;
+    padding: 4px 8px;
+    border-top: 1px solid var(--line);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .chain :is(th, td):first-child {
+    padding-left: 16px;
+  }
+  .chain :is(th, td):last-child {
+    padding-right: 16px;
+  }
+  .chain :is(th, td).strike {
+    text-align: center;
+    font-weight: 600;
+    background: var(--bg);
+    box-shadow:
+      inset 1px 0 0 var(--line),
+      inset -1px 0 0 var(--line);
+  }
+  /* In the money: the call side below the underlying, the put side above it. */
+  .chain tr[data-call-itm] td:nth-child(-n + 5),
+  .chain tr[data-put-itm] td:nth-child(n + 7) {
+    background: var(--surface-hover);
+  }
+  /* The money's row wins over the in-the-money shade. */
+  .chain tr[data-atm] td:nth-child(n) {
+    background: var(--accent-soft);
+  }
+  .chain tr[data-atm] td.strike {
+    color: var(--accent-ink);
+  }
+  .chain td.missing {
+    color: var(--ink-muted);
+  }
+  .chain td.book[data-held="SELL"] .pick[data-side="SELL"],
+  .chain td.book[data-held="BUY"] .pick[data-side="BUY"] {
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+  .futures-row td {
+    text-align: left;
+    background: var(--bg);
+  }
+  .futures-row .label {
+    margin-right: 16px;
+  }
+  .future {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 24px;
+  }
+  .picks {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .pick {
+    padding: 2px 5px;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out);
+  }
+  .pick[data-side="SELL"]:hover,
+  .pick[data-side="SELL"]:focus-visible {
+    background: var(--down-soft);
+    color: var(--down);
+  }
+  .pick[data-side="BUY"]:hover,
+  .pick[data-side="BUY"]:focus-visible {
+    background: var(--up-soft);
+    color: var(--up);
+  }
+  .pick:disabled {
+    color: var(--ink-muted);
+    cursor: default;
+    background: transparent;
+  }
+
+  .chain-charts {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+  .chain-charts .tile {
+    padding: 20px;
+  }
+  .chain-charts .tile-head {
+    margin-bottom: 8px;
+  }
+  .chain-charts .chart-note {
+    height: 200px;
+    padding: 16px;
+    text-align: center;
+  }
+  .legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend > span {
+    display: inline-block;
+    width: 14px;
+    height: 0;
+    border-top: 2px solid;
+  }
+  .legend .key-expiry {
+    border-color: var(--ink);
+  }
+  .legend .key-today {
+    border-top-style: dashed;
+    border-color: var(--accent-ink);
+  }
+  .legend .key-calls {
+    border-color: var(--up);
+  }
+  .legend .key-puts {
+    border-color: var(--down);
+  }
+  .chart-readout {
+    display: flex;
+    gap: 12px;
+    min-height: 18px;
+    margin-bottom: 4px;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-readout .accent-ink {
+    color: var(--accent-ink);
+  }
+  /* area-*, not fill-*: Tailwind makes fill-up from the colour tokens. */
+  .svg-chart {
+    width: 100%;
+    min-width: 0;
+  }
+  .svg-chart svg {
+    display: block;
+    overflow: visible;
+  }
+  .svg-chart .grid {
+    stroke: var(--line);
+  }
+  .svg-chart .axis {
+    fill: var(--ink-muted);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .svg-chart .zero {
+    stroke: var(--line-strong);
+  }
+  .svg-chart .spot {
+    stroke: var(--ink-muted);
+    stroke-dasharray: 2 3;
+  }
+  .svg-chart .cross {
+    stroke: var(--ink-muted);
+  }
+  .svg-chart .area-up {
+    fill: var(--up-soft);
+  }
+  .svg-chart .area-down {
+    fill: var(--down-soft);
+  }
+  .svg-chart .expiry {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.75;
+  }
+  .svg-chart .today {
+    fill: none;
+    stroke: var(--accent-ink);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .svg-chart .breakeven,
+  .svg-chart .dot {
+    fill: var(--surface);
+    stroke: var(--ink);
+    stroke-width: 1.5;
+  }
+  .svg-chart .calls {
+    fill: none;
+    stroke: var(--up);
+    stroke-width: 1.75;
+  }
+  .svg-chart .puts {
+    fill: none;
+    stroke: var(--down);
+    stroke-width: 1.75;
+  }
+  .svg-chart .bar-calls {
+    fill: var(--up);
+  }
+  .svg-chart .bar-puts {
+    fill: var(--down);
+  }
+  .svg-chart .atm-band {
+    fill: var(--accent-soft);
+  }
+  .payoff-figures {
+    margin-top: 10px;
+  }
+  .payoff-tile .note:last-child {
+    margin-top: 8px;
+  }
+
+  /* the basket tray, stuck to the bottom while the chain scrolls */
+  .tray {
+    position: sticky;
+    bottom: 16px;
+    z-index: 5;
+    background: var(--surface-raised);
+    border-radius: var(--radius-xl);
+    box-shadow:
+      var(--shadow-pop),
+      inset 0 0 0 1px var(--glass-edge);
+  }
+  .tray-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+  }
+  .tray-head h2 {
+    margin: 0;
+    font: 600 17px / 22px var(--font-text);
+  }
+  .tray-foot {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--line);
+  }
+  .tray-foot b {
+    margin-left: 4px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .tray-foot b.up {
+    color: var(--up);
+  }
+  .tray-foot b.down {
+    color: var(--down);
+  }
+  .tray-foot .badge {
+    margin-left: 6px;
+    text-transform: none;
+  }
+  .tray-error {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stepper button {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: var(--fill);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .stepper button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .stepper .tabular {
+    min-width: 18px;
+    text-align: center;
+  }
+  .price-input {
+    width: 96px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--radius-sm);
+    border-color: var(--line-strong);
+    text-align: right;
+    font-size: 13px;
+  }
+}
+
+/* Scripts + Agents (DESIGN.md, ADR 25, ADR 29) */
+@layer components {
+  .agents-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .agents-grid > .tile {
+    margin-top: 0;
+  }
+  .agents-grid + .tile {
+    margin-top: 24px;
+  }
+  .table.plain td:first-child {
+    padding-left: 0;
+  }
+  .table.plain td:last-child {
+    padding-right: 0;
+  }
+  .table.plain tbody tr:first-child td {
+    border-top: none;
+  }
+  .table.plain tbody tr:hover {
+    background: transparent;
+  }
+  .connect-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .code-tile {
+    display: block;
+    height: 440px;
+    padding: 0;
+    overflow: hidden;
+  }
+  .code-view {
+    height: 100%;
+  }
+  .live-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 2px;
+    border-radius: 9999px;
+    background: var(--accent);
+    animation: live-pulse 1.6s var(--ease-in-out) infinite;
+  }
+  @keyframes live-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 var(--accent-soft);
+    }
+    50% {
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+  }
+  .day-picker {
+    display: inline-flex;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .day-picker button {
+    width: 40px;
+    height: 32px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--fill);
+    color: var(--ink-muted);
+    font: 500 12.5px / 1 var(--font-text);
+    cursor: pointer;
+  }
+  .day-picker button[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}

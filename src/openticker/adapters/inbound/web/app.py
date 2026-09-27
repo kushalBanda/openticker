@@ -34,6 +34,7 @@ from openticker.adapters.inbound.web.auth import (
 )
 from openticker.adapters.inbound.web.models import (
     AccountResult,
+    AgentsResult,
     ApiKeyResult,
     ApiKeysResult,
     BrokerSessionResult,
@@ -47,12 +48,20 @@ from openticker.adapters.inbound.web.models import (
     TodayResult,
 )
 from openticker.adapters.inbound.web.stream import SIGNED_OUT, StreamHub
-from openticker.composition import capital_cap, notifications_on, order_broker, sandbox_settings
+from openticker.composition import (
+    agent_settings,
+    capital_cap,
+    notifications_on,
+    order_broker,
+    sandbox_settings,
+)
 from openticker.core.web import COOKIE_NAME, SESSION_LIFETIME
 from openticker.events.bus import EventBus
 from openticker.ports.errors import BrokerError
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.charges_file import load_charge_book
+from openticker.use_cases.agent_clients import get_agent_clients
+from openticker.use_cases.agents.manage import jobs_started_today
 from openticker.use_cases.api_keys import create_api_key, get_api_keys, revoke_user_key
 from openticker.use_cases.connect_broker import connect_broker, disconnect_broker
 from openticker.use_cases.reset_paper_account import CONFIRMATION, reset_paper_account
@@ -190,6 +199,12 @@ def mount_web(
         """The first-run checklist: broker connected, instruments synced, an
         agent seen, a first paper fill."""
         return SetupResult.of(broker, setup_state(require_broker(broker), clock()))
+
+    @api.get("/agents")
+    def agents() -> AgentsResult:
+        """MCP clients seen, and how review jobs run: the harness and the day's cap."""
+        now = clock()
+        return AgentsResult.of(get_agent_clients(now), agent_settings(env), jobs_started_today(now))
 
     @api.get("/notifications")
     def notifications() -> NotificationsResult:

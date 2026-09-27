@@ -221,6 +221,20 @@ def test_a_script_over_its_memory_limit_is_killed_at_once(
     assert _run(run.id).stop_detail == "used 256 MB, over its 256 MB limit; killed by SIGKILL"
 
 
+def test_a_runs_peak_memory_is_kept_when_it_grows_by_a_megabyte(
+    context: SupervisorContext, processes: FakeProcesses
+) -> None:
+    run = _started(context, _script())
+    assert run.pid is not None and run.peak_memory_kb is None
+    for kb in (80_000, 80_500, 90_000, 40_000):
+        processes.memory[run.pid] = kb
+        watch_scripts(context, NOW)
+        if kb == 80_500:
+            assert _run(run.id).peak_memory_kb == 80_000  # under a megabyte more: not written
+
+    assert _run(run.id).peak_memory_kb == 90_000
+
+
 def test_a_script_that_prints_too_much_is_stopped(
     context: SupervisorContext, processes: FakeProcesses
 ) -> None:

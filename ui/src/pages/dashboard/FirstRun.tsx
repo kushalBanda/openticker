@@ -3,12 +3,12 @@ import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
 import { useSyncInstruments } from "../../api/queries";
 import { CopyLine } from "../../components/CopyLine";
+import { CONNECT } from "../../lib/agents";
 import { qty, rupees } from "../../lib/format";
 import { useActions } from "../../shell/actions";
 import { brokerTitle } from "../settings/BrokerSection";
 
-const CLAUDE = "claude mcp add openticker -- uv run openticker-mcp";
-const CODEX = "codex mcp add openticker -- uv run openticker-mcp";
+const { claude: CLAUDE, codex: CODEX } = CONNECT;
 
 type Setup = Schemas["SetupResult"];
 

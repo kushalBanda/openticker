@@ -2,12 +2,16 @@ import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 import { useSession } from "./api/queries";
 import { Activity } from "./pages/activity/Activity";
+import { Agents } from "./pages/agents/Agents";
 import { Building } from "./pages/Building";
 import { Dashboard } from "./pages/dashboard/Dashboard";
 import { NotFound } from "./pages/NotFound";
+import { OptionChain } from "./pages/options/OptionChain";
 import { Orders } from "./pages/orders/Orders";
 import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
+import { Script } from "./pages/scripts/Script";
+import { Scripts } from "./pages/scripts/Scripts";
 import { Settings } from "./pages/settings/Settings";
 import { Strategies } from "./pages/strategies/Strategies";
 import { Strategy } from "./pages/strategy/Strategy";
@@ -29,10 +33,13 @@ function Gate() {
 const BUILT: Record<string, ReactNode> = {
   "/": <Dashboard />,
   "/watchlist": <WatchlistPage />,
+  "/options": <OptionChain />,
   "/positions": <Positions />,
   "/orders": <Orders />,
   "/trades": <Trades />,
   "/strategies": <Strategies />,
+  "/scripts": <Scripts />,
+  "/agents": <Agents />,
   "/activity": <Activity />,
   "/settings": <Settings />,
 };
@@ -49,7 +56,9 @@ const router = createBrowserRouter([
             element: BUILT[page.path] ?? <Building title={page.label} />,
           })),
           { path: "/strategies/:id", element: <Strategy /> },
+          { path: "/scripts/:id", element: <Script /> },
           { path: "/symbols/:exchange/:symbol", element: <SymbolPage /> },
+          { path: "/options/:exchange/:underlying", element: <OptionChain /> },
           { path: "*", element: <NotFound /> },
         ],
       },

@@ -42,6 +42,7 @@ from openticker.core.scripts.models import (
     ScriptCommand,
     ScriptCommandKind,
     ScriptCommandStatus,
+    ScriptLimits,
     ScriptRun,
     ScriptRunStatus,
     ScriptSchedule,
@@ -103,6 +104,7 @@ from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
 from openticker.use_cases.pnl_history import ChargeTotals, PnlHistory
 from openticker.use_cases.position_holders import Holder, Holding, PositionKey, key_of
 from openticker.use_cases.preview_charges import ChargePreview
+from openticker.use_cases.preview_payoff import PayoffLegRequest, PayoffPreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.board import BoardRow, Segment, StrategyState
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
@@ -386,6 +388,8 @@ class OptionQuoteResult(BaseModel):
     theta: float | None = Field(description="Price change per calendar day.")
     vega: float | None = Field(description="Price change per 1 point of volatility.")
     rho: float | None = Field(description="Price change per 1 point of interest rate.")
+    bid: float | None = Field(description="Best bid; None when nobody is bidding.")
+    ask: float | None = Field(description="Best offer; None when nobody is offering.")
 
     @classmethod
     def of(cls, option: OptionQuote) -> "OptionQuoteResult":
@@ -406,6 +410,8 @@ class OptionQuoteResult(BaseModel):
             theta=round(greeks.theta, 4) if greeks else None,
             vega=round(greeks.vega, 4) if greeks else None,
             rho=round(greeks.rho, 4) if greeks else None,
+            bid=option.bid,
+            ask=option.ask,
         )
 
 
@@ -430,9 +436,16 @@ class OptionChainResult(BaseModel):
     interest_rate: float = Field(description="Annualized, in percent, used for the Greeks.")
     rows: list[ChainRowResult] = Field(description="Ascending strike.")
     available_expiries: list[date] = Field(description="Unexpired expiries, earliest first.")
+    lot_size: int | None = Field(description="Units in one lot of these options.")
+    futures: list["ChainFutureResult"] = Field(
+        description="The nearest two futures on the same underlying, earliest first."
+    )
 
     @classmethod
     def of(cls, chain: OptionChain, expiries: list[date], now: datetime) -> "OptionChainResult":
+        contracts = [
+            option.instrument for row in chain.rows for option in (row.call, row.put) if option
+        ]
         return cls(
             underlying=chain.underlying.symbol,
             exchange=chain.underlying.exchange,
@@ -452,6 +465,29 @@ class OptionChainResult(BaseModel):
                 for row in chain.rows
             ],
             available_expiries=expiries,
+            lot_size=contracts[0].lot_size if contracts else None,
+            futures=[ChainFutureResult.of(quote) for quote in chain.futures],
+        )
+
+
+class ChainFutureResult(BaseModel):
+    symbol: str
+    expiry: date
+    last_price: float
+    bid: float | None
+    ask: float | None
+    lot_size: int
+
+    @classmethod
+    def of(cls, quote: Quote) -> "ChainFutureResult":
+        assert quote.instrument.expiry is not None
+        return cls(
+            symbol=quote.instrument.symbol,
+            expiry=quote.instrument.expiry,
+            last_price=quote.last_price,
+            bid=quote.bid or None,
+            ask=quote.ask or None,
+            lot_size=quote.instrument.lot_size,
         )
 
 
@@ -620,6 +656,91 @@ class PaperMarginResult(BaseModel):
             released=margin.released,
             available=margin.available,
             fits=margin.fits,
+        )
+
+
+class PayoffLegInput(BaseModel):
+    """One leg of a position to preview: an option or a future."""
+
+    symbol: str = Field(description="OpenTicker's symbol, e.g. NIFTY29SEP2624800CE.")
+    exchange: Exchange = Field(description="NFO or BFO.")
+    side: Side = Field(description="BUY or SELL.")
+    quantity: int = Field(ge=1, description="Units, not lots.")
+    price: float | None = Field(
+        default=None, ge=0, description="The price to assume; omit for the last price."
+    )
+
+    def to_request(self) -> PayoffLegRequest:
+        return PayoffLegRequest(self.symbol, self.exchange, self.side, self.quantity, self.price)
+
+
+class PayoffLegResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    price: float = Field(description="The price the payoff assumes.")
+    implied_volatility: float | None = Field(
+        description="Percent, from the last price; None for a future or an unpriced option."
+    )
+
+
+class PayoffPointResult(BaseModel):
+    underlying: float
+    at_expiry: float
+    today: float | None
+
+
+class PayoffResult(BaseModel):
+    underlying: str
+    exchange: Exchange
+    underlying_price: float
+    legs: list[PayoffLegResult]
+    net_premium: float = Field(description="Rupees; positive is a credit.")
+    max_profit: float | None = Field(description="Rupees at expiry; None: unbounded.")
+    max_loss: float | None = Field(
+        description="The lowest P&L at expiry, rupees, negative for a loss; None: unbounded."
+    )
+    breakevens: list[float] = Field(description="Underlying prices at expiry, ascending.")
+    net_delta: float | None = Field(
+        description="Rupees per point of the underlying, today; None when an option is unpriced."
+    )
+    points: list[PayoffPointResult] = Field(
+        description="P&L at expiry and today (Black-76 at each leg's IV) across the underlying, "
+        "161 points, ±8% of it or wider to take in every strike."
+    )
+
+    @classmethod
+    def of(cls, preview: PayoffPreview) -> "PayoffResult":
+        result = preview.payoff
+        return cls(
+            underlying=preview.underlying.symbol,
+            exchange=preview.underlying.exchange,
+            underlying_price=preview.spot,
+            legs=[
+                PayoffLegResult(
+                    symbol=leg.instrument.symbol,
+                    exchange=leg.instrument.exchange,
+                    side=leg.side,
+                    quantity=leg.quantity,
+                    price=leg.price,
+                    implied_volatility=(
+                        round(leg.implied_volatility * 100, 2)
+                        if leg.implied_volatility is not None
+                        else None
+                    ),
+                )
+                for leg in preview.legs
+            ],
+            net_premium=result.net_premium,
+            max_profit=result.max_profit,
+            max_loss=result.max_loss,
+            breakevens=list(result.breakevens),
+            net_delta=result.net_delta,
+            points=[
+                PayoffPointResult(underlying=p.underlying, at_expiry=p.at_expiry, today=p.today)
+                for p in result.points
+            ],
         )
 
 
@@ -2225,6 +2346,11 @@ class ScriptRunResult(BaseModel):
     stop_detail: str | None
     exit_code: int | None = Field(description="Negative: killed by that signal.")
     ended_at: datetime | None
+    peak_memory_mb: float | None = Field(
+        default=None,
+        description="The most memory it was measured using, script and children; null: "
+        "never measured.",
+    )
 
     @classmethod
     def of(cls, run: ScriptRun) -> "ScriptRunResult":
@@ -2238,6 +2364,9 @@ class ScriptRunResult(BaseModel):
             stop_detail=run.stop_detail,
             exit_code=run.exit_code,
             ended_at=_local(run.ended_at),
+            peak_memory_mb=round(run.peak_memory_kb / 1024, 1)
+            if run.peak_memory_kb is not None
+            else None,
         )
 
 
@@ -2274,8 +2403,21 @@ class ScriptResult(BaseModel):
         return cls.of(ScriptSummary(stored, None, None), next_step)
 
 
+class ScriptLimitsResult(BaseModel):
+    memory_mb: int = Field(description="Resident memory of a run, script and children.")
+    cpu_seconds: int = Field(description="CPU time of one run.")
+
+    @classmethod
+    def of(cls, limits: ScriptLimits) -> "ScriptLimitsResult":
+        return cls(memory_mb=limits.memory_mb, cpu_seconds=limits.cpu_seconds)
+
+
 class ScriptsResult(BaseModel):
     scripts: list[ScriptResult]
+    limits: ScriptLimitsResult | None = Field(
+        default=None,
+        description="What every run is held to: SCRIPT_MEMORY_LIMIT_MB and SCRIPT_CPU_SECONDS.",
+    )
 
 
 class ScriptCommandInfo(BaseModel):

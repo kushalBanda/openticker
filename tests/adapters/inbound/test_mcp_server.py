@@ -210,6 +210,42 @@ def test_get_option_chain_before_sync_is_an_agent_facing_error() -> None:
         mcp_server.get_option_chain(broker="fake", underlying="NIFTY 50", exchange=Exchange.NSE)
 
 
+def test_preview_payoff_of_a_short_straddle_says_losses_are_unbounded() -> None:
+    from openticker.adapters.inbound.mcp_models import PayoffLegInput
+    from openticker.storage.sqlite.instruments_repo import upsert_instruments
+    from tests.fixtures.options import NIFTY_INDEX, chain_contracts
+
+    expiry = date(2099, 1, 1)
+    upsert_instruments([NIFTY_INDEX] + chain_contracts("NIFTY", expiry, [2500.0]))
+    legs = [
+        PayoffLegInput(
+            symbol=f"NIFTY01JAN992500{kind}",
+            exchange=Exchange.NFO,
+            side=Side.SELL,
+            quantity=65,
+            price=price,
+        )
+        for kind, price in (("CE", 40.0), ("PE", 35.0))
+    ]
+
+    result = mcp_server.preview_payoff(broker="fake", legs=legs)
+
+    assert (result.underlying, result.underlying_price) == ("NIFTY 50", 2500.0)
+    assert result.net_premium == 75.0 * 65
+    assert result.max_profit == 75.0 * 65 and result.max_loss is None
+    assert result.breakevens == [2425.0, 2575.0]
+    assert len(result.points) == 161
+
+
+def test_preview_payoff_of_a_stock_is_an_agent_facing_error() -> None:
+    from openticker.adapters.inbound.mcp_models import PayoffLegInput
+
+    mcp_server.sync_instruments(broker="fake")
+    leg = PayoffLegInput(symbol="RELIANCE", exchange=Exchange.NSE, side=Side.BUY, quantity=1)
+    with pytest.raises(ToolError, match="only options and futures"):
+        mcp_server.preview_payoff(broker="fake", legs=[leg])
+
+
 def test_sandbox_round_trip_through_the_tools() -> None:
     mcp_server.sync_instruments(broker="fake")
 
@@ -494,6 +530,12 @@ def test_review_tools_queue_a_job_and_read_it_back() -> None:
         mcp_server.start_review(strategy_id=strategy_id)
     with pytest.raises(ToolError, match="get_agent_jobs lists them"):
         mcp_server.get_agent_job_log(job_id="job_nope")
+    with as_client("claude-code"):
+        stopped = mcp_server.stop_agent_job(job_id=started.job.job_id)
+    assert (stopped.status, stopped.end_reason) == ("ended", "stopped")
+    assert stopped.end_detail == "stopped by mcp:claude-code before it started"
+    with pytest.raises(ToolError, match="get_agent_jobs lists them"):
+        mcp_server.stop_agent_job(job_id="job_nope")
 
 
 def test_review_schedule_tools_set_show_and_clear_it() -> None:
