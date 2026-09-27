@@ -9,6 +9,8 @@ export interface Column<T> {
   sub?: (row: T) => ReactNode;
   /** Prose that may wrap; numbers never do. */
   wrap?: boolean;
+  /** On the column's head and cells: a width rule for it alone. */
+  className?: string;
 }
 
 /**
@@ -50,7 +52,12 @@ export function DataTable<T>({
       <thead>
         <tr>
           {columns.map((column) => (
-            <th key={column.key} scope="col" data-align={column.align ?? "right"}>
+            <th
+              key={column.key}
+              scope="col"
+              data-align={column.align ?? "right"}
+              className={column.className}
+            >
               {column.head}
             </th>
           ))}
@@ -75,7 +82,10 @@ export function DataTable<T>({
                       key={column.key}
                       data-align={column.align ?? "right"}
                       data-wrap={column.wrap}
-                      className={pill ? "has-actions" : undefined}
+                      className={
+                        [column.className, pill ? "has-actions" : ""].filter(Boolean).join(" ") ||
+                        undefined
+                      }
                     >
                       {column.cell(row)}
                       {column.sub && <div className="sub">{column.sub(row)}</div>}

@@ -1828,6 +1828,97 @@
     line-height: 20px;
     white-space: pre-line;
   }
+
+  /* Symbol */
+  .symbol-meta {
+    margin-left: 4px;
+    font-size: 13px;
+    align-self: center;
+  }
+  .symbol-stats {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .symbol-stats .stat .value {
+    font-size: 17px;
+    line-height: 24px;
+    overflow-wrap: anywhere; /* a long pair breaks at its separator, never sideways */
+  }
+  .symbol-stats .stat .note {
+    overflow-wrap: anywhere;
+  }
+  .symbol-stats [data-testid="ltp"] .value {
+    font-size: 24px;
+    line-height: 30px;
+  }
+  .symbol-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 420px;
+    gap: 20px;
+    align-items: start;
+  }
+  .chart-tile {
+    min-width: 0;
+  }
+  .symbol-grid > .tile {
+    margin-top: 0; /* side by side, not stacked */
+  }
+  .chart-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .chart-head h2 {
+    margin: 0;
+    font: 600 17px / 22px var(--font-text);
+    letter-spacing: -0.015em;
+  }
+  .candle-chart {
+    background: var(--surface-hover);
+  }
+  .chart-note {
+    display: grid;
+    place-items: center;
+    height: 440px;
+    border-radius: var(--radius-lg);
+    background: var(--surface-hover);
+    color: var(--ink-muted);
+  }
+  .chart-foot {
+    margin: 8px 0 0;
+  }
+  .depth-total {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 20px 16px;
+  }
+  a.instrument {
+    color: inherit;
+    text-decoration: none;
+  }
+  a.instrument:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
+  }
+  @media (max-width: 1439px) {
+    .symbol-stats .stat {
+      padding: 16px;
+    }
+    .symbol-stats .stat .value {
+      font-size: 15px;
+    }
+    .symbol-stats [data-testid="ltp"] .value {
+      font-size: 20px;
+    }
+    .symbol-grid {
+      grid-template-columns: minmax(0, 1fr) 340px;
+    }
+    .depth-orders {
+      display: none; /* prices and quantities first; the order counts fit from 1440px */
+    }
+  }
 }
 
 .up {

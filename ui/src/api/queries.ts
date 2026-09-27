@@ -36,6 +36,11 @@ export const keys = {
   pnlHistory: (broker: string, from: string, to: string) =>
     ["pnl-history", broker, from, to] as const,
   chargesSummary: (from: string, to: string) => ["charges-summary", from, to] as const,
+  // Symbol.
+  bars: (broker: string, exchange: string, symbol: string, interval: string, from: string) =>
+    ["bars", broker, exchange, symbol, interval, from] as const,
+  depth: (broker: string, exchange: string, symbol: string) =>
+    ["depth", broker, exchange, symbol] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -750,5 +755,55 @@ export function useRecentEvents(limit: number) {
   return useQuery({
     queryKey: [...keys.audit, "recent", limit] as const,
     queryFn: () => unwrap(api.GET("/api/v1/audit", { params: { query: { limit } } })),
+  });
+}
+
+export type Interval = Schemas["Interval"];
+export type Bars = Schemas["BarsResult"];
+export type Depth = Schemas["MarketDepthResult"];
+
+/** Candles from `from` to `to` (exchange-local dates), oldest first. Ticks move the last one. */
+export function useBars(
+  broker: string | undefined,
+  exchange: Exchange,
+  symbol: string,
+  interval: Interval,
+  from: string,
+  to: string,
+) {
+  return useQuery({
+    queryKey: keys.bars(broker ?? "", exchange, symbol, interval, from),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/bars", {
+          params: {
+            query: {
+              broker: broker ?? "",
+              exchange,
+              symbol,
+              interval,
+              start_date: from,
+              end_date: to,
+              max_bars: 5000,
+            },
+          },
+        }),
+      ),
+    enabled: broker !== undefined,
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** Five levels each side and the day so far; the stream carries only the last price, so polled. */
+export function useDepth(broker: string | undefined, exchange: Exchange, symbol: string) {
+  return useQuery({
+    queryKey: keys.depth(broker ?? "", exchange, symbol),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/depth", { params: { query: { broker: broker ?? "", exchange, symbol } } }),
+      ),
+    enabled: broker !== undefined,
+    refetchInterval: 2_000,
   });
 }

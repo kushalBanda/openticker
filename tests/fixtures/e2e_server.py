@@ -23,6 +23,7 @@ kept their realized P&L and charge breakdown.
 """
 
 import argparse
+import functools
 import math
 import os
 import random
@@ -58,10 +59,13 @@ from openticker.core.strategies.models import (
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, leg_risk
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
+    Bar,
     Credentials,
+    DepthLevel,
     Exchange,
     Instrument,
     InstrumentType,
+    MarketDepth,
     Product,
     Quote,
     Side,
@@ -149,11 +153,123 @@ INSTRUMENTS = [
 ]
 
 
+START_PRICES = dict(PRICES)  # where each price stood at SESSION_START
+SESSION_OPEN = clock_time(9, 15)
+MINUTES_PER_SESSION = 375
+HISTORY_FROM = date(2025, 9, 1)
+INTERVAL_MINUTES = {
+    "minute": 1,
+    "3minute": 3,
+    "5minute": 5,
+    "10minute": 10,
+    "15minute": 15,
+    "30minute": 30,
+    "60minute": 60,
+}
+
+
+@functools.cache
+def _minutes(symbol: str) -> tuple[tuple[datetime, float], ...]:
+    """A year of minute closes on weekdays, walked back from the price at
+    SESSION_START (10:30 on the Tuesday), so every interval agrees."""
+    rng = random.Random(f"bars-{symbol}")
+    start_local = SESSION_START.astimezone(EXCHANGE_TIMEZONE)
+    stamps: list[datetime] = []
+    day = HISTORY_FROM
+    while day <= start_local.date():
+        if day.weekday() < 5:
+            opens = datetime.combine(day, SESSION_OPEN, EXCHANGE_TIMEZONE)
+            for n in range(MINUTES_PER_SESSION):
+                stamp = opens + timedelta(minutes=n)
+                if stamp > start_local:
+                    break
+                stamps.append(stamp)
+        day += timedelta(days=1)
+    closes = [START_PRICES[symbol]]
+    for later, earlier in zip(reversed(stamps), list(reversed(stamps))[1:], strict=False):
+        gap = 0.004 if later.date() != earlier.date() else 0.0006
+        closes.append(closes[-1] * math.exp(-rng.gauss(0, gap)))
+    closes.reverse()
+    return tuple(zip(stamps, closes, strict=True))
+
+
+def _bars(instrument: Instrument, interval: str, start: date, end: date) -> list[Bar]:
+    rng = random.Random(f"volume-{instrument.symbol}-{interval}")
+    groups: dict[datetime, list[float]] = {}
+    previous: dict[datetime, float] = {}
+    last = None
+    for stamp, close in _minutes(instrument.symbol):
+        if not start <= stamp.date() <= end:
+            last = close
+            continue
+        if interval == "day":
+            key = datetime.combine(stamp.date(), clock_time(), EXCHANGE_TIMEZONE)
+        else:
+            every = INTERVAL_MINUTES[interval]
+            since_open = (stamp.hour * 60 + stamp.minute) - (9 * 60 + 15)
+            key = stamp - timedelta(minutes=since_open % every)
+        if key not in groups:
+            groups[key] = []
+            previous[key] = last if last is not None else close
+        groups[key].append(close)
+        last = close
+    tick = instrument.tick_size
+
+    def snap(value: float) -> float:
+        return round(round(value / tick) * tick, 2)
+
+    return [
+        Bar(
+            instrument=instrument,
+            interval=interval,
+            open=snap(previous[key]),
+            high=snap(max(previous[key], *closes)),
+            low=snap(min(previous[key], *closes)),
+            close=snap(closes[-1]),
+            volume=rng.randint(800, 4000) * len(closes),
+            timestamp=key.astimezone(UTC),
+        )
+        for key, closes in groups.items()
+    ]
+
+
 class E2EBroker(FakeBrokerPort):
-    """The fake broker quoting the walking prices, a tick either side."""
+    """The fake broker quoting the walking prices, a tick either side, with
+    a year of candles behind them and five levels of depth around them."""
 
     def get_instrument_master(self) -> list[Instrument]:
         return INSTRUMENTS
+
+    def get_historical_bars(
+        self, instrument: Instrument, interval: str, start: date, end: date
+    ) -> list[Bar]:
+        return _bars(instrument, interval, start, end)
+
+    def get_market_depth(self, instrument: Instrument) -> MarketDepth:
+        last = PRICES.get(instrument.symbol, 2500.0)
+        tick = instrument.tick_size
+        rng = random.Random()
+        today = _bars(instrument, "day", SESSION_START.date(), SESSION_START.date())[-1]
+
+        def level(price: float) -> DepthLevel:
+            return DepthLevel(round(price, 2), rng.randint(1, 60) * 25, rng.randint(1, 50))
+
+        return MarketDepth(
+            instrument=instrument,
+            as_of=datetime.now(UTC),
+            last_price=last,
+            last_quantity=rng.randint(1, 40),
+            bids=tuple(level(last - tick * n) for n in range(1, 6)),
+            asks=tuple(level(last + tick * n) for n in range(1, 6)),
+            total_buy_quantity=rng.randint(10_000, 20_000),
+            total_sell_quantity=rng.randint(10_000, 20_000),
+            open=today.open,
+            high=round(max(today.high, last), 2),
+            low=round(min(today.low, last), 2),
+            close=CLOSES.get(instrument.symbol),
+            volume=6_124_318,
+            open_interest=None if instrument.instrument_type is InstrumentType.EQ else 1_245_600,
+        )
 
     def get_quote(self, instrument: Instrument) -> Quote:
         last = PRICES.get(instrument.symbol, 2500.0)

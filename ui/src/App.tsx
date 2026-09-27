@@ -11,6 +11,7 @@ import { SignIn } from "./pages/SignIn";
 import { Settings } from "./pages/settings/Settings";
 import { Strategies } from "./pages/strategies/Strategies";
 import { Strategy } from "./pages/strategy/Strategy";
+import { SymbolPage } from "./pages/symbol/Symbol";
 import { Trades } from "./pages/trades/Trades";
 import { AppShell } from "./shell/AppShell";
 import { PAGES, SETTINGS } from "./shell/nav";
@@ -46,6 +47,7 @@ const router = createBrowserRouter([
             element: BUILT[page.path] ?? <Building title={page.label} />,
           })),
           { path: "/strategies/:id", element: <Strategy /> },
+          { path: "/symbols/:exchange/:symbol", element: <SymbolPage /> },
           { path: "*", element: <NotFound /> },
         ],
       },

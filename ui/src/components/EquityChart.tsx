@@ -60,7 +60,7 @@ function seriesColours() {
 /**
  * A strategy's net P&L after costs, day by day, as a baseline at 0 (DESIGN.md
  * Price Chart): above in `up`, below in `down`. Drawn once; colours follow the
- * theme. The library's attribution logo stays (its license).
+ * theme.
  */
 export function EquityChart({ points, height = 200 }: { points: EquityPoint[]; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
