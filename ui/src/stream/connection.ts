@@ -1,6 +1,9 @@
+import type { Schemas } from "../api/client";
+
 // The live stream (ADR 32): one WebSocket per tab. Components subscribe to the
 // instruments they show; the socket carries each price at once and every
-// change after it. When the socket keeps failing, prices come from quotes
+// change after it, and every new audit log entry (who did what, from any
+// process) within half a second. When the socket keeps failing, prices come from quotes
 // every 2 s until it is back. Close code 4401 means the browser's session
 // ended: nothing reconnects until the user signs in again.
 
@@ -30,12 +33,23 @@ export interface FeedStatus {
   state: FeedState;
 }
 
+/** The first message on every connection: the server's clock and newest audit entry. */
+export interface Hello {
+  server_time: string;
+  last_event_id: number;
+}
+
+/** An audit log entry, as the stream and `GET /api/v1/audit` send it. */
+export type AuditEntry = Schemas["AuditEntryResult"];
+
 export interface Stream {
   /** Wants these prices; returns the function that stops wanting them. */
   subscribe(keys: InstrumentKey[]): () => void;
   onTicks(fn: (ticks: Tick[]) => void): () => void;
   onStatus(fn: (status: FeedStatus) => void): () => void;
   onState(fn: (state: StreamState) => void): () => void;
+  onHello(fn: (hello: Hello) => void): () => void;
+  onEvent(fn: (entry: AuditEntry) => void): () => void;
   state(): StreamState;
   close(): void;
 }
@@ -88,6 +102,8 @@ export function createStream({
   const ticks = listeners<Tick[]>();
   const statuses = listeners<FeedStatus>();
   const states = listeners<StreamState>();
+  const hellos = listeners<Hello>();
+  const events = listeners<AuditEntry>();
   let current: StreamState = "connecting";
   let ws: WebSocket | null = null;
   let open = false;
@@ -163,6 +179,10 @@ export function createStream({
         ticks.emit([tick as unknown as Tick]);
       } else if (message.type === "status") {
         statuses.emit(message.feed as FeedStatus);
+      } else if (message.type === "event") {
+        events.emit(message.entry as AuditEntry);
+      } else if (message.type === "hello") {
+        hellos.emit(message as unknown as Hello);
       }
     };
     next.onclose = (event: CloseEvent) => {
@@ -216,6 +236,8 @@ export function createStream({
     onTicks: ticks.add,
     onStatus: statuses.add,
     onState: states.add,
+    onHello: hellos.add,
+    onEvent: events.add,
     state: () => current,
     close() {
       closed = true;

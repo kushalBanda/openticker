@@ -46,7 +46,7 @@ class AuditLogRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     occurred_at: Mapped[datetime]  # UTC, stored naive
     event_type: Mapped[str] = mapped_column(index=True)
-    triggered_by: Mapped[str | None]
+    triggered_by: Mapped[str | None] = mapped_column(index=True)  # the Activity page's "who"
     payload: Mapped[str]  # the event's fields as JSON
 
 
@@ -383,3 +383,36 @@ class AgentClientRow(Base):
     first_seen_at: Mapped[datetime]  # UTC, stored naive
     last_seen_at: Mapped[datetime]
     calls: Mapped[int]
+
+
+# The paper account's P&L by day and by minute (ADR 34 in docs/adr).
+
+
+class DailyPnlRow(Base):
+    """One row per trading day, written after its close."""
+
+    __tablename__ = "daily_pnl"
+
+    trading_date: Mapped[date] = mapped_column(primary_key=True)
+    realized_pnl: Mapped[float]
+    charges: Mapped[float]
+    unrealized_pnl: Mapped[float | None]  # NULL: an open position had no price
+    net_pnl: Mapped[float | None]
+    open_value: Mapped[float | None]  # open positions' unrealized P&L at the close
+    fills: Mapped[int]
+    complete: Mapped[bool]  # every fill recorded what it realized
+    estimated: Mapped[bool]  # closing marks were the last prices known
+    recorded_at: Mapped[datetime]  # UTC, stored naive
+
+
+class IntradayPnlRow(Base):
+    """A point a minute through the session; kept 30 days."""
+
+    __tablename__ = "intraday_pnl"
+
+    trading_date: Mapped[date] = mapped_column(primary_key=True)
+    minute: Mapped[str] = mapped_column(primary_key=True)  # "HH:MM", exchange-local
+    net_pnl: Mapped[float]
+    realized_pnl: Mapped[float]
+    charges: Mapped[float]
+    unrealized_pnl: Mapped[float]

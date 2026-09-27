@@ -9,6 +9,15 @@ export default defineConfig({
   testDir: "tests/e2e",
   workers: 1, // one server, one pool of sign-in links
   use: { baseURL: `http://127.0.0.1:${port}` },
+  // Events change the account (Claude's TCS), so they run after the rest;
+  // the Dashboard's visit needs events of its own; Settings logs the broker
+  // out and wipes the account, so it runs last.
+  projects: [
+    { name: "app", testIgnore: /(events|dashboard|settings)\.spec\.ts/ },
+    { name: "events", testMatch: /events\.spec\.ts/, dependencies: ["app"] },
+    { name: "dashboard", testMatch: /dashboard\.spec\.ts/, dependencies: ["events"] },
+    { name: "settings", testMatch: /settings\.spec\.ts/, dependencies: ["dashboard"] },
+  ],
   webServer: {
     command: `rm -rf ${home} && mkdir -p ${home} && cd .. && uv run python -m tests.fixtures.e2e_server --port ${port} --home ui/${home} --links ui/${home}/links.txt`,
     url: `http://127.0.0.1:${port}/health`,

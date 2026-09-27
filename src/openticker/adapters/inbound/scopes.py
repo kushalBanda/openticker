@@ -46,6 +46,8 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "modify_order": ("PATCH", "/api/v1/orders/{order_id}"),
     "get_order_status": ("GET", "/api/v1/orders/{order_id}"),
     "get_tradebook": ("GET", "/api/v1/trades"),
+    "get_pnl_history": ("GET", "/api/v1/pnl/history"),
+    "get_charges_summary": ("GET", "/api/v1/charges/summary"),
     "create_strategy": ("POST", "/api/v1/strategies"),
     "list_strategies": ("GET", "/api/v1/strategies"),
     "get_strategy": ("GET", "/api/v1/strategies/{strategy_id}"),

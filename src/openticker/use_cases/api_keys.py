@@ -123,5 +123,27 @@ def revoke(name: str, now: datetime) -> bool:
     return revoke_api_key(name, now)
 
 
+class UnknownApiKeyError(LookupError):
+    pass
+
+
+class ManagedApiKeyError(Exception):
+    pass
+
+
+def revoke_user_key(name: str, now: datetime) -> None:
+    """Revokes a key the user made. A script run's or an agent job's key is
+    OpenTicker's to revoke, when the run or job ends."""
+    stored = next((k for k in list_api_keys() if k.name == name and k.revoked_at is None), None)
+    if stored is None:
+        raise UnknownApiKeyError(f"no active API key named {name!r}")
+    if stored.scope != FULL_SCOPE:
+        raise ManagedApiKeyError(
+            f"{name!r} belongs to a running script or agent job and is revoked when it ends; "
+            "stop the script or the job instead"
+        )
+    revoke_api_key(name, now)
+
+
 def _hash(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()

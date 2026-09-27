@@ -7,7 +7,10 @@ import { nextLink } from "./links";
 
 async function openPositions(page: Page) {
   await page.goto(nextLink());
-  await page.getByRole("link", { name: "Positions" }).click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Positions" })
+    .click();
   await expect(page.getByRole("table", { name: "Positions" })).toBeVisible({ timeout: 5000 });
 }
 

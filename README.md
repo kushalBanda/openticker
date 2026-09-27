@@ -1,4 +1,4 @@
-# OpenTicker
+<h1><img src="assets/profile.png" alt="OpenTicker" width="360"></h1>
 
 **A self-hosted trading platform for Indian markets that AI agents operate directly.**
 

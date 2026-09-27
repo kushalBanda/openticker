@@ -29,7 +29,7 @@ from openticker.core.orders.models import (
     Trade,
 )
 from openticker.core.orders.sandbox import PaperMargin
-from openticker.core.pnl import Source, source_of
+from openticker.core.pnl import DayPnl, Source, source_of
 from openticker.core.risk.models import (
     BreachReason,
     LockMode,
@@ -99,6 +99,7 @@ from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
 from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
+from openticker.use_cases.pnl_history import ChargeTotals, PnlHistory
 from openticker.use_cases.position_holders import Holder, Holding, PositionKey, key_of
 from openticker.use_cases.preview_charges import ChargePreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
@@ -2388,3 +2389,73 @@ class ReviewBriefResult(BaseModel):
 
 
 StrategySummary.model_rebuild()
+
+
+class DayPnlResult(BaseModel):
+    trading_date: date
+    net_pnl: float | None = Field(
+        description="After charges: realized plus the open positions' change, less charges. "
+        "None when an open position had no price."
+    )
+    realized_pnl: float = Field(description="Closed by the day's fills, before charges.")
+    charges: float
+    unrealized_pnl: float | None = Field(description="Open positions' change over the day.")
+    fills: int
+    complete: bool = Field(description="False when a fill didn't record what it realized.")
+    estimated: bool = Field(description="Closing marks were the last prices known, not live.")
+    live: bool = Field(description="Today, worked out now: not recorded until after the close.")
+
+    @classmethod
+    def of(cls, day: DayPnl, live: bool) -> "DayPnlResult":
+        return cls(
+            trading_date=day.trading_date,
+            net_pnl=day.net_pnl,
+            realized_pnl=day.realized_pnl,
+            charges=day.charges,
+            unrealized_pnl=day.unrealized_pnl,
+            fills=day.fills,
+            complete=day.complete,
+            estimated=day.estimated,
+            live=live,
+        )
+
+
+class PnlHistoryResult(BaseModel):
+    days: list[DayPnlResult] = Field(
+        description="Oldest first. Only days that were recorded (openticker-serve running after "
+        "the close) and today."
+    )
+
+    @classmethod
+    def of(cls, history: PnlHistory) -> "PnlHistoryResult":
+        return cls(
+            days=[
+                DayPnlResult.of(day, live=day.trading_date == history.live) for day in history.days
+            ]
+        )
+
+
+class MonthChargesResult(BaseModel):
+    month: str = Field(description="YYYY-MM, exchange-local.")
+    total: float
+    by_type: dict[str, float] = Field(
+        description="brokerage, transaction_tax, exchange, sebi, stamp_duty, gst. Covers fills "
+        "that recorded each charge; `unitemized` is the rest."
+    )
+    unitemized: float
+    fills: int
+
+    @classmethod
+    def of(cls, month: ChargeTotals) -> "MonthChargesResult":
+        return cls(
+            month=month.month,
+            total=month.total,
+            by_type=month.by_type,
+            unitemized=month.unitemized,
+            fills=month.fills,
+        )
+
+
+class ChargesSummaryResult(BaseModel):
+    months: list[MonthChargesResult] = Field(description="Oldest first; months with fills only.")
+    total: float

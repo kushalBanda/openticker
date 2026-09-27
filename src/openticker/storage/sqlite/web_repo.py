@@ -84,16 +84,17 @@ def find_session(id_hash: str) -> WebSession | None:
 
 
 def touch_session(id_hash: str, now: datetime, expires_at: datetime, new_visit: bool) -> None:
-    """Records a use; a new visit moves the current one's start to previous."""
+    """Records a use. A new visit keeps when the browser was last here, the
+    end of the visit before: "since you were here" counts from it (ADR 34)."""
     with Session(get_engine()) as session:
         row = session.get(WebSessionRow, id_hash)
         if row is None:
             return
+        if new_visit:
+            row.previous_visit_at = row.last_seen_at
+            row.visit_started_at = _naive(now)
         row.last_seen_at = _naive(now)
         row.expires_at = _naive(expires_at)
-        if new_visit:
-            row.previous_visit_at = row.visit_started_at
-            row.visit_started_at = _naive(now)
         session.commit()
 
 

@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 import { useSession } from "./api/queries";
+import { Activity } from "./pages/activity/Activity";
 import { Building } from "./pages/Building";
+import { Dashboard } from "./pages/dashboard/Dashboard";
 import { NotFound } from "./pages/NotFound";
 import { Orders } from "./pages/orders/Orders";
 import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
+import { Settings } from "./pages/settings/Settings";
 import { Strategies } from "./pages/strategies/Strategies";
 import { Strategy } from "./pages/strategy/Strategy";
 import { Trades } from "./pages/trades/Trades";
@@ -22,10 +25,13 @@ function Gate() {
 
 // Pages built so far; the rest say so (ADR 30).
 const BUILT: Record<string, ReactNode> = {
+  "/": <Dashboard />,
   "/positions": <Positions />,
   "/orders": <Orders />,
   "/trades": <Trades />,
   "/strategies": <Strategies />,
+  "/activity": <Activity />,
+  "/settings": <Settings />,
 };
 
 const router = createBrowserRouter([

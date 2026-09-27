@@ -94,3 +94,16 @@ def test_processes_starting_together_on_an_old_database_all_succeed(tmp_path: Pa
     errors = [process.communicate()[1].decode() for process in processes]
 
     assert [process.returncode for process in processes] == [0] * 6, errors
+
+
+def test_old_database_gains_the_audit_index(tmp_path: Path) -> None:
+    with sqlite3.connect(tmp_path / "openticker.db") as connection:
+        connection.execute(
+            "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at DATETIME, "
+            "event_type VARCHAR, triggered_by VARCHAR, payload VARCHAR)"
+        )
+
+    engine = get_engine()
+
+    indexed = {tuple(i["column_names"]) for i in inspect(engine).get_indexes("audit_log")}
+    assert {("event_type",), ("triggered_by",)} <= indexed

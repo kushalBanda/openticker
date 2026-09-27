@@ -1,13 +1,17 @@
+import asyncio
+import json
 import time
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import WebSocket
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
 from openticker.adapters.inbound.web.stream import MAX_SUBSCRIPTIONS
 from openticker.ports.models import Tick
+from openticker.storage.sqlite.audit_repo import write_audit
 from tests.adapters.inbound.web.conftest import NIFTY, NOW, OWN, Web
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 
@@ -259,3 +263,59 @@ def test_reliance_and_nifty_tick_independently(web: Web) -> None:
     assert first == {"NIFTY 50", "RELIANCE"}
     assert _next(socket, "tick")["symbol"] == "RELIANCE"
     socket.close()
+
+
+def _audit(event_type: str, triggered_by: str | None, **fields: object) -> None:
+    """As another process writes it: straight into the audit log."""
+    write_audit(event_type, NOW, triggered_by, json.dumps(fields))
+
+
+def test_events_from_another_process_arrive_within_half_a_second(web: Web) -> None:
+    socket = _connected(web)
+    started = time.monotonic()
+    _audit("OrderFilled", "mcp:claude-code", symbol="RELIANCE", side="BUY", quantity=5)
+
+    event = _next(socket, "event")
+
+    assert time.monotonic() - started < 1.0  # a pass every 0.5 s, and the socket
+    entry = event["entry"]
+    assert (entry["event_type"], entry["source"]) == ("OrderFilled", "claude-code")
+    assert entry["details"] == {"symbol": "RELIANCE", "side": "BUY", "quantity": 5}
+
+
+def test_hello_names_the_last_event_and_only_newer_ones_are_sent(web: Web) -> None:
+    _audit("InstrumentSyncCompleted", None, broker="fake", count=9)
+    socket = _open(web)
+    hello = _next(socket, "hello")
+    _audit("OrderPlaced", "ui", symbol="TCS")
+
+    event = _next(socket, "event")
+
+    assert event["entry"]["id"] == hello["last_event_id"] + 1
+    assert event["entry"]["source"] == "you"
+
+
+def test_every_open_page_gets_each_event_once(web: Web) -> None:
+    first, second = _connected(web), _connected(web)
+    _audit("StrategyStopped", "strategy:s1", name="Straddle")
+    _audit("OrderFilled", "strategy:s1", symbol="NIFTY")
+
+    for socket in (first, second):
+        got = [_next(socket, "event")["entry"]["event_type"] for _ in range(2)]
+        assert got == ["StrategyStopped", "OrderFilled"]
+        assert not [m for m in _barrier(socket) if m["type"] == "event"]
+
+
+class _GoneSocket:
+    """A page closed before its first message could be sent."""
+
+    async def send_text(self, text: str) -> None:
+        raise WebSocketDisconnect(code=1006)
+
+
+def test_a_page_gone_before_its_hello_leaves_the_hub(web: Web) -> None:
+    socket = cast(WebSocket, _GoneSocket())
+
+    asyncio.run(web.hub.serve(socket, alive=lambda: True))
+
+    assert web.hub._connections == set()  # the tail sends to nobody

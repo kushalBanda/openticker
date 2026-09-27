@@ -455,6 +455,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pnl/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl History
+         * @description The paper account's P&L by trading day, after charges; today live.
+         */
+        get: operations["pnl_history_api_v1_pnl_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/charges/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Charges Summary
+         * @description Charges paid by paper fills, month by month and by charge.
+         */
+        get: operations["charges_summary_api_v1_charges_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/positions": {
         parameters: {
             query?: never;
@@ -1102,10 +1142,221 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/brokers/{broker}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Broker Session
+         * @description Whether the broker is connected and until when. Never the token.
+         */
+        get: operations["broker_session_api_v1_brokers__broker__session_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect
+         * @description Deletes the stored broker session. Live prices stop until the next login.
+         */
+        delete: operations["disconnect_api_v1_brokers__broker__session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Instruments Status
+         * @description When the instrument list was last synced, and contracts per exchange.
+         */
+        get: operations["instruments_status_api_v1_instruments_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Keys
+         * @description Active API keys: the user's, and those OpenTicker made for running
+         *     scripts and agent jobs. Never a key itself.
+         */
+        get: operations["keys_api_v1_keys_get"];
+        put?: never;
+        /**
+         * Create Key
+         * @description A new full-scope key, returned this once.
+         */
+        post: operations["create_key_api_v1_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/keys/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Key
+         * @description Revokes a key the user made; it stops working at once.
+         */
+        delete: operations["revoke_key_api_v1_keys__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account
+         * @description The paper account's settings, from .env, and its charge rates.
+         */
+        get: operations["account_api_v1_account_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/account/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset
+         * @description Deletes every paper order, trade and position and restores the
+         *     starting capital (ADR 37). Refused while a strategy or script runs.
+         */
+        post: operations["reset_api_v1_account_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Today Route
+         * @description The Dashboard's Today: the day's P&L after charges, its minute line,
+         *     and, for a browser, what happened since its previous visit today.
+         */
+        get: operations["today_route_api_v1_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Setup
+         * @description The first-run checklist: broker connected, instruments synced, an
+         *     agent seen, a first paper fill.
+         */
+        get: operations["setup_api_v1_setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Notifications
+         * @description Whether Slack and email are set up. Never their settings.
+         */
+        get: operations["notifications_api_v1_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountResult */
+        AccountResult: {
+            /** Starting Capital */
+            starting_capital: number;
+            /**
+             * Capital Cap
+             * @description The most one position may be worth.
+             */
+            capital_cap: number | null;
+            leverage: components["schemas"]["LeverageResult"];
+            /** Charges Source */
+            charges_source: string;
+            /**
+             * Charges As Of
+             * Format: date
+             */
+            charges_as_of: string;
+            last_charge_check: components["schemas"]["ChargeCheckSummary"] | null;
+        };
         /** ActiveRunResult */
         ActiveRunResult: {
             /**
@@ -1220,6 +1471,35 @@ export interface components {
              */
             jobs: components["schemas"]["AgentJobResult"][];
         };
+        /** ApiKeyResult */
+        ApiKeyResult: {
+            /** Name */
+            name: string;
+            /**
+             * Prefix
+             * @description The key's first characters, to tell keys apart.
+             */
+            prefix: string;
+            /** Scope */
+            scope: string;
+            /**
+             * Managed
+             * @description Made by OpenTicker for a script run or an agent job.
+             */
+            managed: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Revoked At */
+            revoked_at: string | null;
+        };
+        /** ApiKeysResult */
+        ApiKeysResult: {
+            /** Keys */
+            keys: components["schemas"]["ApiKeyResult"][];
+        };
         /** AuditEntryResult */
         AuditEntryResult: {
             /** Id */
@@ -1321,6 +1601,35 @@ export interface components {
             /** Broker */
             broker: string;
         };
+        /** BrokerSessionResult */
+        BrokerSessionResult: {
+            /** Broker */
+            broker: string;
+            /** Connected */
+            connected: boolean;
+            /**
+             * Stored
+             * @description A session is stored, live or expired.
+             */
+            stored: boolean;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Connected At
+             * @description The last login recorded.
+             */
+            connected_at: string | null;
+            /**
+             * Configured
+             * @description This machine has the broker's app keys.
+             */
+            configured: boolean;
+            /**
+             * Redirect Url
+             * @description Register this as the broker app's redirect URL.
+             */
+            redirect_url: string;
+        };
         /** CancelAllResult */
         CancelAllResult: {
             /**
@@ -1380,6 +1689,20 @@ export interface components {
             skipped: string[];
             /** Next Step */
             next_step: string;
+        };
+        /** ChargeCheckSummary */
+        ChargeCheckSummary: {
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Differing */
+            differing: number;
+            /** Checked */
+            checked: number;
+            /** Skipped */
+            skipped: number;
         };
         /** ChargeDifferenceResult */
         ChargeDifferenceResult: {
@@ -1449,6 +1772,16 @@ export interface components {
              * @description When they were last confirmed.
              */
             rates_as_of: string;
+        };
+        /** ChargesSummaryResult */
+        ChargesSummaryResult: {
+            /**
+             * Months
+             * @description Oldest first; months with fills only.
+             */
+            months: components["schemas"]["MonthChargesResult"][];
+            /** Total */
+            total: number;
         };
         /** CloseAllResult */
         CloseAllResult: {
@@ -1521,6 +1854,65 @@ export interface components {
             connected: boolean;
             /** Next Step */
             next_step: string;
+        };
+        /** CreateKeyBody */
+        CreateKeyBody: {
+            /**
+             * Name
+             * @description 1-40 lowercase letters, digits, '-' or '_'.
+             */
+            name: string;
+        };
+        /** CreatedKeyResult */
+        CreatedKeyResult: {
+            key: components["schemas"]["ApiKeyResult"];
+            /**
+             * Secret
+             * @description The key itself. Shown this once; only its hash is kept.
+             */
+            secret: string;
+        };
+        /** DayPnlResult */
+        DayPnlResult: {
+            /**
+             * Trading Date
+             * Format: date
+             */
+            trading_date: string;
+            /**
+             * Net Pnl
+             * @description After charges: realized plus the open positions' change, less charges. None when an open position had no price.
+             */
+            net_pnl: number | null;
+            /**
+             * Realized Pnl
+             * @description Closed by the day's fills, before charges.
+             */
+            realized_pnl: number;
+            /** Charges */
+            charges: number;
+            /**
+             * Unrealized Pnl
+             * @description Open positions' change over the day.
+             */
+            unrealized_pnl: number | null;
+            /** Fills */
+            fills: number;
+            /**
+             * Complete
+             * @description False when a fill didn't record what it realized.
+             */
+            complete: boolean;
+            /**
+             * Estimated
+             * @description Closing marks were the last prices known, not live.
+             */
+            estimated: boolean;
+            /**
+             * Live
+             * @description Today, worked out now: not recorded until after the close.
+             */
+            live: boolean;
         };
         /** DeleteScriptResult */
         DeleteScriptResult: {
@@ -1677,6 +2069,18 @@ export interface components {
             lot_size: number;
             /** Tick Size */
             tick_size: number;
+        };
+        /** InstrumentStatusResult */
+        InstrumentStatusResult: {
+            /** Synced At */
+            synced_at: string | null;
+            /**
+             * Counts
+             * @description Contracts per exchange.
+             */
+            counts: {
+                [key: string]: number;
+            };
         };
         /**
          * InstrumentType
@@ -1861,6 +2265,19 @@ export interface components {
          * @enum {string}
          */
         LegStatus: "pending" | "open" | "closing" | "closed" | "failed";
+        /** LeverageResult */
+        LeverageResult: {
+            /** Equity Intraday */
+            equity_intraday: number;
+            /** Equity Delivery */
+            equity_delivery: number;
+            /** Futures */
+            futures: number;
+            /** Option Buy */
+            option_buy: number;
+            /** Option Sell */
+            option_sell: number;
+        };
         /**
          * LockMode
          * @enum {string}
@@ -2059,6 +2476,34 @@ export interface components {
             order: components["schemas"]["OrderbookEntryResult"] | null;
             /** Next Step */
             next_step: string;
+        };
+        /** MonthChargesResult */
+        MonthChargesResult: {
+            /**
+             * Month
+             * @description YYYY-MM, exchange-local.
+             */
+            month: string;
+            /** Total */
+            total: number;
+            /**
+             * By Type
+             * @description brokerage, transaction_tax, exchange, sebi, stamp_duty, gst. Covers fills that recorded each charge; `unitemized` is the rest.
+             */
+            by_type: {
+                [key: string]: number;
+            };
+            /** Unitemized */
+            unitemized: number;
+            /** Fills */
+            fills: number;
+        };
+        /** NotificationsResult */
+        NotificationsResult: {
+            /** Slack */
+            slack: boolean;
+            /** Email */
+            email: boolean;
         };
         /** OptionChainResult */
         OptionChainResult: {
@@ -2337,6 +2782,24 @@ export interface components {
             /** Next Step */
             next_step: string;
         };
+        /** PnlHistoryResult */
+        PnlHistoryResult: {
+            /**
+             * Days
+             * @description Oldest first. Only days that were recorded (openticker-serve running after the close) and today.
+             */
+            days: components["schemas"]["DayPnlResult"][];
+        };
+        /** PointResult */
+        PointResult: {
+            /**
+             * Minute
+             * @description HH:MM, exchange-local.
+             */
+            minute: string;
+            /** Net Pnl */
+            net_pnl: number;
+        };
         /** PositionResult */
         PositionResult: {
             /** Symbol */
@@ -2535,6 +2998,34 @@ export interface components {
          * @enum {string}
          */
         RelativeExpiry: "weekly" | "next_week" | "monthly" | "next_month";
+        /** ResetBody */
+        ResetBody: {
+            /**
+             * Confirm
+             * @description Must be 'RESET'.
+             */
+            confirm: string;
+        };
+        /** ResetResult */
+        ResetResult: {
+            /** Capital */
+            capital: number;
+            /**
+             * Orders
+             * @description Orders deleted.
+             */
+            orders: number;
+            /**
+             * Trades
+             * @description Trades deleted.
+             */
+            trades: number;
+            /**
+             * Positions
+             * @description Open positions deleted.
+             */
+            positions: number;
+        };
         /** ReviewBriefResult */
         ReviewBriefResult: {
             /** Job Id */
@@ -2973,6 +3464,26 @@ export interface components {
             /** Previous Visit At */
             previous_visit_at: string | null;
         };
+        /** SetupResult */
+        SetupResult: {
+            /** Broker */
+            broker: string;
+            /** Broker Connected */
+            broker_connected: boolean;
+            /** Instruments Synced Today */
+            instruments_synced_today: boolean;
+            /** Instrument Count */
+            instrument_count: number;
+            /**
+             * Agent Seen
+             * @description The first MCP client seen, by name.
+             */
+            agent_seen: string | null;
+            /** First Fill At */
+            first_fill_at: string | null;
+            /** Done */
+            done: boolean;
+        };
         /**
          * Side
          * @description Order/position direction.
@@ -3125,6 +3636,25 @@ export interface components {
              * @default true
              */
             exit_on_expiry: boolean;
+        };
+        /** SinceResult */
+        SinceResult: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Fills */
+            fills: number;
+            /**
+             * Events
+             * @description Stops, kills, an expired session, refusals.
+             */
+            events: components["schemas"]["AuditEntryResult"][];
+            /** More Events */
+            more_events: number;
+            /** Pnl Change */
+            pnl_change: number | null;
         };
         /**
          * Source
@@ -3589,6 +4119,37 @@ export interface components {
             at: string;
             /** Message */
             message: string;
+        };
+        /** TodayResult */
+        TodayResult: {
+            /**
+             * Trading Date
+             * Format: date
+             */
+            trading_date: string;
+            /** Market Open */
+            market_open: boolean;
+            /**
+             * Net Pnl
+             * @description After charges; None when an open position has no price.
+             */
+            net_pnl: number | null;
+            /** Before Charges */
+            before_charges: number | null;
+            /** Charges */
+            charges: number;
+            /** Fills */
+            fills: number;
+            /** Realized Pnl */
+            realized_pnl: number;
+            /** Unrealized Pnl */
+            unrealized_pnl: number | null;
+            /** Complete */
+            complete: boolean;
+            /** Points */
+            points: components["schemas"]["PointResult"][];
+            /** @description None on the day's first visit. */
+            since: components["schemas"]["SinceResult"] | null;
         };
         /** TradeResult */
         TradeResult: {
@@ -4631,6 +5192,72 @@ export interface operations {
             };
         };
     };
+    pnl_history_api_v1_pnl_history_get: {
+        parameters: {
+            query: {
+                /** @description Broker name, e.g. zerodha. */
+                broker: string;
+                from_date: string;
+                to_date: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlHistoryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    charges_summary_api_v1_charges_summary_get: {
+        parameters: {
+            query: {
+                from_date: string;
+                to_date: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChargesSummaryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     positions_api_v1_positions_get: {
         parameters: {
             query: {
@@ -4734,6 +5361,10 @@ export interface operations {
             query?: {
                 event_type?: string | null;
                 limit?: number;
+                event_types?: string[] | null;
+                source?: components["schemas"]["Source"] | null;
+                from_date?: string | null;
+                before_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -5964,6 +6595,303 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SignOutAllResult"];
+                };
+            };
+        };
+    };
+    broker_session_api_v1_brokers__broker__session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                broker: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerSessionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_api_v1_brokers__broker__session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                broker: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    instruments_status_api_v1_instruments_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstrumentStatusResult"];
+                };
+            };
+        };
+    };
+    keys_api_v1_keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeysResult"];
+                };
+            };
+        };
+    };
+    create_key_api_v1_keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKeyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedKeyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_key_api_v1_keys__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_api_v1_account_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResult"];
+                };
+            };
+        };
+    };
+    reset_api_v1_account_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    today_route_api_v1_today_get: {
+        parameters: {
+            query: {
+                broker: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodayResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    setup_api_v1_setup_get: {
+        parameters: {
+            query: {
+                broker: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notifications_api_v1_notifications_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationsResult"];
                 };
             };
         };

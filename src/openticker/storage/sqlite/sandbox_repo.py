@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Row, literal_column, select
+from sqlalchemy import Row, delete, func, literal_column, select
 from sqlalchemy.orm import Session
 
 from openticker.core.orders.models import Order, OrderStatus, OrderType, Trade
@@ -170,6 +170,30 @@ def save_funds(session: Session, funds: FundsState) -> None:
             realized_pnl=funds.realized_pnl,
             charges=funds.charges,
         )
+    )
+
+
+@dataclass(frozen=True)
+class Wiped:
+    orders: int
+    trades: int
+    positions: int  # open ones; flat rows go too
+
+
+def reset_account(session: Session, capital: float) -> Wiped:
+    """Deletes every order, trade and position and puts the funds back to
+    `capital` (ADR 37 in docs/adr). Inside `fill_transaction()`."""
+    open_positions = session.scalar(
+        select(func.count()).select_from(SandboxPositionRow).where(SandboxPositionRow.quantity != 0)
+    )
+    orders = session.execute(delete(SandboxOrderRow))
+    trades = session.execute(delete(SandboxTradeRow))
+    session.execute(delete(SandboxPositionRow))
+    save_funds(session, FundsState(capital, 0.0, 0.0, 0.0))
+    return Wiped(
+        orders=getattr(orders, "rowcount", 0),
+        trades=getattr(trades, "rowcount", 0),
+        positions=open_positions or 0,
     )
 
 

@@ -27,7 +27,9 @@ for (const width of [1280, 1440, 1920]) {
 test("below 1440px the sidebar is a rail with tooltips", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(nextLink());
-  const positions = page.getByRole("link", { name: "Positions" });
+  const positions = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Positions" });
 
   await expect(positions).toHaveAttribute("title", "Positions");
   expect((await page.locator(".sidebar").boundingBox())?.width).toBe(64);

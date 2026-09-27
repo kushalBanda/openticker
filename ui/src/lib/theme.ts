@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 // The theme follows the system until the user picks one, which this machine
-// remembers (DESIGN.md). index.html applies it before first paint.
+// remembers (DESIGN.md). index.html applies it before first paint. One store,
+// so the status bar's toggle and Settings always agree.
 
 export type Theme = "light" | "dark";
+export type ThemeChoice = Theme | "system";
 
 const KEY = "ot-theme";
 const query = "(prefers-color-scheme: dark)";
@@ -35,29 +37,48 @@ function switchTo(theme: Theme) {
   }
 }
 
-export function useTheme(): [Theme, (theme: Theme) => void] {
-  const [theme, setThemeState] = useState<Theme>(() => stored() ?? system());
+const listeners = new Set<() => void>();
+let choice: ThemeChoice = typeof window === "undefined" ? "system" : (stored() ?? "system");
 
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const follow = () => {
-      if (stored() === null) {
-        setThemeState(system());
-        switchTo(system());
-      }
-    };
-    media.addEventListener("change", follow);
-    return () => media.removeEventListener("change", follow);
-  }, []);
+function notify() {
+  for (const listener of listeners) listener();
+}
 
-  const choose = (next: Theme) => {
-    try {
-      localStorage.setItem(KEY, next);
-    } catch {
-      // private window: the choice lasts this page only
-    }
-    setThemeState(next);
-    switchTo(next);
+function subscribe(listener: () => void) {
+  if (listeners.size === 0) window.matchMedia(query).addEventListener("change", follow);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) window.matchMedia(query).removeEventListener("change", follow);
   };
-  return [theme, choose];
+}
+
+function follow() {
+  if (choice !== "system") return;
+  switchTo(system());
+  notify();
+}
+
+export function chooseTheme(next: ThemeChoice) {
+  try {
+    if (next === "system") localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, next);
+  } catch {
+    // private window: the choice lasts this page only
+  }
+  choice = next;
+  switchTo(next === "system" ? system() : next);
+  notify();
+}
+
+/** What the user picked: light, dark, or following the system. */
+export function useThemeChoice(): [ThemeChoice, (next: ThemeChoice) => void] {
+  const current = useSyncExternalStore(subscribe, () => choice);
+  return [current, chooseTheme];
+}
+
+/** The theme on screen now, and a way to pick one. */
+export function useTheme(): [Theme, (theme: Theme) => void] {
+  const current = useSyncExternalStore(subscribe, () => (choice === "system" ? system() : choice));
+  return [current, chooseTheme];
 }

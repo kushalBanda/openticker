@@ -21,7 +21,7 @@ from openticker.core.orders.charge_check import (
 )
 from openticker.core.orders.charges import ChargeBook, Charges, ChargeSchedule, Segment, charges_for
 from openticker.events.bus import EventPublisher
-from openticker.events.types import ChargeRatesDiffer
+from openticker.events.types import ChargeRatesChecked, ChargeRatesDiffer
 from openticker.ports.broker_port import BrokerPort
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
@@ -110,6 +110,16 @@ def check_charge_rates(
         rates_as_of=min(schedule.as_of for schedule in schedules),
         samples=tuple(checks),
         skipped=tuple(skipped),
+    )
+    events.publish(
+        ChargeRatesChecked(
+            broker=broker_name,
+            rates_as_of=result.rates_as_of.isoformat(),
+            differing=len(result.differing),
+            checked=len(result.samples),
+            skipped=len(result.skipped),
+            triggered_by=triggered_by,
+        )
     )
     if result.differing:
         events.publish(

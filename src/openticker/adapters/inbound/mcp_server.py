@@ -37,6 +37,7 @@ from openticker.adapters.inbound.mcp_models import (
     CancelOrderResult,
     ChargeCheckResult,
     ChargesResult,
+    ChargesSummaryResult,
     CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
@@ -49,12 +50,14 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
+    MonthChargesResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
     PaperMarginResult,
     PlaceOrderResult,
+    PnlHistoryResult,
     PositionsResult,
     QuoteResult,
     QuotesResult,
@@ -97,22 +100,12 @@ from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
+from openticker.core.pnl import Source
 from openticker.core.scripts.models import MAX_SCRIPT_BYTES, InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
-from openticker.events.types import (
-    BrokerSessionExpired,
-    InstrumentSyncCompleted,
-    OrderCancelled,
-    OrderFailed,
-    OrderFilled,
-    OrderPlaced,
-    PositionSettled,
-    RiskBreached,
-    ScriptExited,
-    ScriptStarted,
-)
+from openticker.events.types import EVENT_TYPE_NAMES
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
@@ -177,6 +170,9 @@ from openticker.use_cases.place_basket import MAX_BASKET
 from openticker.use_cases.place_basket import place_basket as place_basket_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
 from openticker.use_cases.placers import placer_names
+from openticker.use_cases.pnl_history import HistoryRangeError
+from openticker.use_cases.pnl_history import get_charges_summary as get_charges_summary_use_case
+from openticker.use_cases.pnl_history import get_pnl_history as get_pnl_history_use_case
 from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError
 from openticker.use_cases.preview_charges import preview_charges as preview_charges_use_case
@@ -278,22 +274,6 @@ DEFAULT_AUDIT_LIMIT = 20
 DEFAULT_STRIKE_COUNT = 10
 DEFAULT_ORDERBOOK_LIMIT = 20
 DEFAULT_TRADEBOOK_LIMIT = 50
-EVENT_TYPE_NAMES = [
-    event.__name__
-    for event in (
-        OrderPlaced,
-        OrderFilled,
-        OrderFailed,
-        OrderCancelled,
-        PositionSettled,
-        RiskBreached,
-        InstrumentSyncCompleted,
-        BrokerSessionExpired,
-        ScriptStarted,
-        ScriptExited,
-    )
-]
-
 # The tools' clock; tests replace it to run at a fixed market time.
 clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
@@ -377,6 +357,7 @@ ExchangeParam = Annotated[
 # (ADR 7 in docs/adr).
 _AGENT_FIXABLE_ERRORS = (
     BrokerError,
+    HistoryRangeError,
     UnknownInstrumentError,
     UnknownBrokerError,
     BrokerConfigError,
@@ -455,7 +436,7 @@ def connect_broker(
     session, stored encrypted and replacing any previous one. The session
     token itself is never returned."""
     with _agent_facing_errors():
-        connect_broker_use_case(get_adapter(broker), request_token)
+        connect_broker_use_case(get_adapter(broker), request_token, event_bus(), _who())
     return ConnectResult(
         broker=broker,
         connected=True,
@@ -1115,6 +1096,47 @@ def get_tradebook(
 
 
 @mcp.tool(
+    title="Get daily P&L history",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_pnl_history(
+    broker: Broker,
+    from_date: Annotated[date, Field(description="First trading date, inclusive.")],
+    to_date: Annotated[
+        date, Field(description="Last trading date, inclusive; at most 400 days after from_date.")
+    ],
+) -> PnlHistoryResult:
+    """The paper account's P&L by trading day, after charges: realized, the
+    open positions' change and charges. Days are recorded after each close
+    while openticker-serve runs; today is worked out now, marked `live`."""
+    with _agent_facing_errors():
+        history = get_pnl_history_use_case(
+            from_date, to_date, order_broker(broker, os.environ, clock), load_calendar(), clock()
+        )
+    return PnlHistoryResult.of(history)
+
+
+@mcp.tool(
+    title="Get charges by month",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_charges_summary(
+    from_date: Annotated[date, Field(description="First trading date, inclusive.")],
+    to_date: Annotated[
+        date, Field(description="Last trading date, inclusive; at most 400 days after from_date.")
+    ],
+) -> ChargesSummaryResult:
+    """What paper fills paid in brokerage, taxes and fees, month by month and
+    by charge."""
+    with _agent_facing_errors():
+        months = get_charges_summary_use_case(from_date, to_date)
+    return ChargesSummaryResult(
+        months=[MonthChargesResult.of(m) for m in months],
+        total=round(sum(m.total for m in months), 2),
+    )
+
+
+@mcp.tool(
     title="Evaluate position risk",
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
 )
@@ -1162,10 +1184,44 @@ def get_audit_log(
     limit: Annotated[int, Field(ge=1, le=200, description="Most entries to return.")] = (
         DEFAULT_AUDIT_LIMIT
     ),
+    event_types: Annotated[
+        list[str] | None,
+        Field(description="Only these event types (with event_type, either matches)."),
+    ] = None,
+    source: Annotated[
+        Source | None,
+        Field(
+            description="Only what this one did: you (the web app), claude-code, codex, "
+            "agent (another MCP client or a review job), strategy, alert, script, schedule, "
+            "rest (an API key) or system (the server itself)."
+        ),
+    ] = None,
+    from_date: Annotated[
+        date | None,
+        Field(description="Only entries from this exchange-local day on, YYYY-MM-DD."),
+    ] = None,
+    before_id: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Only entries older than this id: the last id of the "
+            "previous page, to page back.",
+        ),
+    ] = None,
 ) -> AuditLogResult:
-    """What OpenTicker has done, most recent first: every order, risk breach
-    and instrument sync, with who triggered it. Local data only."""
-    return AuditLogResult.of(get_audit_log_use_case(limit, event_type))
+    """What OpenTicker has done, most recent first: every order, fill, risk
+    breach, strategy and script run, review job and instrument sync, with who
+    did it. Local data only."""
+    return AuditLogResult.of(
+        get_audit_log_use_case(
+            limit,
+            event_type,
+            event_types=event_types or (),
+            source=source,
+            from_date=from_date,
+            before_id=before_id,
+        )
+    )
 
 
 StrategyId = Annotated[str, Field(description="From create_strategy or list_strategies.")]

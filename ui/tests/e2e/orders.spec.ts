@@ -84,7 +84,9 @@ test("proof: place a limit from ⌘K, modify it, cancel it", async ({ page }) =>
   }
   await dialog.locator("button[type=submit]").click();
 
-  await expect(page.getByTestId("toast")).toContainText("Buy 10 RELIANCE at 2,900.00 is open.");
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "Buy 10 RELIANCE at 2,900.00 is open." }),
+  ).toBeVisible();
   const mine = open(page).getByRole("row").filter({ hasText: "2,900.00" });
   await expect(mine).toContainText("You");
 
@@ -93,13 +95,17 @@ test("proof: place a limit from ⌘K, modify it, cancel it", async ({ page }) =>
   const change = page.getByRole("dialog", { name: /Modify buy RELIANCE/ });
   await change.getByLabel("Price", { exact: true }).fill("2905");
   await change.getByRole("button", { name: "Modify" }).click();
-  await expect(page.getByTestId("toast")).toContainText("Modified: Buy 10 RELIANCE at 2,905.00.");
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "Modified: Buy 10 RELIANCE at 2,905.00." }),
+  ).toBeVisible();
   const moved = open(page).getByRole("row").filter({ hasText: "2,905.00" });
   await expect(moved).toHaveCount(1);
 
   await moved.hover();
   await moved.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByTestId("toast")).toContainText("Cancelled buy 10 RELIANCE.");
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "Cancelled buy 10 RELIANCE." }),
+  ).toBeVisible();
   await expect(open(page).getByRole("row").filter({ hasText: "2,905.00" })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancelled", pressed: false }).click();
   await expect(executed(page).getByRole("row").filter({ hasText: "RELIANCE" })).toHaveCount(2);

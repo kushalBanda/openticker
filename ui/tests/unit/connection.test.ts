@@ -161,4 +161,28 @@ describe("stream connection", () => {
     expect(stream.state()).toBe("signed-out");
     expect(FakeSocket.all).toHaveLength(1);
   });
+
+  test("hello and audit events reach their listeners", () => {
+    const hellos: number[] = [];
+    const events: string[] = [];
+    stream.onHello((hello) => hellos.push(hello.last_event_id));
+    stream.onEvent((entry) => events.push(`${entry.id} ${entry.event_type}`));
+    last().open();
+
+    last().receive({ type: "hello", server_time: "2026-09-22T10:30:00+05:30", last_event_id: 41 });
+    last().receive({
+      type: "event",
+      entry: {
+        id: 42,
+        occurred_at: "2026-09-22T10:30:01+05:30",
+        event_type: "OrderFilled",
+        triggered_by: "mcp:claude-code",
+        source: "claude-code",
+        details: {},
+      },
+    });
+
+    expect(hellos).toEqual([41]);
+    expect(events).toEqual(["42 OrderFilled"]);
+  });
 });

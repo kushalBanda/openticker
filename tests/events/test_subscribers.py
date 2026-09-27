@@ -199,3 +199,17 @@ def test_a_strategy_start_leg_exit_and_stop_are_notified() -> None:
         "Strategy stopped: straddle (combined_stop_loss), P&L -3,250.00",
         "P&L -3,250.00 reached the combined stop loss -3,000.00",
     )
+
+
+def test_audit_names_the_strategy_or_script_behind_an_event_without_a_trigger() -> None:
+    record_event(
+        StrategyStopped(
+            strategy_id="s1", run_id="r1", name="Straddle", reason="kill", detail="", realized_pnl=0
+        )
+    )
+    record_event(RiskBreached(symbol="RELIANCE", reason="target", detail="target hit"))
+
+    stopped, breached = reversed(list_audit(10))
+
+    assert stopped.triggered_by == "strategy:s1"
+    assert breached.triggered_by is None  # the server itself

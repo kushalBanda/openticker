@@ -11,6 +11,7 @@ import type { FeedStatus, InstrumentKey, StreamState } from "../stream/connectio
 import { usePrice } from "../stream/prices";
 import { useLive } from "../stream/StreamProvider";
 import { useActions } from "./actions";
+import { EventsBell } from "./EventsBell";
 import { useBarTitle } from "./title";
 
 const INDICES: { key: InstrumentKey; name: string }[] = [
@@ -222,6 +223,7 @@ export function StatusBar() {
       </span>
       <PriceSource />
       <SearchPill />
+      <EventsBell />
       <ThemeToggle />
       <Account />
     </header>

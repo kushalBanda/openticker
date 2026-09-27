@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { api, unwrap } from "../api/client";
 import { keys } from "../api/queries";
 import {
@@ -15,13 +15,21 @@ import { createPriceStore, type PriceStore, StreamContext } from "./prices";
 interface Live {
   status: FeedStatus | null;
   state: StreamState;
+  /** Server time minus browser time, ms, from the last hello: "today" is the server's. */
+  skew: number;
 }
 
-const LiveContext = createContext<Live>({ status: null, state: "connecting" });
+const LiveContext = createContext<Live>({ status: null, state: "connecting", skew: 0 });
 
 /** Where prices come from now, and the socket's own state. */
 export function useLive(): Live {
   return useContext(LiveContext);
+}
+
+/** Now by the server's clock (tests pin it to a trading day). */
+export function useServerNow(): () => Date {
+  const { skew } = useLive();
+  return useCallback(() => new Date(Date.now() + skew), [skew]);
 }
 
 function streamUrl(): string {
@@ -67,7 +75,7 @@ function open(): { stream: Stream; store: PriceStore } {
 export function StreamProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const [value, setValue] = useState<{ stream: Stream; store: PriceStore } | null>(null);
-  const [live, setLive] = useState<Live>({ status: null, state: "connecting" });
+  const [live, setLive] = useState<Live>({ status: null, state: "connecting", skew: 0 });
 
   useEffect(() => {
     const opened = open();
@@ -78,9 +86,14 @@ export function StreamProvider({ children }: { children: ReactNode }) {
       setLive((now) => ({ ...now, state }));
       if (state === "signed-out") client.setQueryData(keys.session, null);
     });
+    const offHello = stream.onHello((hello) => {
+      const skew = new Date(hello.server_time).getTime() - Date.now();
+      setLive((now) => ({ ...now, skew }));
+    });
     return () => {
       offStatus();
       offState();
+      offHello();
       stream.close();
     };
   }, [client]);

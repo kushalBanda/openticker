@@ -95,7 +95,7 @@ def test_new_visit_only_after_10_idle_minutes() -> None:
     assert busy is not None and busy.visit_started_at == NOW
     assert back is not None
     assert back.visit_started_at == NOW + timedelta(minutes=30)
-    assert back.previous_visit_at == NOW
+    assert back.previous_visit_at == NOW + timedelta(minutes=9)  # when it was last here
 
 
 def test_sign_out_ends_only_this_session() -> None:

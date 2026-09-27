@@ -30,7 +30,9 @@ test("a used link shows the expired page", async ({ page, browser }) => {
 test("without a session the app says how to sign in", async ({ page }) => {
   await page.goto("/positions");
 
-  await expect(page.getByRole("heading")).toHaveText("Sign in with a link from your terminal");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Sign in with a link from your terminal",
+  );
   await expect(page.getByText("openticker-serve ui login")).toBeVisible();
 });
 
@@ -39,7 +41,11 @@ test("signing out returns to the sign-in page", async ({ page }) => {
   await page.getByRole("button", { name: "Account" }).click();
   await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
 
-  await expect(page.getByRole("heading")).toHaveText("Sign in with a link from your terminal");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Sign in with a link from your terminal",
+  );
   await page.reload();
-  await expect(page.getByRole("heading")).toHaveText("Sign in with a link from your terminal");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Sign in with a link from your terminal",
+  );
 });

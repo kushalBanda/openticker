@@ -246,14 +246,17 @@ def active_run(session: Session, script_id: str) -> ScriptRun | None:
     return _run(row) if row else None
 
 
-def active_runs() -> list[ScriptRun]:
+def active_runs(session: Session | None = None) -> list[ScriptRun]:
+    """In `session` when given: a writer holding the lock sees every run started."""
     statement = (
         select(ScriptRunRow)
         .where(ScriptRunRow.status != ScriptRunStatus.ENDED.value)
         .order_by(ScriptRunRow.started_at)
     )
-    with Session(get_engine()) as session:
+    if session is not None:
         return [_run(row) for row in session.scalars(statement).all()]
+    with Session(get_engine()) as own:
+        return [_run(row) for row in own.scalars(statement).all()]
 
 
 def runs_started_since(script_id: str, since: datetime) -> list[ScriptRun]:

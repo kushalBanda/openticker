@@ -6,7 +6,7 @@ from openticker.adapters.brokers.registry import BrokerConfigError
 from openticker.adapters.inbound.daemon.feed_loop import RECONNECT_SECONDS, FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.events.types import BrokerSessionExpired
-from openticker.ports.errors import BrokerSessionError
+from openticker.ports.errors import BrokerNotConnectedError, BrokerSessionError
 from openticker.ports.market_feed_port import MarketFeedPort
 from openticker.ports.models import Instrument, Tick
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
@@ -37,6 +37,7 @@ class _Harness:
         self.watched = watched
         self.feeds: list[FakeFeed] = []
         self.refuse_open = False
+        self.not_connected = False
         self.prices = LatestPrices()
         self.events = _Events()
         self.clock = _Clock()
@@ -45,6 +46,8 @@ class _Harness:
         )
 
     def open_feed(self) -> MarketFeedPort:
+        if self.not_connected:
+            raise BrokerNotConnectedError("zerodha is not connected")
         if self.refuse_open:
             raise BrokerSessionError("zerodha is not connected")
         self.feeds.append(FakeFeed())
@@ -141,3 +144,39 @@ def test_wake_resubscribes_before_the_5s_period() -> None:
 
     assert set(harness.feeds[0].subscribed) == {"RELIANCE", "NIFTY 50"}
     assert not wake.is_set()
+
+
+def test_no_stored_session_is_not_an_expiry() -> None:
+    harness = _Harness([FAKE_INSTRUMENT])
+    harness.not_connected = True
+
+    harness.loop.step(0)
+
+    assert harness.events.events == []
+    assert harness.feeds == []
+
+
+def test_reopen_after_a_login_opens_the_feed_at_once() -> None:
+    harness = _Harness([FAKE_INSTRUMENT])
+    harness.not_connected = True
+    harness.loop.step(0)
+    harness.not_connected = False
+
+    harness.loop.step(0)  # waits for the retry interval
+    assert harness.feeds == []
+    harness.loop.reopen()
+    harness.loop.step(0)
+
+    assert len(harness.feeds) == 1 and harness.feeds[0].subscribed
+
+
+def test_reopen_after_a_logout_closes_the_feed() -> None:
+    harness = _Harness([FAKE_INSTRUMENT])
+    harness.loop.step(0)
+    harness.not_connected = True
+
+    harness.loop.reopen()
+    harness.loop.step(0)
+
+    assert harness.feeds[0].closed
+    assert harness.events.events == []

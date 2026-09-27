@@ -18,6 +18,8 @@ const token = (name: string) =>
 function colours() {
   return {
     layout: {
+      // TradingView is credited in Settings → App instead (the library's license allows it).
+      attributionLogo: false,
       background: { color: "transparent" },
       textColor: token("--ink-muted"),
       fontFamily: getComputedStyle(document.body).fontFamily,

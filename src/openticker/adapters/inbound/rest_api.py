@@ -41,6 +41,7 @@ from openticker.adapters.inbound.mcp_models import (
     CancelOrderResult,
     ChargeCheckResult,
     ChargesResult,
+    ChargesSummaryResult,
     CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
@@ -53,12 +54,14 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
+    MonthChargesResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
     PaperMarginResult,
     PlaceOrderResult,
+    PnlHistoryResult,
     PositionsResult,
     QuoteResult,
     QuotesResult,
@@ -107,6 +110,7 @@ from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
+from openticker.core.pnl import Source
 from openticker.core.scripts.models import InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
@@ -121,6 +125,7 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
+from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.agents import manage as agent_jobs
@@ -129,6 +134,11 @@ from openticker.use_cases.agents.manage import (
     AgentJobBusyError,
     AgentJobCapError,
     UnknownAgentJobError,
+)
+from openticker.use_cases.api_keys import (
+    InvalidApiKeyNameError,
+    ManagedApiKeyError,
+    UnknownApiKeyError,
 )
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
@@ -155,9 +165,15 @@ from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.placers import placer_names
+from openticker.use_cases.pnl_history import (
+    HistoryRangeError,
+    get_charges_summary,
+    get_pnl_history,
+)
 from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
 from openticker.use_cases.preview_paper_margin import preview_paper_margin
+from openticker.use_cases.reset_paper_account import ResetConfirmationError, ResetRefusedError
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -200,7 +216,13 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (LegResolutionError, 404),
     (UnknownRunError, 404),
     (UnknownScriptError, 404),
+    (UnknownApiKeyError, 404),
     (DuplicateStrategyNameError, 409),
+    (DuplicateApiKeyNameError, 409),
+    (ManagedApiKeyError, 409),
+    (ResetRefusedError, 409),
+    (ResetConfirmationError, 422),
+    (InvalidApiKeyNameError, 422),
     (StrategyRunningError, 409),
     (StrategyLockedError, 409),
     (StrategyStateError, 409),
@@ -209,6 +231,7 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ScriptRunningError, 409),
     (ScriptStateError, 409),
     (InvalidStrategyError, 422),
+    (HistoryRangeError, 422),
     (ReviewScheduleError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
@@ -435,8 +458,8 @@ def create_app(
         )
 
     @api.post("/brokers/connect")
-    def connect(body: ConnectBody) -> ConnectResult:
-        connect_broker(get_adapter(body.broker), body.request_token)
+    def connect(body: ConnectBody, caller: Caller) -> ConnectResult:
+        connect_broker(get_adapter(body.broker), body.request_token, events, caller.triggered_by)
         return ConnectResult(
             broker=body.broker,
             connected=True,
@@ -705,6 +728,24 @@ def create_app(
             trades, period_start(now, period), placer_names(t.triggered_by for t in trades)
         )
 
+    @api.get("/pnl/history")
+    def pnl_history(broker: Broker, from_date: date, to_date: date) -> PnlHistoryResult:
+        """The paper account's P&L by trading day, after charges; today live."""
+        return PnlHistoryResult.of(
+            get_pnl_history(
+                from_date, to_date, order_broker(broker, env, clock), load_calendar(), clock()
+            )
+        )
+
+    @api.get("/charges/summary")
+    def charges_summary(from_date: date, to_date: date) -> ChargesSummaryResult:
+        """Charges paid by paper fills, month by month and by charge."""
+        months = get_charges_summary(from_date, to_date)
+        return ChargesSummaryResult(
+            months=[MonthChargesResult.of(m) for m in months],
+            total=round(sum(m.total for m in months), 2),
+        )
+
     @api.get("/positions")
     def positions(broker: Broker, include_closed: bool = False) -> PositionsResult:
         """Each with the running strategies holding part of it."""
@@ -734,9 +775,23 @@ def create_app(
 
     @api.get("/audit")
     def audit(
-        event_type: str | None = None, limit: Annotated[int, Query(ge=1, le=200)] = 20
+        event_type: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 20,
+        event_types: Annotated[list[str] | None, Query()] = None,
+        source: Source | None = None,
+        from_date: date | None = None,
+        before_id: Annotated[int | None, Query(ge=1)] = None,
     ) -> AuditLogResult:
-        return AuditLogResult.of(get_audit_log(limit, event_type))
+        return AuditLogResult.of(
+            get_audit_log(
+                limit,
+                event_type,
+                event_types=event_types or (),
+                source=source,
+                from_date=from_date,
+                before_id=before_id,
+            )
+        )
 
     @api.post("/strategies")
     def new_strategy(body: StrategyBody) -> StrategyResult:
@@ -959,7 +1014,7 @@ def create_app(
 
     app.include_router(api)
     if hub is not None and web is not None:
-        mount_web(app, hub=hub, web=web, clock=clock)
+        mount_web(app, events=events, env=env, hub=hub, web=web, clock=clock)
     return app
 
 

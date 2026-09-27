@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type Schemas, unwrap } from "./client";
 
 export const keys = {
@@ -19,6 +19,23 @@ export const keys = {
   ledger: (id: string) => ["ledger", id] as const,
   signals: (id: string) => ["signals", id] as const,
   reviews: (id: string) => ["reviews", id] as const,
+  // Every audit read starts with "audit": a new event refetches them all.
+  audit: ["audit"] as const,
+  bell: ["audit", "bell"] as const,
+  activity: (filter: object) => ["audit", "activity", filter] as const,
+  // Settings (ADR 33, ADR 37).
+  brokerSession: (broker: string) => ["broker-session", broker] as const,
+  instruments: ["instruments-status"] as const,
+  apiKeys: ["api-keys"] as const,
+  account: ["account"] as const,
+  notifications: ["notifications"] as const,
+  health: ["health"] as const,
+  // Dashboard (ADR 34).
+  today: (broker: string) => ["today", broker] as const,
+  setup: (broker: string) => ["setup", broker] as const,
+  pnlHistory: (broker: string, from: string, to: string) =>
+    ["pnl-history", broker, from, to] as const,
+  chargesSummary: (from: string, to: string) => ["charges-summary", from, to] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -500,5 +517,238 @@ export function useDisableAlertUrl() {
     mutationFn: (strategyId: string) =>
       unwrap(api.DELETE("/api/v1/strategies/{strategy_id}/webhook", path(strategyId))),
     onSettled: refresh,
+  });
+}
+
+export type AuditEntry = Schemas["AuditEntryResult"];
+
+interface ActivityFilter {
+  eventTypes: string[];
+  source: Schemas["Source"] | null;
+  fromDate: string;
+}
+
+const ACTIVITY_PAGE = 100;
+
+/** The Activity page: newest first, a page at a time; new events refetch it. */
+export function useActivity(filter: ActivityFilter) {
+  return useInfiniteQuery({
+    queryKey: keys.activity(filter),
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api.GET("/api/v1/audit", {
+          params: {
+            query: {
+              limit: ACTIVITY_PAGE,
+              event_types: filter.eventTypes.length ? filter.eventTypes : undefined,
+              source: filter.source ?? undefined,
+              from_date: filter.fromDate,
+              before_id: pageParam ?? undefined,
+            },
+          },
+        }),
+      ),
+    initialPageParam: null as number | null,
+    getNextPageParam: (last) =>
+      last.entries.length < ACTIVITY_PAGE ? null : (last.entries.at(-1)?.id ?? null),
+  });
+}
+
+/** The bell's last 50: every event but the plain records. */
+export function useBell(eventTypes: string[]) {
+  return useQuery({
+    queryKey: keys.bell,
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/audit", { params: { query: { limit: 50, event_types: eventTypes } } }),
+      ),
+  });
+}
+
+// Settings (ADR 33, ADR 37).
+
+export type BrokerSession = Schemas["BrokerSessionResult"];
+export type ApiKey = Schemas["ApiKeyResult"];
+
+export function useBrokerSession(broker: string | undefined) {
+  return useQuery({
+    queryKey: keys.brokerSession(broker ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/brokers/{broker}/session", {
+          params: { path: { broker: broker ?? "" } },
+        }),
+      ),
+    enabled: broker !== undefined,
+  });
+}
+
+/** Kite's login page, opened in this tab: it comes back to /brokers/{broker}/callback. */
+export function useBrokerLogin() {
+  return useMutation({
+    mutationFn: async (broker: string) => {
+      const found = await unwrap(
+        api.GET("/api/v1/brokers/{broker}/login-url", { params: { path: { broker } } }),
+      );
+      window.location.assign(found.login_url);
+    },
+  });
+}
+
+/** The fallback: the request_token pasted from the URL after login. */
+export function useConnectBroker() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["ConnectBody"]) =>
+      unwrap(api.POST("/api/v1/brokers/connect", { body })),
+    onSettled: () => client.invalidateQueries({ queryKey: ["broker-session"] }),
+  });
+}
+
+export function useDisconnectBroker() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (broker: string) =>
+      unwrap(api.DELETE("/api/v1/brokers/{broker}/session", { params: { path: { broker } } })),
+    onSettled: () => client.invalidateQueries({ queryKey: ["broker-session"] }),
+  });
+}
+
+export function useInstrumentStatus() {
+  return useQuery({
+    queryKey: keys.instruments,
+    queryFn: () => unwrap(api.GET("/api/v1/instruments/status")),
+  });
+}
+
+export function useSyncInstruments() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (broker: string) =>
+      unwrap(api.POST("/api/v1/instruments/sync", { body: { broker } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.instruments }),
+  });
+}
+
+export function useApiKeys() {
+  return useQuery({
+    queryKey: keys.apiKeys,
+    queryFn: () => unwrap(api.GET("/api/v1/keys")),
+  });
+}
+
+export function useCreateKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => unwrap(api.POST("/api/v1/keys", { body: { name } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.apiKeys }),
+  });
+}
+
+export function useRevokeKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      unwrap(api.DELETE("/api/v1/keys/{name}", { params: { path: { name } } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.apiKeys }),
+  });
+}
+
+export function useAccount() {
+  return useQuery({
+    queryKey: keys.account,
+    queryFn: () => unwrap(api.GET("/api/v1/account")),
+  });
+}
+
+/** The full wipe (ADR 37): every page's numbers change, so everything refetches. */
+export function useResetAccount() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.POST("/api/v1/account/reset", { body: { confirm: "RESET" } })),
+    onSuccess: () => client.invalidateQueries(),
+  });
+}
+
+export function useCheckCharges() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (broker: string) => unwrap(api.POST("/api/v1/charges/check", { body: { broker } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.account }),
+  });
+}
+
+export function useNotifications() {
+  return useQuery({
+    queryKey: keys.notifications,
+    queryFn: () => unwrap(api.GET("/api/v1/notifications")),
+    staleTime: Number.POSITIVE_INFINITY, // from .env: changes only with a restart
+  });
+}
+
+export function useVersion() {
+  return useQuery({
+    queryKey: keys.health,
+    queryFn: () => unwrap(api.GET("/health")),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+// Dashboard (ADR 34).
+
+export type Today = Schemas["TodayResult"];
+export type DayPnl = Schemas["DayPnlResult"];
+
+/** The server's figure; the page moves it with ticks in between. */
+export function useToday(broker: string | undefined) {
+  return useQuery({
+    queryKey: keys.today(broker ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/api/v1/today", { params: { query: { broker: broker ?? "" } } })),
+    enabled: broker !== undefined,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useSetup(broker: string | undefined) {
+  return useQuery({
+    queryKey: keys.setup(broker ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/api/v1/setup", { params: { query: { broker: broker ?? "" } } })),
+    enabled: broker !== undefined,
+    refetchInterval: (query) => (query.state.data?.done ? false : 5_000),
+  });
+}
+
+export function usePnlHistory(broker: string | undefined, from: string, to: string) {
+  return useQuery({
+    queryKey: keys.pnlHistory(broker ?? "", from, to),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/pnl/history", {
+          params: { query: { broker: broker ?? "", from_date: from, to_date: to } },
+        }),
+      ),
+    enabled: broker !== undefined,
+    staleTime: 60_000,
+  });
+}
+
+export function useChargesSummary(from: string, to: string) {
+  return useQuery({
+    queryKey: keys.chargesSummary(from, to),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/charges/summary", { params: { query: { from_date: from, to_date: to } } }),
+      ),
+    staleTime: 60_000,
+  });
+}
+
+/** The newest entries of every kind, for the Dashboard's Recent events. */
+export function useRecentEvents(limit: number) {
+  return useQuery({
+    queryKey: [...keys.audit, "recent", limit] as const,
+    queryFn: () => unwrap(api.GET("/api/v1/audit", { params: { query: { limit } } })),
   });
 }

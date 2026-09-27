@@ -16,6 +16,17 @@ WEB_ONLY = [
     ("GET", "/api/v1/session"),
     ("POST", "/api/v1/session/sign-out"),
     ("POST", "/api/v1/session/sign-out-all"),
+    ("GET", "/api/v1/brokers/fake/session"),
+    ("DELETE", "/api/v1/brokers/fake/session"),
+    ("GET", "/api/v1/instruments/status"),
+    ("GET", "/api/v1/keys"),
+    ("POST", "/api/v1/keys"),
+    ("DELETE", "/api/v1/keys/laptop"),
+    ("GET", "/api/v1/account"),
+    ("POST", "/api/v1/account/reset"),
+    ("GET", "/api/v1/notifications"),
+    ("GET", "/api/v1/today"),
+    ("GET", "/api/v1/setup"),
 ]
 
 

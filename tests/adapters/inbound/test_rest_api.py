@@ -16,6 +16,7 @@ from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.adapters.inbound.scopes import TOOL_ROUTES
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
+from openticker.storage.sqlite.audit_repo import write_audit
 from openticker.use_cases.api_keys import create_api_key, revoke
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
@@ -712,3 +713,24 @@ def test_depth_route_matches_the_tool(client: TestClient) -> None:
     ]
     assert (depth["total_buy_quantity"], depth["total_sell_quantity"]) == (900, 700)
     assert unknown.status_code == 404
+
+
+def test_audit_filters_by_who_kinds_and_day_and_pages_back(client: TestClient) -> None:
+    at = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
+    write_audit("OrderFilled", at.replace(day=21), "mcp:claude-code", "{}")
+    for trigger in ("mcp:claude-code", "ui", "mcp:claude-code", "strategy:s1"):
+        write_audit("OrderFilled", at, trigger, "{}")
+    write_audit("StrategyStopped", at, "strategy:s1", "{}")
+
+    def ids(**params: str | int | list[str]) -> list[int]:
+        entries = client.get("/api/v1/audit", params=params).json()["entries"]
+        return [entry["id"] for entry in entries]
+
+    claude = ids(source="claude-code", from_date="2026-09-22")
+    first_page = ids(limit=2)
+
+    assert claude == [4, 2]
+    assert ids(event_types=["StrategyStopped", "OrderPlaced"]) == [6]
+    assert ids(source="strategy", event_types=["OrderFilled"]) == [5]
+    assert first_page == [6, 5]
+    assert ids(limit=2, before_id=first_page[-1]) == [4, 3]

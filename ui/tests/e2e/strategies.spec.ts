@@ -9,7 +9,10 @@ import { nextLink } from "./links";
 
 async function openStrategies(page: Page) {
   await page.goto(nextLink());
-  await page.getByRole("link", { name: "Strategies" }).click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Strategies" })
+    .click();
   await expect(page.getByRole("table", { name: "Strategies" })).toBeVisible({ timeout: 5000 });
 }
 
@@ -156,5 +159,7 @@ test("guardrail: kill a running strategy with the hold in two actions, under fiv
   await expect(page.getByRole("button", { name: "Release" })).toBeVisible();
   await expect(page.locator(".page-head")).toContainText("Killed");
   expect(Date.now() - started).toBeLessThan(5000);
-  await expect(page.getByTestId("toast")).toContainText("Killed NIFTY short straddle");
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "Killed NIFTY short straddle" }),
+  ).toBeVisible();
 });

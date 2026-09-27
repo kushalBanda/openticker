@@ -8,6 +8,9 @@ the same path it does in production.
 
 Writes 80 sign-in links, one per line, to `--links` once it is serving.
 
+The broker's login page is served on the next port, under `localhost`, so
+its redirect back reaches the app from another site, as Kite's does.
+
 The paper account starts with the positions of the Positions mock: a NIFTY
 straddle and part of a NIFTY future held by two running strategies, the rest
 of the future and RELIANCE placed from the web app, HDFCBANK by Claude. The
@@ -20,6 +23,7 @@ kept their realized P&L and charge breakdown.
 """
 
 import argparse
+import math
 import os
 import random
 import threading
@@ -27,7 +31,9 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as clock_time
 from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import uvicorn
@@ -42,6 +48,7 @@ from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.composition import build_event_bus, order_broker
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
+from openticker.core.pnl import DayPnl, IntradayPoint
 from openticker.core.strategies.models import (
     LegSpec,
     OptionsStrategySpec,
@@ -50,6 +57,7 @@ from openticker.core.strategies.models import (
 )
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, leg_risk
 from openticker.ports.models import (
+    EXCHANGE_TIMEZONE,
     Credentials,
     Exchange,
     Instrument,
@@ -64,6 +72,7 @@ from openticker.storage.sqlite import runs_repo, scripts_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.models import SandboxTradeRow
+from openticker.storage.sqlite.pnl_repo import upsert_day, upsert_point
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
@@ -74,6 +83,7 @@ from tests.fixtures.e2e_strategies import STRADDLE_E2E, TREND, seed_strategies
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
 
 SESSION_START = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
+E2E_ENV = {"SANDBOX_STARTING_CAPITAL": "2500000"}
 MONTHLY = date(2026, 9, 29)
 CLOSES = {
     "NIFTY 50": 24708.75,
@@ -157,12 +167,24 @@ class E2EBroker(FakeBrokerPort):
         )
 
 
+CLOCK_FILE = "e2e-clock"  # in the home: the wall-clock second SESSION_START stands for
+
+
 class Clock:
-    def __init__(self) -> None:
-        self._started = time.monotonic()
+    """Tuesday's session from SESSION_START on, at real speed. With `home`,
+    every process sharing it reads one start from its clock file, so the
+    server and `e2e_agent` agree on the time; moving that start back moves
+    time on for all of them."""
+
+    def __init__(self, home: Path | None = None) -> None:
+        self._file = home / CLOCK_FILE if home else None
+        self._started = time.time()
+        if self._file is not None and not self._file.exists():
+            self._file.write_text(repr(self._started))
 
     def __call__(self) -> datetime:
-        return SESSION_START + timedelta(seconds=time.monotonic() - self._started)
+        started = float(self._file.read_text()) if self._file else self._started
+        return SESSION_START + timedelta(seconds=time.time() - started)
 
 
 class WalkingFeed:
@@ -320,6 +342,58 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
     events.close()
 
 
+def _seed_pnl(now: datetime) -> None:
+    """The Dashboard's record (ADR 34): a point a minute from 09:15 to now,
+    and a result for each weekday of the last four months."""
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    minute = datetime.combine(today, clock_time(9, 15), EXCHANGE_TIMEZONE)
+    step = 0
+    while minute <= now:
+        swing = 2400.0 * math.sin(step / 11) + 38.0 * step - 900.0
+        upsert_point(
+            today, IntradayPoint(minute.time(), round(swing, 2), 0.0, 0.0, round(swing, 2))
+        )
+        minute += timedelta(minutes=1)
+        step += 1
+    rng = random.Random(8)
+    for back in range(1, 121):
+        day = today - timedelta(days=back)
+        if day.weekday() >= 5:
+            continue
+        net = round(rng.gauss(900, 3800), 2)
+        charges = round(abs(rng.gauss(160, 60)), 2)
+        upsert_day(
+            DayPnl(day, net + charges, charges, 0.0, net, 0.0, rng.randint(2, 24), True),
+            now,
+        )
+
+
+def _serve_broker_login(port: int) -> str:
+    """The broker's login page, on another site (`localhost`, not
+    `127.0.0.1`), as Kite's is: its "Log in" goes to the app's callback, so
+    the browser arrives there cross-site, cookie withheld. Its URL."""
+
+    callback = f"http://127.0.0.1:{port}/brokers/fake/callback?request_token=e2e&status=success"
+    page = (
+        "<!doctype html><title>Fake broker login</title>"
+        f'<h1>Log in to the fake broker</h1><a href="{callback}">Log in</a>'
+    ).encode()
+
+    class Login(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(page)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", port + 1), Login)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://localhost:{port + 1}/connect/login"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8751)
@@ -329,11 +403,14 @@ def main() -> None:
     os.environ["OPENTICKER_HOME"] = args.home
 
     registry.register("fake", E2EBroker)
+    kite = _serve_broker_login(args.port)
+    registry.register_login_url_builder("fake", lambda: kite)
     upsert_instruments(INSTRUMENTS)
-    clock = Clock()
+    clock = Clock(Path(args.home))
     save_credentials(Credentials("fake", "e2e", None, clock() + timedelta(hours=8)))
-    env = {"SANDBOX_STARTING_CAPITAL": "2500000"}
+    env = dict(E2E_ENV)
     _seed(env, clock)
+    _seed_pnl(clock())
 
     events = build_event_bus({})
     prices = LatestPrices()

@@ -37,9 +37,10 @@ def get_engine() -> Engine:
 
 
 def _prepare(engine: Engine) -> None:
-    """Creates missing tables, and adds columns a newer version introduced to
-    tables an older one created. Only additive, nullable changes are made
-    this way; anything else needs a real migration (ADR 18 in docs/adr)."""
+    """Creates missing tables, and adds columns and indexes a newer version
+    introduced to tables an older one created. Only additive, nullable
+    changes are made this way; anything else needs a real migration (ADR 18
+    in docs/adr)."""
     # Under the write lock (BEGIN IMMEDIATE): the MCP server and the daemon
     # can start together, and each must see the other's changes before
     # deciding what is missing.
@@ -60,4 +61,6 @@ def _prepare(engine: Engine) -> None:
                 connection.exec_driver_sql(
                     f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}'
                 )
+            for index in table.indexes:  # an index on an old table is added too
+                index.create(connection, checkfirst=True)
         connection.commit()

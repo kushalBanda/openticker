@@ -92,6 +92,11 @@ def notification_channels(env: Mapping[str, str]) -> list[NotificationPort]:
     return channels
 
 
+def notifications_on(env: Mapping[str, str]) -> tuple[bool, bool]:
+    """Whether Slack and email are set up, never their settings."""
+    return bool(env.get("SLACK_WEBHOOK_URL")), all(env.get(name) for name in _SMTP_REQUIRED)
+
+
 def sandbox_settings(env: Mapping[str, str]) -> SandboxSettings:
     """`SANDBOX_STARTING_CAPITAL` applies when sandbox funds are first created.
     `SANDBOX_SLIPPAGE_TICKS` is how far a fill without a book moves against

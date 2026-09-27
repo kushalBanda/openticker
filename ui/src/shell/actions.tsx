@@ -1,5 +1,3 @@
-import { AnimatePresence } from "motion/react";
-import * as m from "motion/react-m";
 import {
   createContext,
   type ReactNode,
@@ -11,10 +9,10 @@ import {
   useState,
 } from "react";
 import { OrderDialog } from "../components/OrderDialog";
-import { enter, leave } from "../lib/motion";
 import type { Order, OrderDraft } from "../lib/orders";
 import { useLive } from "../stream/StreamProvider";
 import { CommandPalette } from "./CommandPalette";
+import { useToast } from "./toasts";
 
 interface Actions {
   /** Opens the order window with this order filled in. */
@@ -23,7 +21,7 @@ interface Actions {
   modify(order: Order): void;
   /** Opens ⌘K. */
   search(): void;
-  /** Says how something went, in one line (toasts replace it in slice 6). */
+  /** Says how something went, in a toast. */
   notify(message: string): void;
 }
 
@@ -52,20 +50,18 @@ const draftOf = (order: Order): OrderDraft => ({
   triggerPrice: order.trigger_price ?? undefined,
 });
 
-const TOAST_MS = 6_000;
-
-/** The app-wide ways to trade: the order window, ⌘K, and the line that says how it went. */
+/** The app-wide ways to trade: the order window, ⌘K, and the toast that says how it went. */
 export function ActionsProvider({ children }: { children: ReactNode }) {
   const { status } = useLive();
   const [searching, setSearching] = useState(false);
   const [dialog, setDialog] = useState<Open | null>(null);
-  const [message, setMessage] = useState<{ text: string; id: number } | null>(null);
+  const toast = useToast();
   const opened = useRef(0);
   // Kept after closing, so the dialog can leave the way it came.
   const last = useRef<Open | null>(null);
   if (dialog) last.current = dialog;
 
-  const notify = useCallback((text: string) => setMessage({ text, id: Date.now() }), []);
+  const notify = useCallback((text: string) => toast({ text }), [toast]);
   const actions = useMemo<Actions>(
     () => ({
       order: (draft) => setDialog({ draft, id: ++opened.current }),
@@ -87,12 +83,6 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(null), TOAST_MS);
-    return () => clearTimeout(timer);
-  }, [message]);
 
   const shown = last.current;
   const close = useCallback(() => setDialog(null), []);
@@ -124,29 +114,6 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
           onDone={done}
         />
       )}
-      <AnimatePresence>
-        {message && (
-          <m.div
-            key="toast"
-            className="toast"
-            role="status"
-            data-testid="toast"
-            {...enter}
-            exit={leave}
-          >
-            <span>{message.text}</span>
-            <button
-              type="button"
-              className="btn"
-              data-variant="ghost"
-              data-size="sm"
-              onClick={() => setMessage(null)}
-            >
-              Dismiss
-            </button>
-          </m.div>
-        )}
-      </AnimatePresence>
     </ActionsContext.Provider>
   );
 }

@@ -41,6 +41,7 @@ from openticker.adapters.inbound.daemon.agent_loop import AgentLoop
 from openticker.adapters.inbound.daemon.charge_check_loop import ChargeCheckLoop
 from openticker.adapters.inbound.daemon.execution_loop import ExecutionLoop
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
+from openticker.adapters.inbound.daemon.pnl_loop import PnlLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
 from openticker.adapters.inbound.daemon.strategy_loop import StrategyLoop
@@ -62,6 +63,7 @@ from openticker.composition import (
     script_limits,
     watch_list,
 )
+from openticker.events.types import BrokerConnected, BrokerDisconnected
 from openticker.ports.models import EXCHANGE_TIMEZONE, Instrument, Quote
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
@@ -251,20 +253,27 @@ def _serve(env: Mapping[str, str], dev: bool = False, browser: bool = False) -> 
         wake,
         partial(datetime.now, UTC),
     )
-    feeds = [
-        threading.Thread(
-            target=FeedLoop(
-                broker,
-                partial(get_feed, broker),
-                partial(watched_instruments, watch, browser=hub.watched),
-                prices,
-                events,
-                wake=wake,
-            ).run,
-            args=(stop,),
-            name=f"feed-{broker}",
+    feed_loops = {
+        broker: FeedLoop(
+            broker,
+            partial(get_feed, broker),
+            partial(watched_instruments, watch, browser=hub.watched),
+            prices,
+            events,
+            wake=wake,
         )
         for broker in FEED_REGISTRY
+    }
+
+    def reopen_feed(event: BrokerConnected | BrokerDisconnected) -> None:
+        if (loop := feed_loops.get(event.broker)) is not None:
+            loop.reopen()
+
+    events.subscribe(BrokerConnected, reopen_feed)
+    events.subscribe(BrokerDisconnected, reopen_feed)
+    feeds = [
+        threading.Thread(target=loop.run, args=(stop,), name=f"feed-{broker}")
+        for broker, loop in feed_loops.items()
     ]
     feeds += [
         threading.Thread(
@@ -280,6 +289,13 @@ def _serve(env: Mapping[str, str], dev: bool = False, browser: bool = False) -> 
         )
         for broker in FEED_REGISTRY
     ]
+    feeds.append(
+        threading.Thread(
+            target=PnlLoop(partial(order_broker, _PRICE_BROKER, env), load_calendar).run,
+            args=(stop,),
+            name="pnl",
+        )
+    )
     feeds += [
         threading.Thread(
             target=ChargeCheckLoop(broker, partial(get_adapter, broker), events).run,
