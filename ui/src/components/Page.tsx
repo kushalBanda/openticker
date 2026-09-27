@@ -1,4 +1,6 @@
+import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useBarTitle } from "../shell/title";
 
 const BAR_HEIGHT = 44;
@@ -10,11 +12,17 @@ const BAR_HEIGHT = 44;
 export function Page({
   title,
   count,
+  badges,
+  back,
   actions,
   children,
 }: {
   title: string;
   count?: number;
+  /** Tags after the title: a strategy's kind and state. */
+  badges?: ReactNode;
+  /** A detail page's way up to its list: "‹ Strategies". */
+  back?: { to: string; label: string };
   actions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -47,11 +55,18 @@ export function Page({
 
   return (
     <main className="page">
+      {back && (
+        <Link to={back.to} className="back-link">
+          <ChevronLeft size={15} aria-hidden />
+          {back.label}
+        </Link>
+      )}
       <div className="page-head">
         <h1 ref={heading} className="page-title" data-tucked={tucked}>
           {title}
           {count !== undefined && <span className="count"> ({count})</span>}
         </h1>
+        {badges}
         <span className="flex-1" />
         {actions}
       </div>

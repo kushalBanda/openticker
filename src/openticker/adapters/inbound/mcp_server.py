@@ -195,6 +195,7 @@ from openticker.use_cases.search_instruments import (
 )
 from openticker.use_cases.strategies import control
 from openticker.use_cases.strategies import define as strategies
+from openticker.use_cases.strategies.board import strategy_board
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
     StrategyStateError,
@@ -1336,9 +1337,10 @@ def get_strategy(strategy_id: StrategyId) -> StrategyResult:
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
 def list_strategies() -> StrategiesResult:
-    """Every saved strategy, by name."""
+    """Every saved strategy, by name: what it is doing now, today's and all-time net
+    after costs, and its latest review."""
     return StrategiesResult(
-        strategies=[StrategySummary.of(stored) for stored in strategies.list_strategies()]
+        strategies=[StrategySummary.of(row) for row in strategy_board(load_calendar(), clock())]
     )
 
 

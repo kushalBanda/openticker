@@ -71,6 +71,42 @@ export function istClock(at: Date): string {
   return clock.format(at);
 }
 
+const dayParts = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata",
+  day: "numeric",
+  month: "numeric",
+  year: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/** 22 Sep; with `time`, 22 Sep 10:18; with `year`, 22 Sep 26. Exchange time, Kite's months. */
+export function istDate(at: string | Date, opts: { time?: boolean; year?: boolean } = {}): string {
+  const parts = dayParts.formatToParts(new Date(at));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const month = MONTH_NAMES[Number(get("month")) - 1] ?? "";
+  let text = `${get("day")} ${month}`;
+  if (opts.year) text += ` ${get("year")}`;
+  if (opts.time) text += ` ${get("hour")}:${get("minute")}`;
+  return text;
+}
+
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
 /** 1,500 / -75: quantities, no decimals. */
 export function qty(v: Num): string {
   return present(v) ? none.format(v) : MISSING;

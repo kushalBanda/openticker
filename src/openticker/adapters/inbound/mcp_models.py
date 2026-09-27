@@ -10,7 +10,13 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from openticker.core.agents.jobs import AgentJob, AgentJobEndReason, AgentJobStatus
+from openticker.core.agents.jobs import (
+    AgentJob,
+    AgentJobEndReason,
+    AgentJobStatus,
+    Verdict,
+    verdict_of,
+)
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
 from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
@@ -96,6 +102,7 @@ from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
 from openticker.use_cases.position_holders import Holder, Holding, PositionKey, key_of
 from openticker.use_cases.preview_charges import ChargePreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
+from openticker.use_cases.strategies.board import BoardRow, Segment, StrategyState
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 from openticker.use_cases.strategies.ledger import StrategyLedger
@@ -1518,13 +1525,39 @@ class StrategySummary(BaseModel):
     scheduled: bool = Field(description="True when it enters on its schedule.")
     review_scheduled: bool = Field(description="True when it is reviewed on a schedule.")
     updated_at: datetime
+    state: StrategyState = Field(
+        description="killed: its kill switch is on. running: a run is open, or a start is "
+        "waiting for openticker-serve. listening: a signal strategy with an alert URL and "
+        "nothing open. scheduled: enters on its schedule. stopped."
+    )
+    segments: list[Segment] = Field(description="What it trades: EQ, FUT, OPT.")
+    next_entry: datetime | None = Field(description="When a scheduled strategy enters next.")
+    exit_time: ExchangeTime | None = Field(description="Its daily square-off, exchange-local.")
+    active_run: "ActiveRunResult | None" = Field(description="The open run, with its legs.")
+    pending: CommandKind | None = Field(
+        description="A start, stop, kill or close_leg openticker-serve hasn't carried out yet."
+    )
+    today_pnl: float = Field(
+        description="Runs started today and the open run: realized P&L less charges, rupees. "
+        "Open legs' unrealized P&L is not in it."
+    )
+    net_pnl: float = Field(description="Every run after costs, less charges (as the ledger).")
+    runs: int = Field(description="Every run it has had.")
+    judged_runs: int = Field(description="Runs after costs: the ones net_pnl and wins count.")
+    wins: int
+    max_drawdown: float = Field(description="Deepest fall of net P&L from its high, run by run.")
+    last_run_at: datetime | None = Field(description="When the newest run started.")
+    has_alert_url: bool = Field(description="A signal strategy with an alert URL.")
+    last_review: "ReviewBriefResult | None" = Field(description="The newest review that answered.")
 
     @classmethod
-    def of(cls, stored: StoredStrategy) -> "StrategySummary":
+    def of(cls, row: BoardRow) -> "StrategySummary":
+        stored = row.strategy
+        signal = isinstance(stored.spec, SignalStrategySpec)
         return cls(
             strategy_id=stored.id,
             name=stored.name,
-            kind="signal" if isinstance(stored.spec, SignalStrategySpec) else "options",
+            kind="signal" if signal else "options",
             underlying=", ".join(leg.symbol for leg in stored.spec.legs)
             if isinstance(stored.spec, SignalStrategySpec)
             else stored.spec.underlying,
@@ -1534,6 +1567,21 @@ class StrategySummary(BaseModel):
             scheduled=stored.scheduled_broker is not None,
             review_scheduled=stored.review_schedule is not None,
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
+            state=row.state,
+            segments=list(row.segments),
+            next_entry=_local(row.next_entry),
+            exit_time=stored.spec.schedule.exit_time,
+            active_run=ActiveRunResult.of(row.active_run) if row.active_run else None,
+            pending=row.pending,
+            today_pnl=row.today_net,
+            net_pnl=row.net_pnl,
+            runs=row.runs,
+            judged_runs=row.judged,
+            wins=row.wins,
+            max_drawdown=row.max_drawdown,
+            last_run_at=_local(row.last_run_at),
+            has_alert_url=row.has_alert_url,
+            last_review=ReviewBriefResult.of(row.review) if row.review else None,
         )
 
 
@@ -1745,6 +1793,11 @@ class LedgerRunResult(BaseModel):
         )
 
 
+class EquityPointResult(BaseModel):
+    day: date = Field(description="Exchange-local trading date.")
+    net_pnl: float = Field(description="Cumulative, after costs, rupees.")
+
+
 class LedgerTotalsResult(BaseModel):
     runs: int = Field(description="Runs after costs: the ones these totals judge.")
     wins: int = Field(description="Runs with net P&L above zero.")
@@ -1779,6 +1832,10 @@ class StrategyLedgerResult(BaseModel):
     open_runs: int = Field(description="Not ended; left out of totals.")
     totals: LedgerTotalsResult = Field(description="Over the runs after costs, all of them.")
     runs: list[LedgerRunResult] = Field(description="The newest runs, newest first.")
+    equity: list[EquityPointResult] = Field(
+        description="Cumulative net P&L after costs at the end of each day it ran, oldest "
+        "first; the latest 750 days."
+    )
 
     @classmethod
     def of(cls, ledger: StrategyLedger) -> "StrategyLedgerResult":
@@ -1791,6 +1848,7 @@ class StrategyLedgerResult(BaseModel):
             open_runs=ledger.open_runs,
             totals=LedgerTotalsResult.of(ledger.totals),
             runs=[LedgerRunResult.of(run) for run in ledger.runs],
+            equity=[EquityPointResult(day=p.day, net_pnl=p.net_pnl) for p in ledger.equity],
         )
 
 
@@ -1812,6 +1870,9 @@ class AgentJobResult(BaseModel):
     summary: str | None = Field(
         description="The agent's final answer; a review's starts with its verdict."
     )
+    verdict: Verdict | None = Field(
+        default=None, description="The verdict the summary leads with, when it leads with one."
+    )
     cost_usd: float | None = Field(description="What the run cost, when the harness reports it.")
 
     @classmethod
@@ -1829,6 +1890,7 @@ class AgentJobResult(BaseModel):
             end_reason=job.end_reason,
             end_detail=job.end_detail,
             summary=job.summary,
+            verdict=verdict_of(job.summary),
             cost_usd=job.cost_usd,
         )
 
@@ -2289,3 +2351,40 @@ class ScriptLogsResult(BaseModel):
 class DeleteScriptResult(BaseModel):
     script_id: str
     deleted: bool
+
+
+class ActiveRunResult(RunSummary):
+    legs: list[RunLegResult]
+
+    @classmethod
+    def of(cls, run: Run) -> "ActiveRunResult":
+        return cls(
+            **RunSummary.of(run).model_dump(), legs=[RunLegResult.of(leg) for leg in run.legs]
+        )
+
+
+class ReviewBriefResult(BaseModel):
+    job_id: str
+    verdict: Verdict | None = Field(
+        description="keep, change (one thing), retire, or not_yet (under 10 runs after "
+        "costs); null when the answer leads with none."
+    )
+    summary: str
+    harness: str
+    trigger: str = Field(description="Who asked for it.")
+    ended_at: datetime
+
+    @classmethod
+    def of(cls, job: AgentJob) -> "ReviewBriefResult":
+        assert job.summary is not None and job.ended_at is not None
+        return cls(
+            job_id=job.id,
+            verdict=verdict_of(job.summary),
+            summary=job.summary,
+            harness=job.harness,
+            trigger=job.trigger,
+            ended_at=job.ended_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+StrategySummary.model_rebuild()

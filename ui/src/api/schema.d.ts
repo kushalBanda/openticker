@@ -1106,6 +1106,38 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActiveRunResult */
+        ActiveRunResult: {
+            /**
+             * Run Id
+             * @description Pass to get_strategy_run for legs, orders and timeline.
+             */
+            run_id: string;
+            /** @description open: holding legs under watch. stopping: closing them. ended. */
+            status: components["schemas"]["RunStatus"];
+            /**
+             * Trigger
+             * @description Who started it.
+             */
+            trigger: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Ended At */
+            ended_at: string | null;
+            stop_reason: components["schemas"]["StrategyStopReason"] | null;
+            /** Stop Detail */
+            stop_detail: string | null;
+            /**
+             * Realized Pnl
+             * @description Rupees from legs closed so far.
+             */
+            realized_pnl: number;
+            /** Legs */
+            legs: components["schemas"]["RunLegResult"][];
+        };
         /**
          * AgentJobEndReason
          * @enum {string}
@@ -1167,6 +1199,8 @@ export interface components {
              * @description The agent's final answer; a review's starts with its verdict.
              */
             summary: string | null;
+            /** @description The verdict the summary leads with, when it leads with one. */
+            verdict?: components["schemas"]["Verdict"] | null;
             /**
              * Cost Usd
              * @description What the run cost, when the harness reports it.
@@ -1523,6 +1557,20 @@ export interface components {
          * @enum {string}
          */
         Direction: "both" | "long_only" | "short_only";
+        /** EquityPointResult */
+        EquityPointResult: {
+            /**
+             * Day
+             * Format: date
+             * @description Exchange-local trading date.
+             */
+            day: string;
+            /**
+             * Net Pnl
+             * @description Cumulative, after costs, rupees.
+             */
+            net_pnl: number;
+        };
         /**
          * Exchange
          * @enum {string}
@@ -2487,6 +2535,27 @@ export interface components {
          * @enum {string}
          */
         RelativeExpiry: "weekly" | "next_week" | "monthly" | "next_month";
+        /** ReviewBriefResult */
+        ReviewBriefResult: {
+            /** Job Id */
+            job_id: string;
+            /** @description keep, change (one thing), retire, or not_yet (under 10 runs after costs); null when the answer leads with none. */
+            verdict: components["schemas"]["Verdict"] | null;
+            /** Summary */
+            summary: string;
+            /** Harness */
+            harness: string;
+            /**
+             * Trigger
+             * @description Who asked for it.
+             */
+            trigger: string;
+            /**
+             * Ended At
+             * Format: date-time
+             */
+            ended_at: string;
+        };
         /**
          * ReviewScheduleDefinition
          * @description When openticker-serve reviews a strategy without being asked. Any
@@ -2882,6 +2951,11 @@ export interface components {
              */
             truncated: boolean;
         };
+        /**
+         * Segment
+         * @enum {string}
+         */
+        Segment: "EQ" | "FUT" | "OPT";
         /** SessionResult */
         SessionResult: {
             /**
@@ -3206,6 +3280,11 @@ export interface components {
              * @description The newest runs, newest first.
              */
             runs: components["schemas"]["LedgerRunResult"][];
+            /**
+             * Equity
+             * @description Cumulative net P&L after costs at the end of each day it ran, oldest first; the latest 750 days.
+             */
+            equity: components["schemas"]["EquityPointResult"][];
         };
         /** StrategyPreviewResult */
         StrategyPreviewResult: {
@@ -3385,6 +3464,11 @@ export interface components {
             calls: components["schemas"]["SignalCallResult"][];
         };
         /**
+         * StrategyState
+         * @enum {string}
+         */
+        StrategyState: "killed" | "running" | "listening" | "scheduled" | "stopped";
+        /**
          * StrategyStopReason
          * @enum {string}
          */
@@ -3425,6 +3509,66 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** @description killed: its kill switch is on. running: a run is open, or a start is waiting for openticker-serve. listening: a signal strategy with an alert URL and nothing open. scheduled: enters on its schedule. stopped. */
+            state: components["schemas"]["StrategyState"];
+            /**
+             * Segments
+             * @description What it trades: EQ, FUT, OPT.
+             */
+            segments: components["schemas"]["Segment"][];
+            /**
+             * Next Entry
+             * @description When a scheduled strategy enters next.
+             */
+            next_entry: string | null;
+            /**
+             * Exit Time
+             * @description Its daily square-off, exchange-local.
+             */
+            exit_time: string | null;
+            /** @description The open run, with its legs. */
+            active_run: components["schemas"]["ActiveRunResult"] | null;
+            /** @description A start, stop, kill or close_leg openticker-serve hasn't carried out yet. */
+            pending: components["schemas"]["CommandKind"] | null;
+            /**
+             * Today Pnl
+             * @description Runs started today and the open run: realized P&L less charges, rupees. Open legs' unrealized P&L is not in it.
+             */
+            today_pnl: number;
+            /**
+             * Net Pnl
+             * @description Every run after costs, less charges (as the ledger).
+             */
+            net_pnl: number;
+            /**
+             * Runs
+             * @description Every run it has had.
+             */
+            runs: number;
+            /**
+             * Judged Runs
+             * @description Runs after costs: the ones net_pnl and wins count.
+             */
+            judged_runs: number;
+            /** Wins */
+            wins: number;
+            /**
+             * Max Drawdown
+             * @description Deepest fall of net P&L from its high, run by run.
+             */
+            max_drawdown: number;
+            /**
+             * Last Run At
+             * @description When the newest run started.
+             */
+            last_run_at: string | null;
+            /**
+             * Has Alert Url
+             * @description A signal strategy with an alert URL.
+             */
+            has_alert_url: boolean;
+            /** @description The newest review that answered. */
+            last_review: components["schemas"]["ReviewBriefResult"] | null;
         };
         /** SyncResult */
         SyncResult: {
@@ -3546,6 +3690,12 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * Verdict
+         * @description A review's one verdict (ADR 29 in docs/adr), or not yet: under 10 runs after costs.
+         * @enum {string}
+         */
+        Verdict: "keep" | "change" | "retire" | "not_yet";
         /** WebhookBody */
         WebhookBody: {
             /** Broker */

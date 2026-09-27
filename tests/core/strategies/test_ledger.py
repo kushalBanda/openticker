@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from openticker.core.risk.models import StrategyStopReason
-from openticker.core.strategies.ledger import LedgerFill, LedgerRun, ledger_totals
+from openticker.core.strategies.ledger import LedgerFill, LedgerRun, equity_curve, ledger_totals
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
 from openticker.ports.models import Exchange, Product, Side
 
@@ -109,3 +109,26 @@ def test_no_runs_judged_yet() -> None:
         0.0,
     )
     assert totals.average_win is None and totals.stop_reasons == {}
+
+
+def test_equity_adds_up_judged_runs_by_the_day_they_started() -> None:
+    runs = [
+        _run(2, 50.0),
+        _run(1, -300.0, status=RunStatus.OPEN),  # not judged
+        _run(1, 100.0, charges=None),  # not judged
+        _run(0, 200.0),
+    ]
+    runs.append(_run(0, 40.0))
+
+    curve = equity_curve(runs)
+
+    assert [(point.day.day, point.net_pnl) for point in curve] == [
+        (22, 220.0),
+        (24, 260.0),
+    ]  # less 10 charges a run
+
+
+def test_equity_keeps_the_latest_days_when_there_are_too_many() -> None:
+    curve = equity_curve([_run(day, 20.0) for day in range(5)], limit=2)  # nets 10 a day
+
+    assert [point.net_pnl for point in curve] == [40.0, 50.0]

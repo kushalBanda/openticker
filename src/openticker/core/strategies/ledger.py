@@ -17,10 +17,10 @@ judged.
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from openticker.core.strategies.runs import Run, RunStatus
-from openticker.ports.models import Side
+from openticker.ports.models import EXCHANGE_TIMEZONE, Side
 
 
 @dataclass(frozen=True)
@@ -123,3 +123,29 @@ def _max_drawdown(nets: Sequence[float]) -> float:
         high = max(high, cumulative)
         deepest = max(deepest, high - cumulative)
     return round(deepest, 2)
+
+
+# Days an equity curve keeps: three years of trading days.
+EQUITY_DAYS = 750
+
+
+@dataclass(frozen=True)
+class EquityPoint:
+    day: date  # exchange-local, the day the runs started
+    net_pnl: float  # cumulative, after costs, at the end of that day
+
+
+def equity_curve(runs: Sequence[LedgerRun], limit: int = EQUITY_DAYS) -> list[EquityPoint]:
+    """Cumulative net P&L of the judged runs, day by day, oldest first: the
+    latest `limit` days."""
+    by_day: dict[date, float] = {}
+    for entry in runs:
+        if entry.after_costs:
+            day = entry.run.started_at.astimezone(EXCHANGE_TIMEZONE).date()
+            by_day[day] = by_day.get(day, 0.0) + entry.net_pnl
+    cumulative = 0.0
+    curve = []
+    for day in sorted(by_day):
+        cumulative += by_day[day]
+        curve.append(EquityPoint(day, round(cumulative, 2)))
+    return curve[-limit:]

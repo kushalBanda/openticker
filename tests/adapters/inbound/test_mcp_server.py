@@ -621,6 +621,11 @@ def test_signal_strategy_tools_give_an_alert_url_and_show_its_alerts(
     assert [(c.result, c.commands[0].action) for c in signals.calls] == [("accepted", "long_entry")]
     summary = mcp_server.list_strategies().strategies[0]
     assert (summary.kind, summary.underlying) == ("signal", "RELIANCE, NIFTY22SEP262500CE")
+    assert (summary.state, summary.segments, summary.has_alert_url) == (
+        "listening",
+        ["EQ", "OPT"],
+        True,
+    )
     assert mcp_server.disable_strategy_webhook(strategy_id=created.strategy_id).kind == "signal"
     assert mcp_server.get_strategy_signals(strategy_id=created.strategy_id).webhook is None
 

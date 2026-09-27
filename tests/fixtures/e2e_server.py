@@ -6,11 +6,13 @@ the same path it does in production.
 
     uv run python -m tests.fixtures.e2e_server --port 8751 --home <dir> --links <file>
 
-Writes 40 sign-in links, one per line, to `--links` once it is serving.
+Writes 80 sign-in links, one per line, to `--links` once it is serving.
 
 The paper account starts with the positions of the Positions mock: a NIFTY
 straddle and part of a NIFTY future held by two running strategies, the rest
-of the future and RELIANCE placed from the web app, HDFCBANK by Claude. Its
+of the future and RELIANCE placed from the web app, HDFCBANK by Claude. The
+Strategies mock's other three strategies, and every strategy's history,
+come from `e2e_strategies`. Its
 order book is the Orders mock's: a resting HDFCBANK limit, a hosted script's
 RELIANCE stop, Codex's refused NIFTY future and a cancelled RELIANCE limit.
 Its trades add a TCS round trip today, and one yesterday from before fills
@@ -40,7 +42,13 @@ from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.composition import build_event_bus, order_broker
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
-from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
+from openticker.core.strategies.models import (
+    LegSpec,
+    OptionsStrategySpec,
+    SignalLeg,
+    StrategySpec,
+)
+from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, leg_risk
 from openticker.ports.models import (
     Credentials,
     Exchange,
@@ -62,8 +70,8 @@ from openticker.use_cases.feed_status import feed_status
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.watched_instruments import watched_instruments
 from openticker.use_cases.web_sessions import create_sign_in_link
+from tests.fixtures.e2e_strategies import STRADDLE_E2E, TREND, seed_strategies
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
-from tests.fixtures.strategies import STRADDLE
 
 SESSION_START = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
 MONTHLY = date(2026, 9, 29)
@@ -190,30 +198,63 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
     sandbox = order_broker("fake", env, clock)
     events = build_event_bus({})
 
-    def fill(instrument: Instrument, side: Side, quantity: int, product: Product, who: str) -> None:
-        request = OrderRequest(instrument, side, quantity, product, OrderType.MARKET, None, who)
+    def fill(
+        instrument: Instrument,
+        side: Side,
+        quantity: int,
+        product: Product,
+        who: str,
+        strategy_id: str | None = None,
+        run_id: str | None = None,
+    ) -> float:
+        request = OrderRequest(
+            instrument, side, quantity, product, OrderType.MARKET, None, who, strategy_id, run_id
+        )
         result = place_order(request, sandbox, events, None, load_calendar(), clock())
-        assert result.status is OrderStatus.FILLED, result.reason
+        assert result.status is OrderStatus.FILLED and result.fill_price, result.reason
+        return result.fill_price
 
-    def run(name: str, product: Product, legs: Sequence[tuple[Instrument, Side, int]]) -> None:
-        strategy = insert_strategy(name, STRADDLE, clock())
-        for instrument, side, quantity in legs:
-            fill(instrument, side, quantity, product, f"strategy:{strategy.id}")
+    def run(
+        name: str,
+        spec: StrategySpec,
+        product: Product,
+        legs: Sequence[tuple[Instrument, Side, int]],
+    ) -> str:
+        strategy = insert_strategy(name, spec, clock())
+        rules: Sequence[LegSpec | SignalLeg] = spec.legs
+        run_id = runs_repo.new_run_id()
+        entries = [
+            fill(leg, side, units, product, f"strategy:{strategy.id}", strategy.id, run_id)
+            for leg, side, units in legs
+        ]
         started = Run(
-            id=runs_repo.new_run_id(),
+            id=run_id,
             strategy_id=strategy.id,
             broker="fake",
             product=product,
             status=RunStatus.OPEN,
-            trigger="ui",
+            trigger="schedule" if isinstance(spec, OptionsStrategySpec) else "alert",
             started_at=clock(),
             legs=tuple(
-                RunLeg(f"leg{n}", leg.symbol, leg.exchange, side, units, LegStatus.OPEN)
-                for n, (leg, side, units) in enumerate(legs, 1)
+                RunLeg(
+                    f"leg{n}",
+                    leg.symbol,
+                    leg.exchange,
+                    side,
+                    units,
+                    LegStatus.OPEN,
+                    entry_price=entry,
+                    entered_at=clock(),
+                    risk=leg_risk(spec_leg, side, entry, units),
+                )
+                for n, ((leg, side, units), entry, spec_leg) in enumerate(
+                    zip(legs, entries, rules, strict=True), 1
+                )
             ),
         )
         with write_transaction() as session:
             runs_repo.insert_run(session, started)
+        return strategy.id
 
     def place(
         instrument: Instrument,
@@ -230,8 +271,14 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
         )
         return place_order(request, sandbox, events, None, load_calendar(), clock())
 
-    run("NIFTY short straddle", Product.MIS, [(CE, Side.SELL, 75), (PE, Side.SELL, 75)])
-    run("NIFTY futures trend", Product.NRML, [(FUT, Side.BUY, 75)])
+    straddle = run(
+        "NIFTY short straddle",
+        STRADDLE_E2E,
+        Product.MIS,
+        [(CE, Side.SELL, 75), (PE, Side.SELL, 75)],
+    )
+    trend = run("NIFTY futures trend", TREND, Product.NRML, [(FUT, Side.BUY, 75)])
+    seed_strategies(clock, straddle, trend)
     fill(FUT, Side.BUY, 75, Product.NRML, "ui")
     fill(FAKE_INSTRUMENT, Side.BUY, 10, Product.MIS, "ui")
     fill(HDFCBANK, Side.SELL, 20, Product.MIS, "mcp:claude-code")
@@ -316,7 +363,7 @@ def main() -> None:
 
     web = WebSettings(f"http://127.0.0.1:{args.port}", args.port, None, DIST)
     app = create_app(events, env, clock=clock, hub=hub, web=web)
-    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(40)]
+    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(80)]
     Path(args.links).write_text("\n".join(links) + "\n")
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

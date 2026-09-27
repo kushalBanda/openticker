@@ -6,6 +6,8 @@ import { NotFound } from "./pages/NotFound";
 import { Orders } from "./pages/orders/Orders";
 import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
+import { Strategies } from "./pages/strategies/Strategies";
+import { Strategy } from "./pages/strategy/Strategy";
 import { Trades } from "./pages/trades/Trades";
 import { AppShell } from "./shell/AppShell";
 import { PAGES, SETTINGS } from "./shell/nav";
@@ -23,6 +25,7 @@ const BUILT: Record<string, ReactNode> = {
   "/positions": <Positions />,
   "/orders": <Orders />,
   "/trades": <Trades />,
+  "/strategies": <Strategies />,
 };
 
 const router = createBrowserRouter([
@@ -36,6 +39,7 @@ const router = createBrowserRouter([
             path: page.path,
             element: BUILT[page.path] ?? <Building title={page.label} />,
           })),
+          { path: "/strategies/:id", element: <Strategy /> },
           { path: "*", element: <NotFound /> },
         ],
       },

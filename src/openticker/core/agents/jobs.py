@@ -3,6 +3,7 @@ by the daemon in `labs/`, with a key that reaches only what the job's kind
 may. A review reads one strategy and writes its verdict into that
 strategy's note. Pure."""
 
+import re
 import signal
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,6 +31,15 @@ class AgentJobStatus(StrEnum):
     RUNNING = "running"
     STOPPING = "stopping"  # asked to stop; killed if it hasn't within the grace
     ENDED = "ended"
+
+
+class Verdict(StrEnum):
+    """A review's one verdict (ADR 29 in docs/adr), or not yet: under 10 runs after costs."""
+
+    KEEP = "keep"
+    CHANGE = "change"  # change one thing, as a new strategy
+    RETIRE = "retire"
+    NOT_YET = "not_yet"
 
 
 class AgentJobEndReason(StrEnum):
@@ -119,3 +129,19 @@ def capped(text: str | None) -> str | None:
     if len(text) <= MAX_SUMMARY_CHARS:
         return text
     return text[: MAX_SUMMARY_CHARS - 1] + "…"
+
+
+# A review's summary starts with its verdict, maybe under a dated heading or in bold.
+_VERDICT = re.compile(
+    r"^[\s#*_>-]*(?:\d{4}-\d{2}-\d{2}\s*:?\s*)?(?:verdict\s*:\s*)?[*_]*"
+    r"(keep|change|retire|not yet)\b",
+    re.IGNORECASE,
+)
+
+
+def verdict_of(summary: str | None) -> Verdict | None:
+    """The verdict a review's summary leads with; None when it leads with none."""
+    found = _VERDICT.match(summary or "")
+    if found is None:
+        return None
+    return Verdict(found.group(1).lower().replace(" ", "_"))

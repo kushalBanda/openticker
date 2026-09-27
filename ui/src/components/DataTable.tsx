@@ -65,6 +65,7 @@ export function DataTable<T>({
             <Fragment key={key}>
               <tr
                 aria-selected={selected === undefined ? undefined : selected === key}
+                data-clickable={onSelect ? true : undefined}
                 onClick={onSelect ? () => onSelect(key) : undefined}
               >
                 {columns.map((column) => {
@@ -78,7 +79,14 @@ export function DataTable<T>({
                     >
                       {column.cell(row)}
                       {column.sub && <div className="sub">{column.sub(row)}</div>}
-                      {pill && <div className="row-actions">{actions(row)}</div>}
+                      {pill && (
+                        // A click on an action is the action's, not the row's.
+                        // biome-ignore lint/a11y/noStaticElementInteractions: only stops the row's click
+                        // biome-ignore lint/a11y/useKeyWithClickEvents: the buttons inside take keys
+                        <div className="row-actions" onClick={(event) => event.stopPropagation()}>
+                          {actions(row)}
+                        </div>
+                      )}
                     </td>
                   );
                 })}

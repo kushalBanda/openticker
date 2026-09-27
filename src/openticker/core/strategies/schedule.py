@@ -32,6 +32,26 @@ def entry_due(
     return at if at <= now < at + ENTRY_GRACE else None
 
 
+def next_entry(
+    schedule: Schedule, exchange: Exchange, calendar: MarketCalendar, now: datetime
+) -> datetime | None:
+    """When the schedule enters next: today's entry while it is still due,
+    else the next scheduled weekday the exchange trades."""
+    if schedule.entry_time is None:
+        return None
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    for ahead in range(_LOOKBACK_DAYS):
+        day = today + timedelta(days=ahead)
+        if day.weekday() not in schedule.weekdays:
+            continue
+        if session_hours(day, exchange, calendar) is None:
+            continue
+        at = datetime.combine(day, schedule.entry_time, EXCHANGE_TIMEZONE)
+        if now < at + ENTRY_GRACE:
+            return at
+    return None
+
+
 def exit_due(
     schedule: Schedule,
     started_at: datetime,

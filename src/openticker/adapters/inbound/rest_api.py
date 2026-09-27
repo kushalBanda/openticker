@@ -167,6 +167,7 @@ from openticker.use_cases.scripts.manage import (
 )
 from openticker.use_cases.search_instruments import search_instruments
 from openticker.use_cases.strategies import control
+from openticker.use_cases.strategies.board import strategy_board
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
     StrategyStateError,
@@ -179,7 +180,6 @@ from openticker.use_cases.strategies.define import (
     create_strategy,
     delete_strategy,
     get_strategy,
-    list_strategies,
     preview_strategy,
     update_strategy,
 )
@@ -746,7 +746,9 @@ def create_app(
 
     @api.get("/strategies")
     def strategies() -> StrategiesResult:
-        return StrategiesResult(strategies=[StrategySummary.of(s) for s in list_strategies()])
+        return StrategiesResult(
+            strategies=[StrategySummary.of(row) for row in strategy_board(load_calendar(), clock())]
+        )
 
     @api.get("/strategies/{strategy_id}")
     def strategy(strategy_id: str) -> StrategyResult:

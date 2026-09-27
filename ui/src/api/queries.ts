@@ -14,6 +14,11 @@ export const keys = {
   margin: (params: MarginParams) => ["margin", params] as const,
   search: (query: string) => ["search", query] as const,
   listings: (symbol: string) => ["listings", symbol] as const,
+  strategies: ["strategies"] as const,
+  strategy: (id: string) => ["strategy", id] as const,
+  ledger: (id: string) => ["ledger", id] as const,
+  signals: (id: string) => ["signals", id] as const,
+  reviews: (id: string) => ["reviews", id] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -269,9 +274,92 @@ export function useCloseAll() {
   });
 }
 
+/** Every strategy with what it is doing now; the daemon moves them, so refetched every 5 s. */
+export function useStrategies() {
+  return useQuery({
+    queryKey: keys.strategies,
+    queryFn: () => unwrap(api.GET("/api/v1/strategies")),
+    refetchInterval: 5_000,
+  });
+}
+
+/** One strategy's definition. */
+export function useStrategy(id: string) {
+  return useQuery({
+    queryKey: keys.strategy(id),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/strategies/{strategy_id}", { params: { path: { strategy_id: id } } }),
+      ),
+    staleTime: 60_000,
+  });
+}
+
+/** Totals and equity after costs, and the newest 50 runs with their fills. */
+export function useLedger(id: string) {
+  return useQuery({
+    queryKey: keys.ledger(id),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/strategies/{strategy_id}/ledger", {
+          params: { path: { strategy_id: id }, query: { limit: 50 } },
+        }),
+      ),
+    refetchInterval: 30_000,
+  });
+}
+
+/** A signal strategy's alerts, newest first. */
+export function useSignals(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.signals(id),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/strategies/{strategy_id}/signals", {
+          params: { path: { strategy_id: id }, query: { limit: 100 } },
+        }),
+      ),
+    enabled,
+    refetchInterval: 5_000,
+  });
+}
+
+/** Its review jobs, newest first; one may be running. */
+export function useReviews(id: string) {
+  return useQuery({
+    queryKey: keys.reviews(id),
+    queryFn: () =>
+      unwrap(api.GET("/api/v1/agent-jobs", { params: { query: { strategy_id: id, limit: 50 } } })),
+    refetchInterval: 10_000,
+  });
+}
+
+/** After a strategy command: refetch the strategies at once and again when the daemon has acted. */
+function useRefreshStrategies() {
+  const client = useQueryClient();
+  const refreshAccount = useRefreshAccount();
+  return () => {
+    const again = () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.strategies }),
+        client.invalidateQueries({ queryKey: ["strategy"] }),
+        client.invalidateQueries({ queryKey: ["ledger"] }),
+        client.invalidateQueries({ queryKey: ["signals"] }),
+        client.invalidateQueries({ queryKey: ["reviews"] }),
+      ]);
+    setTimeout(() => {
+      again();
+      refreshAccount();
+    }, 1_500);
+    return again();
+  };
+}
+
+const path = (id: string) => ({ params: { path: { strategy_id: id } } });
+
 /** Asks a strategy's runner to close legs; it does within about a second. */
 export function useCloseStrategyLegs() {
-  const refresh = useRefreshAccount();
+  const refresh = useRefreshStrategies();
   return useMutation({
     mutationFn: async ({ strategyId, legIds }: { strategyId: string; legIds: string[] }) => {
       const commands = [];
@@ -286,19 +374,131 @@ export function useCloseStrategyLegs() {
       }
       return commands;
     },
-    onSettled: () => setTimeout(refresh, 1_500),
+    onSettled: refresh,
   });
 }
 
 export function useStopStrategy() {
-  const refresh = useRefreshAccount();
+  const refresh = useRefreshStrategies();
   return useMutation({
     mutationFn: (strategyId: string) =>
+      unwrap(api.POST("/api/v1/strategies/{strategy_id}/stop", path(strategyId))),
+    onSettled: refresh,
+  });
+}
+
+export function useStartStrategy() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: ({ strategyId, broker }: { strategyId: string; broker: string }) =>
       unwrap(
-        api.POST("/api/v1/strategies/{strategy_id}/stop", {
-          params: { path: { strategy_id: strategyId } },
+        api.POST("/api/v1/strategies/{strategy_id}/start", {
+          ...path(strategyId),
+          body: { broker },
         }),
       ),
-    onSettled: () => setTimeout(refresh, 1_500),
+    onSettled: refresh,
+  });
+}
+
+export function useKillStrategy() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: (strategyId: string) =>
+      unwrap(api.POST("/api/v1/strategies/{strategy_id}/kill", path(strategyId))),
+    onSettled: refresh,
+  });
+}
+
+export function useReleaseStrategy() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: (strategyId: string) =>
+      unwrap(api.POST("/api/v1/strategies/{strategy_id}/release", path(strategyId))),
+    onSettled: refresh,
+  });
+}
+
+/** Scheduled entries on (through `broker`) or off. */
+export function useScheduleStrategy() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: ({ strategyId, broker }: { strategyId: string; broker: string | null }) =>
+      broker === null
+        ? unwrap(api.DELETE("/api/v1/strategies/{strategy_id}/schedule", path(strategyId)))
+        : unwrap(
+            api.POST("/api/v1/strategies/{strategy_id}/schedule", {
+              ...path(strategyId),
+              body: { broker },
+            }),
+          ),
+    onSettled: refresh,
+  });
+}
+
+export function useStartReview() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: (strategyId: string) =>
+      unwrap(api.POST("/api/v1/strategies/{strategy_id}/review", path(strategyId))),
+    onSettled: refresh,
+  });
+}
+
+/** A review schedule, or null to review only when asked. */
+export function useReviewSchedule() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: ({
+      strategyId,
+      schedule,
+    }: {
+      strategyId: string;
+      schedule: Schemas["ReviewScheduleDefinition"] | null;
+    }) =>
+      schedule === null
+        ? unwrap(api.DELETE("/api/v1/strategies/{strategy_id}/review-schedule", path(strategyId)))
+        : unwrap(
+            api.POST("/api/v1/strategies/{strategy_id}/review-schedule", {
+              ...path(strategyId),
+              body: schedule,
+            }),
+          ),
+    onSettled: refresh,
+  });
+}
+
+/**
+ * A new alert URL; the old one stops working. Its token is in this answer
+ * only. Keeps the addresses the old one allowed.
+ */
+export function useRotateAlertUrl() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: ({
+      strategyId,
+      broker,
+      allowedIps,
+    }: {
+      strategyId: string;
+      broker: string;
+      allowedIps: string[];
+    }) =>
+      unwrap(
+        api.POST("/api/v1/strategies/{strategy_id}/webhook", {
+          ...path(strategyId),
+          body: { broker, allowed_ips: allowedIps },
+        }),
+      ),
+    onSettled: refresh,
+  });
+}
+
+export function useDisableAlertUrl() {
+  const refresh = useRefreshStrategies();
+  return useMutation({
+    mutationFn: (strategyId: string) =>
+      unwrap(api.DELETE("/api/v1/strategies/{strategy_id}/webhook", path(strategyId))),
+    onSettled: refresh,
   });
 }
