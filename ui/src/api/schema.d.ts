@@ -207,7 +207,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Orderbook */
+        /**
+         * Orderbook
+         * @description Most recent first; `today_only`: placed on today's exchange-local date.
+         */
         get: operations["orderbook_api_v1_orders_get"];
         put?: never;
         /**
@@ -279,6 +282,27 @@ export interface paths {
          *     included. Nothing is placed.
          */
         post: operations["margin_api_v1_margin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/margin/paper": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Paper Margin
+         * @description What the paper account would block for this order, net of the
+         *     position held, and the cash it has free. Nothing is placed.
+         */
+        get: operations["paper_margin_api_v1_margin_paper_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2155,12 +2179,31 @@ export interface components {
             /** Reason */
             reason: string | null;
             /**
+             * Triggered
+             * @description An SL order whose trigger has been crossed: it now rests as a limit order.
+             */
+            triggered: boolean;
+            /**
              * Triggered By
              * @description Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, script:<id>, schedule, or the server itself (square-off, expiry-settlement).
              */
             triggered_by: string;
             /** @description triggered_by read as who did it, as the web app labels it. */
             source: components["schemas"]["Source"];
+            /**
+             * Placed By
+             * @description The name of the strategy or hosted script that placed it; None for anyone else, or when it has since been deleted.
+             */
+            placed_by?: string | null;
+            /** Strategy Id */
+            strategy_id: string | null;
+            instrument_type: components["schemas"]["InstrumentType"];
+            /** Expiry */
+            expiry: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Lot Size */
+            lot_size: number;
         };
         /** OrderbookResult */
         OrderbookResult: {
@@ -2169,6 +2212,29 @@ export interface components {
              * @description Most recent first.
              */
             orders: components["schemas"]["OrderbookEntryResult"][];
+        };
+        /** PaperMarginResult */
+        PaperMarginResult: {
+            /**
+             * Required
+             * @description What the paper account would block for the part of the order that opens or adds to a position. 0 when it only closes.
+             */
+            required: number;
+            /**
+             * Released
+             * @description What the part that closes a position would free.
+             */
+            released: number;
+            /**
+             * Available
+             * @description Cash free in the paper account now.
+             */
+            available: number;
+            /**
+             * Fits
+             * @description The funds cover it; a fill at this price wouldn't be refused for margin.
+             */
+            fits: boolean;
         };
         /** PlaceOrderBody */
         PlaceOrderBody: {
@@ -3889,6 +3955,7 @@ export interface operations {
                 /** @description Broker name, e.g. zerodha. */
                 broker: string;
                 limit?: number;
+                today_only?: boolean;
             };
             header?: never;
             path?: never;
@@ -4038,6 +4105,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MarginResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paper_margin_api_v1_margin_paper_get: {
+        parameters: {
+            query: {
+                /** @description Broker name, e.g. zerodha. */
+                broker: string;
+                /** @description Standardized symbol, e.g. RELIANCE, NIFTY 50. */
+                symbol: string;
+                exchange: components["schemas"]["Exchange"];
+                side: components["schemas"]["Side"];
+                quantity: number;
+                product: components["schemas"]["Product"];
+                price: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperMarginResult"];
                 };
             };
             /** @description Validation Error */

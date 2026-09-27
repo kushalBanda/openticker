@@ -1,5 +1,5 @@
 import NumberFlow from "@number-flow/react";
-import { CircleUser, SunMoon } from "lucide-react";
+import { CircleUser, Search, SunMoon } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { useEffect, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { useTheme } from "../lib/theme";
 import type { FeedStatus, InstrumentKey, StreamState } from "../stream/connection";
 import { usePrice } from "../stream/prices";
 import { useLive } from "../stream/StreamProvider";
+import { useActions } from "./actions";
 import { useBarTitle } from "./title";
 
 const INDICES: { key: InstrumentKey; name: string }[] = [
@@ -96,6 +97,19 @@ function PriceSource() {
       <span className="dot" data-tone={source.tone} />
       <span className={source.warn ? "text-warn" : undefined}>{source.text}</span>
     </span>
+  );
+}
+
+const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+function SearchPill() {
+  const { search } = useActions();
+  return (
+    <button type="button" className="search-pill" onClick={search} aria-keyshortcuts="Meta+K">
+      <Search aria-hidden />
+      Search
+      <span className="kbd">{MAC ? "⌘K" : "Ctrl K"}</span>
+    </button>
   );
 }
 
@@ -207,6 +221,7 @@ export function StatusBar() {
         {bar.title}
       </span>
       <PriceSource />
+      <SearchPill />
       <ThemeToggle />
       <Account />
     </header>

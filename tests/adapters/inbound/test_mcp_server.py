@@ -892,6 +892,55 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
         mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
 
 
+def test_orderbook_says_who_placed_each_and_can_keep_to_today(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mcp_server.sync_instruments(broker="fake")
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=3,
+        product=Product.MIS,
+    )
+
+    [order] = mcp_server.get_orderbook(broker="fake", today_only=True).orders
+    monkeypatch.setattr(mcp_server, "clock", lambda: TRADING_TIME + timedelta(days=1))
+    tomorrow = mcp_server.get_orderbook(broker="fake", today_only=True).orders
+    everything = mcp_server.get_orderbook(broker="fake").orders
+
+    assert (order.order_id, order.source, order.placed_by) == (placed.order_id, "agent", None)
+    assert (order.instrument_type, order.lot_size, order.triggered) == ("EQ", 1, False)
+    assert tomorrow == [] and len(everything) == 1
+
+
+def test_preview_paper_margin_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    margin = mcp_server.preview_paper_margin(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=10,
+        product=Product.CNC,
+        price=2500.0,
+    )
+
+    assert (margin.required, margin.released, margin.fits) == (25_000.0, 0.0, True)
+    with pytest.raises(ToolError, match="NOPE"):
+        mcp_server.preview_paper_margin(
+            broker="fake",
+            symbol="NOPE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=1,
+            product=Product.CNC,
+            price=1.0,
+        )
+
+
 def test_check_charge_rates_through_the_tool() -> None:
     mcp_server.sync_instruments(broker="fake")  # RELIANCE on NSE only
 

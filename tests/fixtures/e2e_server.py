@@ -10,7 +10,9 @@ Writes 40 sign-in links, one per line, to `--links` once it is serving.
 
 The paper account starts with the positions of the Positions mock: a NIFTY
 straddle and part of a NIFTY future held by two running strategies, the rest
-of the future and RELIANCE placed from the web app, HDFCBANK by Claude.
+of the future and RELIANCE placed from the web app, HDFCBANK by Claude. Its
+order book is the Orders mock's: a resting HDFCBANK limit, a hosted script's
+RELIANCE stop, Codex's refused NIFTY future and a cancelled RELIANCE limit.
 """
 
 import argparse
@@ -34,7 +36,7 @@ from openticker.adapters.inbound.web.app import DIST
 from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.composition import build_event_bus, order_broker
-from openticker.core.orders.models import OrderRequest, OrderStatus, OrderType
+from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
 from openticker.ports.models import (
     Credentials,
@@ -47,10 +49,11 @@ from openticker.ports.models import (
     Tick,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import runs_repo
+from openticker.storage.sqlite import runs_repo, scripts_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
+from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.watched_instruments import watched_instruments
@@ -205,11 +208,46 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
         with write_transaction() as session:
             runs_repo.insert_run(session, started)
 
+    def place(
+        instrument: Instrument,
+        side: Side,
+        quantity: int,
+        product: Product,
+        order_type: OrderType,
+        who: str,
+        price: float | None = None,
+        trigger: float | None = None,
+    ) -> OrderResult:
+        request = OrderRequest(
+            instrument, side, quantity, product, order_type, price, who, trigger_price=trigger
+        )
+        return place_order(request, sandbox, events, None, load_calendar(), clock())
+
     run("NIFTY short straddle", Product.MIS, [(CE, Side.SELL, 75), (PE, Side.SELL, 75)])
     run("NIFTY futures trend", Product.NRML, [(FUT, Side.BUY, 75)])
     fill(FUT, Side.BUY, 75, Product.NRML, "ui")
     fill(FAKE_INSTRUMENT, Side.BUY, 10, Product.MIS, "ui")
     fill(HDFCBANK, Side.SELL, 20, Product.MIS, "mcp:claude-code")
+
+    # The Orders mock's book: a resting limit, a script's stop, a refusal, a cancel.
+    with write_transaction() as session:
+        trail = scripts_repo.insert_script(session, "rel_trail.py", "0" * 64, 1, clock())
+    place(HDFCBANK, Side.BUY, 25, Product.CNC, OrderType.LIMIT, "ui", price=1640.0)
+    stop = place(
+        FAKE_INSTRUMENT,
+        Side.SELL,
+        10,
+        Product.MIS,
+        OrderType.SL_M,
+        f"script:{trail.id}",
+        trigger=2915.0,
+    )
+    refused = place(FUT, Side.BUY, 7500, Product.NRML, OrderType.MARKET, "mcp:codex")
+    dropped = place(FAKE_INSTRUMENT, Side.BUY, 5, Product.CNC, OrderType.LIMIT, "ui", price=2800.0)
+    assert stop.status is OrderStatus.PENDING, stop.reason
+    assert refused.status is OrderStatus.REJECTED
+    assert dropped.broker_order_id is not None
+    cancel_order(dropped.broker_order_id, sandbox, events, "ui")
     events.close()
 
 

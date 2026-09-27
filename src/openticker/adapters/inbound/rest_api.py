@@ -57,6 +57,7 @@ from openticker.adapters.inbound.mcp_models import (
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
+    PaperMarginResult,
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
@@ -153,8 +154,10 @@ from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
+from openticker.use_cases.placers import placer_names
 from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
+from openticker.use_cases.preview_paper_margin import preview_paper_margin
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -572,6 +575,24 @@ def create_app(
             get_margin(get_adapter(body.broker), [o.to_order() for o in body.orders], clock())
         )
 
+    @api.get("/margin/paper")
+    def paper_margin(
+        broker: Broker,
+        symbol: Symbol,
+        exchange: ExchangeQuery,
+        side: Side,
+        quantity: Annotated[int, Query(gt=0)],
+        product: Product,
+        price: Annotated[float, Query(gt=0)],
+    ) -> PaperMarginResult:
+        """What the paper account would block for this order, net of the
+        position held, and the cash it has free. Nothing is placed."""
+        return PaperMarginResult.of(
+            preview_paper_margin(
+                order_broker(broker, env, clock), symbol, exchange, side, quantity, product, price
+            )
+        )
+
     @api.post("/orders/basket")
     def create_basket(body: BasketBody, caller: Caller) -> BasketResult:
         """Up to 50 sandbox orders as one set, every BUY before any SELL. Not
@@ -662,9 +683,12 @@ def create_app(
 
     @api.get("/orders")
     def orderbook(
-        broker: Broker, limit: Annotated[int, Query(ge=1, le=200)] = 20
+        broker: Broker, limit: Annotated[int, Query(ge=1, le=200)] = 20, today_only: bool = False
     ) -> OrderbookResult:
-        return OrderbookResult.of(get_orderbook(order_broker(broker, env, clock), limit))
+        """Most recent first; `today_only`: placed on today's exchange-local date."""
+        since = session_start(clock()) if today_only else None
+        orders = get_orderbook(order_broker(broker, env, clock), limit, since)
+        return OrderbookResult.of(orders, placer_names(o.triggered_by for o in orders))
 
     @api.get("/orders/{order_id}")
     def order_status(order_id: str, broker: Broker) -> OrderbookEntryResult:

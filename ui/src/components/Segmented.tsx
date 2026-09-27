@@ -14,16 +14,19 @@ export function Segmented<V extends string>({
   value,
   onChange,
   label,
+  side,
 }: {
   segments: Segment<V>[];
   value: V;
   onChange: (value: V) => void;
   label: string;
+  /** BUY or SELL: the thumb takes the side's colour (DESIGN.md). */
+  side?: "BUY" | "SELL";
 }) {
   const id = useId();
   return (
     <LayoutGroup id={id}>
-      <fieldset className="segmented" aria-label={label}>
+      <fieldset className="segmented" aria-label={label} data-side={side}>
         {segments.map((segment) => (
           <button
             key={segment.value}

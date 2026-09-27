@@ -341,6 +341,27 @@ def test_margin_route_matches_the_tool(client: TestClient) -> None:
     assert client.get("/api/v1/orders", params={"broker": "fake"}).json()["orders"] == []
 
 
+def test_paper_margin_route_matches_the_tool(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order: dict[str, str | int] = {
+        "broker": "fake",
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "quantity": 10,
+    }
+
+    margin = client.get(
+        "/api/v1/margin/paper", params={**order, "side": "BUY", "product": "CNC", "price": 2500}
+    )
+
+    assert margin.status_code == 200
+    assert {k: margin.json()[k] for k in ("required", "released", "fits")} == {
+        "required": 25_000.0,
+        "released": 0.0,
+        "fits": True,
+    }
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -526,6 +547,7 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/market-status"),
     ("POST", "/api/v1/risk/evaluate"),
     ("POST", "/api/v1/margin"),
+    ("GET", "/api/v1/margin/paper"),
     ("POST", "/api/v1/orders"),
     ("POST", "/api/v1/orders/basket"),
     ("GET", "/api/v1/orders"),

@@ -3,6 +3,7 @@ import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 import { useSession } from "./api/queries";
 import { Building } from "./pages/Building";
 import { NotFound } from "./pages/NotFound";
+import { Orders } from "./pages/orders/Orders";
 import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
 import { AppShell } from "./shell/AppShell";
@@ -19,6 +20,7 @@ function Gate() {
 // Pages built so far; the rest say so (ADR 30).
 const BUILT: Record<string, ReactNode> = {
   "/positions": <Positions />,
+  "/orders": <Orders />,
 };
 
 const router = createBrowserRouter([

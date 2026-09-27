@@ -9,6 +9,10 @@ export const keys = {
   quote: (broker: string, exchange: string, symbol: string) =>
     ["quote", broker, exchange, symbol] as const,
   charges: (params: ChargesParams) => ["charges", params] as const,
+  orders: (broker: string) => ["orders", broker] as const,
+  margin: (params: MarginParams) => ["margin", params] as const,
+  search: (query: string) => ["search", query] as const,
+  listings: (symbol: string) => ["listings", symbol] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -108,14 +112,123 @@ export function useChargesPreview(params: ChargesParams | null) {
   });
 }
 
-/** After anything that moves positions: refetch them and the funds. */
+export interface MarginParams {
+  broker: string;
+  symbol: string;
+  exchange: Exchange;
+  side: "BUY" | "SELL";
+  quantity: number;
+  product: Schemas["Product"];
+  price: number;
+}
+
+/** What the paper account would block for an order, by the sandbox's own rule. */
+export function usePaperMargin(params: MarginParams | null) {
+  return useQuery({
+    queryKey: keys.margin(params ?? ({} as MarginParams)),
+    queryFn: () =>
+      unwrap(api.GET("/api/v1/margin/paper", { params: { query: params as MarginParams } })),
+    enabled: params !== null && params.quantity > 0 && params.price > 0,
+    staleTime: 5_000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+export type Instrument = Schemas["InstrumentResult"];
+
+/** Instruments whose symbol starts with `query`, from the local master. */
+export function useInstrumentSearch(query: string) {
+  const wanted = query.trim().toUpperCase();
+  return useQuery({
+    queryKey: keys.search(wanted),
+    queryFn: () =>
+      unwrap(api.GET("/api/v1/instruments", { params: { query: { query: wanted, limit: 8 } } })),
+    enabled: wanted.length > 0,
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** Every listing of one symbol: RELIANCE on NSE and BSE; a contract on its one exchange. */
+export function useListings(symbol: string) {
+  return useQuery({
+    queryKey: keys.listings(symbol),
+    queryFn: async () => {
+      const found = await unwrap(
+        api.GET("/api/v1/instruments", { params: { query: { query: symbol, limit: 10 } } }),
+      );
+      return found.instruments.filter((instrument) => instrument.symbol === symbol);
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Today's orders, newest first. Resting ones fill in the server: refetched every 5 s. */
+export function useOrders(broker: string | undefined) {
+  return useQuery({
+    queryKey: keys.orders(broker ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/orders", {
+          params: { query: { broker: broker ?? "", limit: 200, today_only: true } },
+        }),
+      ),
+    enabled: broker !== undefined,
+    refetchInterval: 5_000,
+  });
+}
+
+/** After anything that moves positions or orders: refetch them and the funds. */
 function useRefreshAccount() {
   const client = useQueryClient();
   return () =>
     Promise.all([
       client.invalidateQueries({ queryKey: ["positions"] }),
       client.invalidateQueries({ queryKey: ["funds"] }),
+      client.invalidateQueries({ queryKey: ["orders"] }),
+      client.invalidateQueries({ queryKey: ["margin"] }),
     ]);
+}
+
+export function usePlaceOrder() {
+  const refresh = useRefreshAccount();
+  return useMutation({
+    mutationFn: (body: Schemas["PlaceOrderBody"]) => unwrap(api.POST("/api/v1/orders", { body })),
+    onSettled: refresh,
+  });
+}
+
+export function useModifyOrder() {
+  const refresh = useRefreshAccount();
+  return useMutation({
+    mutationFn: ({ orderId, ...body }: Schemas["ModifyOrderBody"] & { orderId: string }) =>
+      unwrap(
+        api.PATCH("/api/v1/orders/{order_id}", { params: { path: { order_id: orderId } }, body }),
+      ),
+    onSettled: refresh,
+  });
+}
+
+export function useCancelOrder() {
+  const refresh = useRefreshAccount();
+  return useMutation({
+    mutationFn: ({ orderId, broker }: { orderId: string; broker: string }) =>
+      unwrap(
+        api.DELETE("/api/v1/orders/{order_id}", {
+          params: { path: { order_id: orderId }, query: { broker } },
+        }),
+      ),
+    onSettled: refresh,
+  });
+}
+
+export function useCancelAll() {
+  const refresh = useRefreshAccount();
+  return useMutation({
+    mutationFn: (broker: string) =>
+      unwrap(api.POST("/api/v1/orders/cancel-all", { body: { broker } })),
+    onSettled: refresh,
+  });
 }
 
 export function useClosePosition() {

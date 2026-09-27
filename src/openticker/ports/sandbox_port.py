@@ -6,8 +6,9 @@ from datetime import datetime
 from typing import Protocol
 
 from openticker.core.orders.models import Order, OrderResult
+from openticker.core.orders.sandbox import PaperMargin
 from openticker.ports.broker_port import BrokerPort
-from openticker.ports.models import Instrument, Position, Product, Quote
+from openticker.ports.models import Instrument, Position, Product, Quote, Side
 
 
 class SandboxPort(Protocol):
@@ -57,6 +58,13 @@ class SandboxPort(Protocol):
     ) -> OrderResult:
         """Closes a position in an expired contract at `price`, bypassing the
         checks a tradeable order goes through."""
+        ...
+
+    def preview_margin(
+        self, instrument: Instrument, side: Side, quantity: int, product: Product, price: float
+    ) -> PaperMargin:
+        """What filling this order at `price` would block and free, against
+        the position held. Reads only."""
         ...
 
 

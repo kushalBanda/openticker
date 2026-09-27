@@ -22,6 +22,7 @@ from openticker.core.orders.models import (
     OrderType,
     Trade,
 )
+from openticker.core.orders.sandbox import PaperMargin
 from openticker.core.pnl import Source, source_of
 from openticker.core.risk.models import (
     BreachReason,
@@ -592,6 +593,27 @@ class MarginResult(BaseModel):
         )
 
 
+class PaperMarginResult(BaseModel):
+    required: float = Field(
+        description="What the paper account would block for the part of the order that opens "
+        "or adds to a position. 0 when it only closes."
+    )
+    released: float = Field(description="What the part that closes a position would free.")
+    available: float = Field(description="Cash free in the paper account now.")
+    fits: bool = Field(
+        description="The funds cover it; a fill at this price wouldn't be refused for margin."
+    )
+
+    @classmethod
+    def of(cls, margin: PaperMargin) -> "PaperMarginResult":
+        return cls(
+            required=margin.required,
+            released=margin.released,
+            available=margin.available,
+            fits=margin.fits,
+        )
+
+
 class ChargesResult(BaseModel):
     segment: str = Field(description="equity_delivery, equity_intraday, futures or options.")
     exchange: Exchange
@@ -876,16 +898,31 @@ class OrderbookEntryResult(BaseModel):
     )
     fill_price: float | None
     reason: str | None
+    triggered: bool = Field(
+        description="An SL order whose trigger has been crossed: it now rests as a limit order."
+    )
     triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
     source: Source = Field(description=SOURCE_DESCRIPTION)
+    placed_by: str | None = Field(
+        default=None,
+        description="The name of the strategy or hosted script that placed it; None for "
+        "anyone else, or when it has since been deleted.",
+    )
+    strategy_id: str | None
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
 
     @classmethod
-    def of(cls, order: Order) -> "OrderbookEntryResult":
+    def of(cls, order: Order, names: Mapping[str, str] | None = None) -> "OrderbookEntryResult":
+        """`names`: placer_names for the strategies and scripts among the orders."""
+        instrument = order.instrument
         return cls(
             order_id=order.order_id,
             placed_at=order.placed_at.astimezone(EXCHANGE_TIMEZONE),
-            symbol=order.instrument.symbol,
-            exchange=order.instrument.exchange,
+            symbol=instrument.symbol,
+            exchange=instrument.exchange,
             side=order.side,
             quantity=order.quantity,
             product=order.product,
@@ -895,8 +932,15 @@ class OrderbookEntryResult(BaseModel):
             status=order.status,
             fill_price=order.fill_price,
             reason=order.reason,
+            triggered=order.triggered,
             triggered_by=order.triggered_by,
             source=source_of(order.triggered_by),
+            placed_by=(names or {}).get(order.triggered_by),
+            strategy_id=order.strategy_id,
+            instrument_type=instrument.instrument_type,
+            expiry=instrument.expiry,
+            strike=instrument.strike,
+            lot_size=instrument.lot_size,
         )
 
 
@@ -931,8 +975,10 @@ class OrderbookResult(BaseModel):
     orders: list[OrderbookEntryResult] = Field(description="Most recent first.")
 
     @classmethod
-    def of(cls, orders: Sequence[Order]) -> "OrderbookResult":
-        return cls(orders=[OrderbookEntryResult.of(order) for order in orders])
+    def of(
+        cls, orders: Sequence[Order], names: Mapping[str, str] | None = None
+    ) -> "OrderbookResult":
+        return cls(orders=[OrderbookEntryResult.of(order, names) for order in orders])
 
 
 class TradeResult(BaseModel):

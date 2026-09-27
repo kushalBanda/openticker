@@ -10,7 +10,9 @@ import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
 import { direction, MISSING, price, qty, rupees, signed, sourceLabel } from "../../lib/format";
 import { duration, ease } from "../../lib/motion";
+import type { OrderDraft } from "../../lib/orders";
 import { livePrice, markToMarket, total } from "../../lib/pnl";
+import { useActions } from "../../shell/actions";
 import type { InstrumentKey, Tick } from "../../stream/connection";
 import { useIsStale, usePrices } from "../../stream/prices";
 import { useLive } from "../../stream/StreamProvider";
@@ -80,6 +82,18 @@ function Ltp({ row, watching }: { row: Row; watching: boolean }) {
   );
 }
 
+/** One more lot the same way, at the last price (Kite's Add). */
+function addTo(position: Position): OrderDraft {
+  return {
+    symbol: position.symbol,
+    exchange: position.exchange,
+    side: position.quantity > 0 ? "BUY" : "SELL",
+    quantity: position.lot_size,
+    product: position.product,
+    orderType: "LIMIT",
+  };
+}
+
 function HeldBy({ position }: { position: Position }) {
   if (position.held_by.length === 0) return <span className="missing">{MISSING}</span>;
   const strategies = position.held_by.filter((holder) => holder.strategy_id !== null);
@@ -147,6 +161,7 @@ export function Positions() {
   const withClosed = usePositions(view === "closed" ? broker : undefined, true);
   const funds = useFunds(broker);
   const closeAll = useCloseAll();
+  const { order } = useActions();
   const source = view === "open" ? open : withClosed;
 
   const listed = useMemo(
@@ -419,15 +434,26 @@ export function Positions() {
             actions={
               view === "open"
                 ? (row) => (
-                    <button
-                      type="button"
-                      className="btn"
-                      data-variant="ghost"
-                      data-size="sm"
-                      onClick={() => setClosing(rowKey(row))}
-                    >
-                      Close
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="btn"
+                        data-variant="ghost"
+                        data-size="sm"
+                        onClick={() => order(addTo(row.position))}
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        data-variant="ghost"
+                        data-size="sm"
+                        onClick={() => setClosing(rowKey(row))}
+                      >
+                        Close
+                      </button>
+                    </>
                   )
                 : undefined
             }

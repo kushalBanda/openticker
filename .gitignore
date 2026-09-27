@@ -34,7 +34,6 @@ secret.key
 # Local tooling
 .codegraph/
 .agents/
-site/
 .mcp.json
 skills-lock.json
 .claude/skills/

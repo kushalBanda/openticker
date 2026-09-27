@@ -39,8 +39,10 @@ from openticker.core.orders.models import (
 from openticker.core.orders.modify import ChangeRefused, apply_changes
 from openticker.core.orders.sandbox import (
     Leverage,
+    PaperMargin,
     apply_fill,
     leverage_for,
+    paper_margin,
     quote_is_fillable,
 )
 from openticker.ports.broker_port import BrokerPort
@@ -445,6 +447,16 @@ class SandboxBroker:
             realized_pnl=funds.realized_pnl,
             charges=funds.charges,
         )
+
+    def preview_margin(
+        self, instrument: Instrument, side: Side, quantity: int, product: Product, price: float
+    ) -> PaperMargin:
+        """What a fill of this order at `price` would block and free, against
+        the position held: the sandbox's own rule, not the broker's (get_margin)."""
+        held = sandbox_repo.read_position(instrument.exchange.value, instrument.symbol, product)
+        funds = sandbox_repo.read_funds(self._settings.starting_capital)
+        leverage = leverage_for(instrument, product, side, self._settings.leverage)
+        return paper_margin(held, side, quantity, price, leverage, funds.available_cash)
 
     def get_orderbook(self, limit: int) -> list[Order]:
         return [

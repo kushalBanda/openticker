@@ -13,11 +13,13 @@ export function HoldButton({
   onConfirm,
   durationMs = 1200,
   disabled,
+  size,
 }: {
   label: string;
   onConfirm: () => Promise<void>;
   durationMs?: number;
   disabled?: boolean;
+  size?: "sm";
 }) {
   const progress = useMotionValue(0);
   const running = useRef<AnimationPlaybackControls | null>(null);
@@ -49,6 +51,7 @@ export function HoldButton({
     <button
       type="button"
       className="btn hold"
+      data-size={size}
       disabled={disabled || busy}
       aria-label={`${label} (press and hold)`}
       onPointerDown={start}

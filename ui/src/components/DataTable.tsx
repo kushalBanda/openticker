@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 export interface Column<T> {
   key: string;
@@ -13,15 +13,18 @@ export interface Column<T> {
 
 /**
  * A table inside a flush tile (DESIGN.md Tables). Row actions take no
- * column: they show in a glass pill at the end of the first cell on hover,
- * focus or selection, as Kite puts B / S beside the instrument, so they never
- * cover a number.
+ * column: they show in a glass pill at the end of the instrument cell (the
+ * first, or `actionsAt`) on hover, focus or selection, as Kite puts B / S
+ * beside the instrument, so they never cover a number. `detail` adds a
+ * full-width line under a row: a rejection's reason.
  */
 export function DataTable<T>({
   columns,
   rows,
   rowKey,
   actions,
+  actionsAt,
+  detail,
   selected,
   onSelect,
   dense,
@@ -32,6 +35,9 @@ export function DataTable<T>({
   rows: T[];
   rowKey: (row: T) => string;
   actions?: (row: T) => ReactNode;
+  /** The column whose cell holds the actions pill; the first by default. */
+  actionsAt?: string;
+  detail?: (row: T) => ReactNode;
   selected?: string;
   onSelect?: (key: string) => void;
   dense?: boolean;
@@ -53,25 +59,36 @@ export function DataTable<T>({
       <tbody>
         {rows.map((row) => {
           const key = rowKey(row);
+          const more = detail?.(row);
+          const pillAt = actionsAt ?? columns[0]?.key;
           return (
-            <tr
-              key={key}
-              aria-selected={selected === undefined ? undefined : selected === key}
-              onClick={onSelect ? () => onSelect(key) : undefined}
-            >
-              {columns.map((column, i) => (
-                <td
-                  key={column.key}
-                  data-align={column.align ?? "right"}
-                  data-wrap={column.wrap}
-                  className={i === 0 && actions ? "has-actions" : undefined}
-                >
-                  {column.cell(row)}
-                  {column.sub && <div className="sub">{column.sub(row)}</div>}
-                  {i === 0 && actions && <div className="row-actions">{actions(row)}</div>}
-                </td>
-              ))}
-            </tr>
+            <Fragment key={key}>
+              <tr
+                aria-selected={selected === undefined ? undefined : selected === key}
+                onClick={onSelect ? () => onSelect(key) : undefined}
+              >
+                {columns.map((column) => {
+                  const pill = actions && column.key === pillAt;
+                  return (
+                    <td
+                      key={column.key}
+                      data-align={column.align ?? "right"}
+                      data-wrap={column.wrap}
+                      className={pill ? "has-actions" : undefined}
+                    >
+                      {column.cell(row)}
+                      {column.sub && <div className="sub">{column.sub(row)}</div>}
+                      {pill && <div className="row-actions">{actions(row)}</div>}
+                    </td>
+                  );
+                })}
+              </tr>
+              {more && (
+                <tr className="detail">
+                  <td colSpan={columns.length}>{more}</td>
+                </tr>
+              )}
+            </Fragment>
           );
         })}
         {total}

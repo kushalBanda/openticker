@@ -310,6 +310,14 @@
     background: var(--warn-soft);
     color: var(--warn);
   }
+  .badge[data-tone="up"] {
+    background: var(--up-soft);
+    color: var(--up);
+  }
+  .badge[data-tone="down"] {
+    background: var(--down-soft);
+    color: var(--down);
+  }
 
   /* pills */
   .btn {
@@ -533,7 +541,7 @@
   }
   .table td.has-actions {
     position: relative;
-    padding-right: 84px; /* room for the pill beside the name, never over it */
+    padding-right: 140px; /* room for the pill beside the name, never over it */
   }
   .row-actions {
     position: absolute;
@@ -660,6 +668,38 @@
       var(--shadow-pop),
       inset 0 0 0 1px var(--glass-edge);
   }
+  .dialog[data-flush="true"] {
+    gap: 0;
+    padding: 0;
+  }
+  .dialog[data-flush="true"] .dialog-head {
+    padding: 18px 24px;
+  }
+  .dialog-head[data-tone="up"] {
+    background: var(--up-soft);
+  }
+  .dialog-head[data-tone="down"] {
+    background: var(--down-soft);
+  }
+  .dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 20px 24px;
+  }
+  .dialog-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 20px 16px 24px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    line-height: 18px;
+    white-space: nowrap;
+  }
+  .dialog-foot .btn {
+    padding: 0 16px;
+  }
   .dialog h2 {
     margin: 0;
     font: 600 21px / 26px var(--font-display);
@@ -780,6 +820,247 @@
     font-size: 12px;
     line-height: 16px;
   }
+
+  /* inputs (DESIGN.md Inputs) */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .input {
+    height: 40px;
+    width: 100%;
+    padding: 0 12px;
+    border: 1px solid var(--ink-muted);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    color: var(--ink);
+    font: 400 14px / 1 var(--font-text);
+    font-variant-numeric: tabular-nums;
+    outline: none;
+  }
+  .input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  .input::-webkit-inner-spin-button,
+  .input::-webkit-outer-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+  }
+  .input:focus {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+  }
+  .input:disabled {
+    opacity: 0.45;
+  }
+  .input[aria-invalid="true"] {
+    border-color: var(--down);
+  }
+  .field-error {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--down);
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .radios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 13px;
+  }
+  .radios label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .radios input {
+    margin: 0;
+    accent-color: var(--action);
+  }
+  .segmented[data-side] button[aria-pressed="true"] {
+    color: var(--on-up);
+  }
+  .segmented[data-side="SELL"] button[aria-pressed="true"] {
+    color: var(--on-down);
+  }
+  .segmented[data-side="BUY"] .thumb {
+    background: var(--up);
+  }
+  .segmented[data-side="SELL"] .thumb {
+    background: var(--down);
+  }
+
+  /* the command palette (cmdk) */
+  .palette-scrim {
+    align-items: flex-start;
+    padding-top: 120px;
+  }
+  /* opaque like a dialog: over the scrim, glass has nothing to blur */
+  .palette {
+    width: 560px;
+    max-width: calc(100vw - 32px);
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+    background: var(--surface-raised);
+    box-shadow:
+      var(--shadow-pop),
+      inset 0 0 0 1px var(--glass-edge);
+    color: var(--ink);
+  }
+  .palette-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 52px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .palette .palette-input svg {
+    width: 18px;
+    height: 18px;
+    color: var(--ink-muted);
+  }
+  .palette-input input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--ink);
+    font: 400 16px / 1 var(--font-text);
+  }
+  .palette [cmdk-list] {
+    max-height: 400px;
+    overflow: auto;
+    padding: 6px;
+  }
+  .palette [cmdk-group-heading] {
+    padding: 8px 10px 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-muted);
+  }
+  .palette [cmdk-item] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    padding: 6px 10px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .palette [cmdk-item] svg {
+    width: 16px;
+    height: 16px;
+    color: var(--ink-muted);
+  }
+  .palette [cmdk-item][data-selected="true"] {
+    background: var(--fill);
+  }
+  .palette [cmdk-empty] {
+    padding: 20px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+  .palette .price {
+    font-variant-numeric: tabular-nums;
+  }
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--radius-xs);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    font: 500 11px / 1 var(--font-text);
+    color: var(--ink-muted);
+  }
+  .search-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 6px 0 10px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--fill);
+    color: var(--ink-muted);
+    font: 400 12px / 1 var(--font-text);
+    cursor: pointer;
+  }
+  .statusbar .search-pill svg {
+    width: 14px;
+    height: 14px;
+  }
+  .search-pill:hover {
+    color: var(--ink);
+  }
+
+  /* results until slice-6 toasts: one glass line, bottom right */
+  .toast {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 420px;
+    padding: 12px 14px 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--glass);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow:
+      var(--shadow-pop),
+      inset 0 0 0 1px var(--glass-edge);
+    font-size: 13px;
+  }
+
+  /* a row's full-width detail: a rejection's reason */
+  .table tr.detail td {
+    height: auto;
+    padding: 8px 24px 10px;
+    border-top: 0;
+    background: var(--down-soft);
+    color: var(--ink);
+    text-align: left;
+    white-space: normal;
+    font-size: 12.5px;
+    line-height: 18px;
+  }
+  .tile-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px 8px;
+  }
+  .tile-head h2 {
+    margin: 0;
+    font: 600 17px / 22px var(--font-text);
+    letter-spacing: -0.015em;
+  }
+  .tile-head .count {
+    color: var(--ink-muted);
+    font-weight: 400;
+  }
+  .tile + .tile {
+    margin-top: 24px;
+  }
 }
 
 .up {
@@ -828,7 +1109,8 @@
 @media (prefers-reduced-transparency: reduce) {
   .statusbar,
   .row-actions,
-  .menu {
+  .menu,
+  .toast {
     background: var(--surface-raised);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;

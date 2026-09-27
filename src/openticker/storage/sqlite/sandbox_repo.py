@@ -265,6 +265,11 @@ def read_funds(starting_capital: float) -> FundsState:
         return load_funds(session, starting_capital)
 
 
+def read_position(exchange: str, symbol: str, product: Product) -> NetPosition:
+    with Session(get_engine()) as session:
+        return load_position(session, exchange, symbol, product)
+
+
 def list_positions() -> list[StoredPosition]:
     with Session(get_engine()) as session:
         rows = session.scalars(

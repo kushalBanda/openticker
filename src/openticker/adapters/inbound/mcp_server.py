@@ -53,6 +53,7 @@ from openticker.adapters.inbound.mcp_models import (
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
+    PaperMarginResult,
     PlaceOrderResult,
     PositionsResult,
     QuoteResult,
@@ -175,9 +176,13 @@ from openticker.use_cases.modify_order import modify_order as modify_order_use_c
 from openticker.use_cases.place_basket import MAX_BASKET
 from openticker.use_cases.place_basket import place_basket as place_basket_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
+from openticker.use_cases.placers import placer_names
 from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError
 from openticker.use_cases.preview_charges import preview_charges as preview_charges_use_case
+from openticker.use_cases.preview_paper_margin import (
+    preview_paper_margin as preview_paper_margin_use_case,
+)
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -760,6 +765,43 @@ def check_charge_rates(broker: Broker) -> ChargeCheckResult:
 
 
 @mcp.tool(
+    title="Preview paper margin",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def preview_paper_margin(
+    broker: Broker,
+    symbol: Symbol,
+    exchange: ExchangeParam,
+    side: SideParam,
+    quantity: Quantity,
+    product: Annotated[
+        Product, Field(description="MIS: intraday. NRML: F&O overnight. CNC: equity delivery.")
+    ],
+    price: Annotated[
+        float, Field(gt=0, description="The price to value it at: the limit, or the bid or ask.")
+    ],
+) -> PaperMarginResult:
+    """What the paper account would block for this order, by the sandbox's own
+    rule, and what it holds free: the figure place_order checks. Net of the
+    position held, so an order that only closes one needs nothing. The
+    broker's own figure for the real account is get_margin. Local; nothing is
+    placed."""
+    with _agent_facing_errors():
+        margin = preview_paper_margin_use_case(
+            order_broker(broker, os.environ, clock),
+            symbol,
+            exchange,
+            side,
+            quantity,
+            product,
+            price,
+        )
+    return PaperMarginResult.of(margin)
+
+
+@mcp.tool(
     title="Get broker margin",
     annotations=ToolAnnotations(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True
@@ -1015,11 +1057,17 @@ def get_orderbook(
     limit: Annotated[int, Field(ge=1, le=200, description="Most orders to return.")] = (
         DEFAULT_ORDERBOOK_LIMIT
     ),
+    today_only: Annotated[
+        bool, Field(description="Only orders placed today (the exchange-local date).")
+    ] = False,
 ) -> OrderbookResult:
-    """Sandbox orders, filled and rejected, most recent first."""
+    """Sandbox orders, filled and rejected, most recent first, each with who
+    placed it (and the strategy's or script's name)."""
+    now = clock()
+    since = session_start(now) if today_only else None
     with _agent_facing_errors():
-        orders = get_orderbook_use_case(order_broker(broker, os.environ, clock), limit)
-    return OrderbookResult.of(orders)
+        orders = get_orderbook_use_case(order_broker(broker, os.environ, clock), limit, since)
+    return OrderbookResult.of(orders, placer_names(o.triggered_by for o in orders))
 
 
 @mcp.tool(
