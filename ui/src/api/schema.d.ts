@@ -495,6 +495,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/watchlists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Watchlists
+         * @description Every watchlist with its instruments, in the order they were made.
+         */
+        get: operations["watchlists_api_v1_watchlists_get"];
+        put?: never;
+        /**
+         * New Watchlist
+         * @description A new, empty list. At most 20.
+         */
+        post: operations["new_watchlist_api_v1_watchlists_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/watchlists/{watchlist_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Watchlist */
+        delete: operations["remove_watchlist_api_v1_watchlists__watchlist_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename */
+        patch: operations["rename_api_v1_watchlists__watchlist_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/watchlists/{watchlist_id}/instruments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Watch
+         * @description Adds to the end of the list; one already on it stays where it is. At most 50.
+         */
+        post: operations["watch_api_v1_watchlists__watchlist_id__instruments_post"];
+        /**
+         * Unwatch
+         * @description Takes instruments off the list; one not on it is ignored.
+         */
+        delete: operations["unwatch_api_v1_watchlists__watchlist_id__instruments_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/positions": {
         parameters: {
             query?: never;
@@ -1925,6 +1991,15 @@ export interface components {
         DeleteStrategyResult: {
             /** Strategy Id */
             strategy_id: string;
+            /** Deleted */
+            deleted: boolean;
+        };
+        /** DeleteWatchlistResult */
+        DeleteWatchlistResult: {
+            /** Watchlist Id */
+            watchlist_id: string;
+            /** Name */
+            name: string;
             /** Deleted */
             deleted: boolean;
         };
@@ -4257,6 +4332,56 @@ export interface components {
          * @enum {string}
          */
         Verdict: "keep" | "change" | "retire" | "not_yet";
+        /** WatchlistInstrumentsBody */
+        WatchlistInstrumentsBody: {
+            /** Instruments */
+            instruments: components["schemas"]["InstrumentRef"][];
+        };
+        /** WatchlistItemResult */
+        WatchlistItemResult: {
+            /** Symbol */
+            symbol: string;
+            exchange: components["schemas"]["Exchange"];
+            /** @description None when the instrument isn't in the instrument master; sync_instruments brings it back. */
+            instrument_type: components["schemas"]["InstrumentType"] | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Lot Size */
+            lot_size: number | null;
+        };
+        /** WatchlistNameBody */
+        WatchlistNameBody: {
+            /**
+             * Name
+             * @description 1 to 40 characters, unique whatever its case.
+             */
+            name: string;
+        };
+        /** WatchlistResult */
+        WatchlistResult: {
+            /**
+             * Watchlist Id
+             * @description Pass this to the other watchlist tools.
+             */
+            watchlist_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Items
+             * @description In the order they were added; get_quotes prices them in one call.
+             */
+            items: components["schemas"]["WatchlistItemResult"][];
+        };
+        /** WatchlistsResult */
+        WatchlistsResult: {
+            /**
+             * Watchlists
+             * @description In the order they were made.
+             */
+            watchlists: components["schemas"]["WatchlistResult"][];
+        };
         /** WebhookBody */
         WebhookBody: {
             /** Broker */
@@ -5245,6 +5370,195 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChargesSummaryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watchlists_api_v1_watchlists_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistsResult"];
+                };
+            };
+        };
+    };
+    new_watchlist_api_v1_watchlists_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistNameBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_watchlist_api_v1_watchlists__watchlist_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteWatchlistResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_v1_watchlists__watchlist_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistNameBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watch_api_v1_watchlists__watchlist_id__instruments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistInstrumentsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unwatch_api_v1_watchlists__watchlist_id__instruments_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watchlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistInstrumentsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResult"];
                 };
             };
             /** @description Validation Error */

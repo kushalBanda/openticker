@@ -29,6 +29,7 @@ import os
 import random
 import threading
 import time
+import zlib
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -78,6 +79,7 @@ from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.models import SandboxTradeRow
 from openticker.storage.sqlite.pnl_repo import upsert_day, upsert_point
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
+from openticker.storage.sqlite.watchlists_repo import WatchlistItem, add_items, insert_watchlist
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
 from openticker.use_cases.place_order import place_order
@@ -272,14 +274,24 @@ class E2EBroker(FakeBrokerPort):
         )
 
     def get_quote(self, instrument: Instrument) -> Quote:
+        """A tick either side, the day's range from today's candle; an index,
+        as on the exchange, has no book and no volume."""
         last = PRICES.get(instrument.symbol, 2500.0)
+        index = instrument.instrument_type is InstrumentType.INDEX
+        today = _bars(instrument, "day", SESSION_START.date(), SESSION_START.date())[-1]
         return Quote(
             instrument,
             last,
             datetime.now(UTC),
-            bid=round(last - instrument.tick_size, 2),
-            ask=round(last + instrument.tick_size, 2),
+            bid=None if index else round(last - instrument.tick_size, 2),
+            ask=None if index else round(last + instrument.tick_size, 2),
+            open=today.open,
+            day_high=round(max(today.high, last), 2),
+            day_low=round(min(today.low, last), 2),
             close=CLOSES.get(instrument.symbol),
+            volume=None
+            if index
+            else 1_000_000 + zlib.crc32(instrument.symbol.encode()) % 9_000_000,
         )
 
 
@@ -484,6 +496,25 @@ def _seed_pnl(now: datetime) -> None:
         )
 
 
+def _seed_watchlists(now: datetime) -> None:
+    """The Watchlist mock's lists (ADR 36), without RELIANCE: Claude adds it."""
+    for name, symbols in (
+        (
+            "Core",
+            [
+                ("NSE", "NIFTY 50"),
+                ("NSE", "HDFCBANK"),
+                ("NSE", "TCS"),
+                ("NFO", "NIFTY27OCT26FUT"),
+                ("NFO", "NIFTY29SEP2624800CE"),
+            ],
+        ),
+        ("Banks", [("NSE", "NIFTY BANK"), ("NSE", "HDFCBANK")]),
+    ):
+        made = insert_watchlist(name, now)
+        add_items(made.watchlist_id, [WatchlistItem(exchange=e, symbol=s) for e, s in symbols])
+
+
 def _serve_broker_login(port: int) -> str:
     """The broker's login page, on another site (`localhost`, not
     `127.0.0.1`), as Kite's is: its "Log in" goes to the app's callback, so
@@ -527,6 +558,7 @@ def main() -> None:
     env = dict(E2E_ENV)
     _seed(env, clock)
     _seed_pnl(clock())
+    _seed_watchlists(clock())
 
     events = build_event_bus({})
     prices = LatestPrices()

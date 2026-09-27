@@ -30,6 +30,7 @@ const RECORDS = new Set([
   "BrokerDisconnected",
   "ChargeRatesChecked",
   "PaperAccountReset",
+  "WatchlistChanged",
 ]);
 
 type Details = Record<string, unknown>;
@@ -144,6 +145,8 @@ export function describe(
         tone: "down",
         text: `Paper account reset to ${rupees(num(d, "capital"))}: ${qty(num(d, "orders"))} orders, ${qty(num(d, "trades"))} trades deleted`,
       };
+    case "WatchlistChanged":
+      return { kind: "Watchlist", tone: undefined, text: watchlistText(d) };
     case "ChargeRatesDiffer":
       return {
         kind: "Charges",
@@ -203,6 +206,23 @@ export function describe(
   }
 }
 
+function watchlistText(d: Details): string {
+  const name = text(d, "name");
+  const symbols = Array.isArray(d.symbols) ? d.symbols.map((s) => symbolName(String(s))) : [];
+  switch (text(d, "change")) {
+    case "added":
+      return `${symbols.join(", ")} added to ${name}`;
+    case "removed":
+      return `${symbols.join(", ")} removed from ${name}`;
+    case "renamed":
+      return `Watchlist ${text(d, "previous_name")} renamed ${name}`;
+    case "deleted":
+      return `Watchlist ${name} deleted`;
+    default:
+      return `Watchlist ${name} made`;
+  }
+}
+
 /** Who did it, as the By column says it: a strategy or alert by name when known. */
 export function byLabel(entry: AuditEntry, names: ReadonlyMap<string, string> = new Map()): string {
   const [, id = ""] = (entry.triggered_by ?? "").split(":");
@@ -242,6 +262,7 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
   if (type === "BrokerConnected" || type === "BrokerDisconnected") return [["broker-session"]];
   if (type === "InstrumentSyncCompleted") return [["instruments-status"]];
   if (type === "ChargeRatesChecked") return [["account"]];
+  if (type === "WatchlistChanged") return [["watchlists"]];
   if (type.startsWith("Strategy")) {
     const id = strategyOf(entry);
     return [

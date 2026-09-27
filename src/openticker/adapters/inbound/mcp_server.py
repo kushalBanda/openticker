@@ -42,6 +42,7 @@ from openticker.adapters.inbound.mcp_models import (
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
+    DeleteWatchlistResult,
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
@@ -83,6 +84,8 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySummary,
     SyncResult,
     TradebookResult,
+    WatchlistResult,
+    WatchlistsResult,
     WebhookResult,
     closing_result,
 )
@@ -118,6 +121,13 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.storage.sqlite.watchlists_repo import (
+    MAX_ITEMS,
+    DuplicateWatchlistNameError,
+    Watchlist,
+    WatchlistLimitError,
+)
+from openticker.use_cases import watchlists
 from openticker.use_cases.agent_clients import note_agent_client
 from openticker.use_cases.agents import manage as agent_jobs
 from openticker.use_cases.agents.manage import (
@@ -207,6 +217,7 @@ from openticker.use_cases.strategies.ledger import (
     get_strategy_ledger as get_strategy_ledger_use_case,
 )
 from openticker.use_cases.sync_instruments import sync_instruments as sync_instruments_use_case
+from openticker.use_cases.watchlists import InvalidWatchlistNameError, UnknownWatchlistError
 
 INSTRUCTIONS = """\
 OpenTicker: Indian market data through a connected broker.
@@ -255,6 +266,9 @@ Typical flow:
    and CPU limits. It trades only through the REST API, with a key made for each
    run in OPENTICKER_API_KEY and the server's address in OPENTICKER_URL; it is
    given no broker keys or other secrets. get_script_logs shows its output.
+9. Watchlists: named lists of instruments the user watches, shared with the
+   web app. list_watchlists reads them; create_watchlist, add_to_watchlist,
+   remove_from_watchlist, rename_watchlist and delete_watchlist change them.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -378,6 +392,10 @@ _AGENT_FIXABLE_ERRORS = (
     AgentConfigError,
     ReviewScheduleError,
     UnknownStrategyError,
+    UnknownWatchlistError,
+    DuplicateWatchlistNameError,
+    InvalidWatchlistNameError,
+    WatchlistLimitError,
     LegResolutionError,
     DuplicateStrategyNameError,
     InvalidStrategyError,
@@ -1134,6 +1152,113 @@ def get_charges_summary(
         months=[MonthChargesResult.of(m) for m in months],
         total=round(sum(m.total for m in months), 2),
     )
+
+
+WatchlistId = Annotated[str, Field(description="From list_watchlists or create_watchlist.")]
+WatchlistName = Annotated[
+    str, Field(description="1 to 40 characters, unique whatever its case, e.g. Banks.")
+]
+WatchlistInstruments = Annotated[
+    list[InstrumentRef],
+    Field(min_length=1, max_length=MAX_ITEMS, description="Use search_instruments to find them."),
+]
+
+
+def _watchlist_result(watchlist: Watchlist) -> WatchlistResult:
+    return WatchlistResult.of(watchlist, watchlists.instruments_of(watchlist))
+
+
+@mcp.tool(
+    title="List watchlists",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def list_watchlists() -> WatchlistsResult:
+    """Every watchlist with its instruments. The user sees and changes the
+    same lists in the web app."""
+    return WatchlistsResult(watchlists=[_watchlist_result(w) for w in watchlists.get_watchlists()])
+
+
+@mcp.tool(
+    title="Create watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def create_watchlist(name: WatchlistName) -> WatchlistResult:
+    """Make a new, empty watchlist; add_to_watchlist fills it. At most 20 lists."""
+    with _agent_facing_errors():
+        created = watchlists.create_watchlist(name, event_bus(), clock(), _who())
+    return _watchlist_result(created)
+
+
+@mcp.tool(
+    title="Rename watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def rename_watchlist(watchlist_id: WatchlistId, name: WatchlistName) -> WatchlistResult:
+    """Give a watchlist a new name. Its instruments stay."""
+    with _agent_facing_errors():
+        renamed = watchlists.rename_watchlist(watchlist_id, name, event_bus(), clock(), _who())
+    return _watchlist_result(renamed)
+
+
+@mcp.tool(
+    title="Delete watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def delete_watchlist(watchlist_id: WatchlistId) -> DeleteWatchlistResult:
+    """Remove a watchlist. Positions and orders in its instruments are
+    untouched."""
+    with _agent_facing_errors():
+        gone = watchlists.delete_watchlist(watchlist_id, event_bus(), clock(), _who())
+    return DeleteWatchlistResult(watchlist_id=gone.watchlist_id, name=gone.name, deleted=True)
+
+
+@mcp.tool(
+    title="Add to watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def add_to_watchlist(
+    watchlist_id: WatchlistId, instruments: WatchlistInstruments
+) -> WatchlistResult:
+    """Add instruments to the end of a watchlist; one already on it stays
+    where it is. At most 50 on a list."""
+    with _agent_facing_errors():
+        changed = watchlists.add_to_watchlist(
+            watchlist_id,
+            [(i.symbol, i.exchange.value) for i in instruments],
+            event_bus(),
+            clock(),
+            _who(),
+        )
+    return _watchlist_result(changed)
+
+
+@mcp.tool(
+    title="Remove from watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def remove_from_watchlist(
+    watchlist_id: WatchlistId, instruments: WatchlistInstruments
+) -> WatchlistResult:
+    """Take instruments off a watchlist; one not on it is ignored."""
+    with _agent_facing_errors():
+        changed = watchlists.remove_from_watchlist(
+            watchlist_id,
+            [(i.symbol, i.exchange.value) for i in instruments],
+            event_bus(),
+            clock(),
+            _who(),
+        )
+    return _watchlist_result(changed)
 
 
 @mcp.tool(

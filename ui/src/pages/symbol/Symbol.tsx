@@ -1,23 +1,34 @@
 import NumberFlow from "@number-flow/react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Star } from "lucide-react";
+import { lazy, Suspense, useMemo, useState } from "react";
+import { Link, useLocation, useParams } from "react-router";
 import {
   type Depth,
-  type Interval,
   type Position,
   useBars,
+  useCreateWatchlist,
   useDepth,
   useListings,
   useOrders,
   usePositions,
   useTrades,
+  useWatch,
+  useWatchlists,
 } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
+import type { From } from "../../components/Instrument";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
 import { TableSkeleton } from "../../components/TableStates";
-import { type Candle, CHOICES, choiceOf, clockSeconds, daysBefore } from "../../lib/candles";
+import {
+  type Candle,
+  CHOICES,
+  choiceOf,
+  clockSeconds,
+  daysBefore,
+  toWeeks,
+} from "../../lib/candles";
 import {
   change,
   direction,
@@ -30,8 +41,9 @@ import {
 } from "../../lib/format";
 import type { Exchange, OrderDraft, Side } from "../../lib/orders";
 import { markToMarket } from "../../lib/pnl";
+import { pickList, savedListId } from "../../lib/watchlists";
 import { useActions } from "../../shell/actions";
-import { typing } from "../../shell/Sidebar";
+import { useSideKeys } from "../../shell/keys";
 import type { InstrumentKey } from "../../stream/connection";
 import { usePrice } from "../../stream/prices";
 import { useLive, useServerNow } from "../../stream/StreamProvider";
@@ -46,38 +58,14 @@ type Tab = "chart" | "orders";
 const FIGURE = { minimumFractionDigits: 2, maximumFractionDigits: 2 } as const;
 const INTERVAL_KEY = "symbol.interval";
 
-function savedInterval(): Interval {
+function savedInterval(): string {
   try {
     const saved = localStorage.getItem(INTERVAL_KEY);
-    if (saved && CHOICES.some((c) => c.interval === saved)) return saved as Interval;
+    if (saved && CHOICES.some((c) => c.key === saved)) return saved;
   } catch {
     // storage blocked: the default
   }
   return "5minute";
-}
-
-/** B and S open the order window, as in Kite; not after "g" (that's for pages). */
-function useSideKeys(open: (side: Side) => void) {
-  useEffect(() => {
-    let armed = 0;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
-      if (document.querySelector('[role="dialog"]')) return;
-      if (event.key === "g") {
-        armed = event.timeStamp;
-        return;
-      }
-      const afterG = armed && event.timeStamp - armed < 1000;
-      armed = 0;
-      if (afterG) return;
-      if (event.key === "b" || event.key === "s") {
-        event.preventDefault();
-        open(event.key === "b" ? "BUY" : "SELL");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
 }
 
 interface Level {
@@ -175,12 +163,66 @@ function PositionCard({ position, ltp }: { position: Position | undefined; ltp: 
 }
 
 /**
+ * On the list the Watchlist page showed last (ADR 36), or off it. With no
+ * list yet, the first click makes one called Watchlist.
+ */
+function WatchButton({
+  symbol,
+  exchange,
+  disabled,
+}: {
+  symbol: string;
+  exchange: Exchange;
+  disabled: boolean;
+}) {
+  const lists = useWatchlists();
+  const create = useCreateWatchlist();
+  const watch = useWatch();
+  const { notify } = useActions();
+  const list = pickList(lists.data?.watchlists ?? [], savedListId());
+  const on = list?.items.some((i) => i.symbol === symbol && i.exchange === exchange) ?? false;
+  const busy = lists.isPending || create.isPending || watch.isPending;
+
+  const toggle = async () => {
+    try {
+      const target = list ?? (await create.mutateAsync("Watchlist"));
+      await watch.mutateAsync({
+        id: target.watchlist_id,
+        instruments: [{ symbol, exchange }],
+        add: !on,
+      });
+      notify(on ? `Removed from ${target.name}` : `Added to ${target.name}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="btn"
+      data-variant="ghost"
+      aria-pressed={on}
+      disabled={disabled || busy}
+      onClick={toggle}
+      title={on ? `Remove from ${list?.name}` : `Add to ${list?.name ?? "a watchlist"}`}
+    >
+      <Star size={16} aria-hidden className="watch-star" />
+      {on ? `On ${list?.name}` : "Watch"}
+    </button>
+  );
+}
+
+/**
  * One instrument (DESIGN.md Symbol): its quote as stat cards, candles with
  * your paper fills, market depth, today's orders for it, and the order
  * window from "Place paper order" or B / S.
  */
 export function SymbolPage() {
   const params = useParams();
+  // The way out: back to the page it was opened from; opened directly, the Watchlist.
+  const came = (useLocation().state as { from?: From } | null)?.from;
+  const back = came ?? { to: "/watchlist", label: "Watchlist" };
   const exchange = (params.exchange ?? "NSE").toUpperCase() as Exchange;
   const symbol = params.symbol ?? "";
   const { status } = useLive();
@@ -188,7 +230,7 @@ export function SymbolPage() {
   const now = useServerNow();
   const { order } = useActions();
   const [tab, setTab] = useState<Tab>("chart");
-  const [interval, setIntervalChoice] = useState<Interval>(savedInterval);
+  const [interval, setIntervalChoice] = useState<string>(savedInterval);
   const choice = choiceOf(interval);
 
   const listings = useListings(symbol);
@@ -200,7 +242,7 @@ export function SymbolPage() {
     contract ? broker : undefined,
     exchange,
     symbol,
-    interval,
+    choice.interval,
     daysBefore(today, choice.days),
     today,
   );
@@ -231,17 +273,16 @@ export function SymbolPage() {
     () => (trades.data?.trades ?? []).filter((t) => t.symbol === symbol && t.exchange === exchange),
     [trades.data, symbol, exchange],
   );
-  const candles: Candle[] = useMemo(
-    () =>
-      (bars.data?.bars ?? []).map((b) => ({
-        time: clockSeconds(b.timestamp),
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
-    [bars.data],
-  );
+  const candles: Candle[] = useMemo(() => {
+    const shown = (bars.data?.bars ?? []).map((b) => ({
+      time: clockSeconds(b.timestamp),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+    }));
+    return choice.weekly ? toWeeks(shown) : shown;
+  }, [bars.data, choice.weekly]);
   const live = useMemo(
     () => (tick ? { price: tick.last_price, at: tick.as_of } : undefined),
     [tick],
@@ -264,7 +305,7 @@ export function SymbolPage() {
   );
   useSideKeys(open);
 
-  const pick = (value: Interval) => {
+  const pick = (value: string) => {
     setIntervalChoice(value);
     try {
       localStorage.setItem(INTERVAL_KEY, value);
@@ -275,7 +316,7 @@ export function SymbolPage() {
 
   if (listings.isSuccess && !contract) {
     return (
-      <Page title={symbol || "Symbol"}>
+      <Page title={symbol || "Symbol"} back={back}>
         <div className="tile empty">
           <h2>
             No {symbol} on {exchange}
@@ -304,6 +345,7 @@ export function SymbolPage() {
   return (
     <Page
       title={name}
+      back={back}
       badges={
         <>
           {tag && <span className="ex-tag">{tag}</span>}
@@ -311,30 +353,33 @@ export function SymbolPage() {
         </>
       }
       actions={
-        contract?.instrument_type !== "INDEX" && (
-          <>
-            <button
-              type="button"
-              className="btn"
-              data-variant="outline"
-              disabled={!contract}
-              onClick={() => open("SELL")}
-              title="Sell (S)"
-            >
-              Sell
-            </button>
-            <button
-              type="button"
-              className="btn"
-              data-variant="primary"
-              disabled={!contract}
-              onClick={() => open("BUY")}
-              title="Buy (B)"
-            >
-              Place paper order
-            </button>
-          </>
-        )
+        <>
+          <WatchButton symbol={symbol} exchange={exchange} disabled={!contract} />
+          {contract?.instrument_type !== "INDEX" && (
+            <>
+              <button
+                type="button"
+                className="btn"
+                data-variant="outline"
+                disabled={!contract}
+                onClick={() => open("SELL")}
+                title="Sell (S)"
+              >
+                Sell
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-variant="primary"
+                disabled={!contract}
+                onClick={() => open("BUY")}
+                title="Buy (B)"
+              >
+                Place paper order
+              </button>
+            </>
+          )}
+        </>
       }
     >
       <div className="stats symbol-stats">
@@ -371,7 +416,8 @@ export function SymbolPage() {
           label="Volume"
           value={qty(depth.data?.volume)}
           note={
-            depth.data?.open_interest != null
+            // Kite sends OI 0 for a stock: only futures and options have any.
+            depth.data?.open_interest != null && contract?.expiry
               ? `OI ${qty(depth.data.open_interest)}`
               : `Last qty. ${qty(depth.data?.last_quantity)}`
           }
@@ -400,11 +446,11 @@ export function SymbolPage() {
                 {exchange} · {choice.label} · IST
               </span>
               <span className="flex-1" />
-              <Segmented<Interval>
+              <Segmented<string>
                 label="Interval"
                 value={interval}
                 onChange={pick}
-                segments={CHOICES.map((c) => ({ value: c.interval, label: c.label }))}
+                segments={CHOICES.map((c) => ({ value: c.key, label: c.label }))}
               />
             </div>
             {bars.isError ? (

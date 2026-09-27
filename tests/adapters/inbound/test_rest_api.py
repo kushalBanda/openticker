@@ -734,3 +734,29 @@ def test_audit_filters_by_who_kinds_and_day_and_pages_back(client: TestClient) -
     assert ids(source="strategy", event_types=["OrderFilled"]) == [5]
     assert first_page == [6, 5]
     assert ids(limit=2, before_id=first_page[-1]) == [4, 3]
+
+
+def test_watchlist_routes_round_trip_and_refuse_mistakes(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    reliance = {"instruments": [{"symbol": "RELIANCE", "exchange": "NSE"}]}
+
+    core = client.post("/api/v1/watchlists", json={"name": "Core"}).json()
+    path = f"/api/v1/watchlists/{core['watchlist_id']}"
+    added = client.post(f"{path}/instruments", json=reliance).json()
+    assert [(i["symbol"], i["lot_size"]) for i in added["items"]] == [("RELIANCE", 1)]
+    assert client.patch(path, json={"name": "Main"}).json()["name"] == "Main"
+    [listed] = client.get("/api/v1/watchlists").json()["watchlists"]
+    assert listed["name"] == "Main" and len(listed["items"]) == 1
+    removed = client.request("DELETE", f"{path}/instruments", json=reliance).json()
+    assert removed["items"] == []
+
+    assert client.post("/api/v1/watchlists", json={"name": "main"}).status_code == 409
+    assert client.post("/api/v1/watchlists", json={"name": ""}).status_code == 422
+    unknown = {"instruments": [{"symbol": "NOPE", "exchange": "NSE"}]}
+    assert client.post(f"{path}/instruments", json=unknown).status_code == 404
+    assert client.delete(path).json() == {
+        "watchlist_id": core["watchlist_id"],
+        "name": "Main",
+        "deleted": True,
+    }
+    assert client.delete(path).status_code == 404

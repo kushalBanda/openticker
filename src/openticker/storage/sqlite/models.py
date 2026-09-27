@@ -416,3 +416,25 @@ class IntradayPnlRow(Base):
     realized_pnl: Mapped[float]
     charges: Mapped[float]
     unrealized_pnl: Mapped[float]
+
+
+# Named lists of instruments to watch (ADR 36 in docs/adr), shared by the web
+# app and agents.
+
+
+class WatchlistRow(Base):
+    __tablename__ = "watchlists"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    position: Mapped[int]  # lists in the order they were made
+    created_at: Mapped[datetime]  # UTC, stored naive
+
+
+class WatchlistItemRow(Base):
+    __tablename__ = "watchlist_items"
+
+    watchlist_id: Mapped[str] = mapped_column(primary_key=True)
+    exchange: Mapped[str] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(primary_key=True)
+    position: Mapped[int]  # instruments in the order they were added

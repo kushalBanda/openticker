@@ -58,8 +58,10 @@
     color: var(--link);
     text-decoration: none;
   }
-  a:hover {
-    text-decoration: underline;
+  /* No underline on hover (user decision): a text link dims a little
+     instead; nav items, buttons and instruments have hovers of their own. */
+  a:not(.btn, .nav-item, .instrument, .settings-nav a):hover {
+    opacity: 0.8;
   }
   :focus-visible {
     outline: 2px solid var(--focus);
@@ -264,7 +266,7 @@
     color: var(--link);
   }
   .back-link:hover {
-    text-decoration: underline;
+    opacity: 0.8;
   }
   .page-title {
     margin: 0;
@@ -391,6 +393,14 @@
     height: 28px;
     padding: 0 12px;
     font-size: 12.5px;
+  }
+  /* a button that is one icon or one letter: square */
+  .btn.icon {
+    width: 36px;
+    padding: 0;
+  }
+  .btn.icon[data-size="sm"] {
+    width: 28px;
   }
 
   /* page title extras: count, PAPER */
@@ -572,9 +582,11 @@
     transform: translateY(-50%);
     transition: opacity var(--duration-fast) var(--ease-out);
   }
+  /* Only the row under the pointer shows its pill (or one a key has
+     reached its button): a selected row, or one a dialog handed focus
+     back to, doesn't keep one. */
   .table tbody tr:hover .row-actions,
-  .table tbody tr:focus-within .row-actions,
-  .table tbody tr[aria-selected="true"] .row-actions {
+  .table tbody tr:has(.row-actions :focus-visible) .row-actions {
     opacity: 1;
     pointer-events: auto;
   }
@@ -967,7 +979,7 @@
     padding: 0 16px;
     border-bottom: 1px solid var(--line);
   }
-  .palette .palette-input svg {
+  :is(.palette, .picker) .palette-input svg {
     width: 18px;
     height: 18px;
     color: var(--ink-muted);
@@ -981,18 +993,18 @@
     color: var(--ink);
     font: 400 16px / 1 var(--font-text);
   }
-  .palette [cmdk-list] {
+  :is(.palette, .picker) [cmdk-list] {
     max-height: 400px;
     overflow: auto;
     padding: 6px;
   }
-  .palette [cmdk-group-heading] {
+  :is(.palette, .picker) [cmdk-group-heading] {
     padding: 8px 10px 4px;
     font-size: 12px;
     font-weight: 500;
     color: var(--ink-muted);
   }
-  .palette [cmdk-item] {
+  :is(.palette, .picker) [cmdk-item] {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1002,15 +1014,15 @@
     font-size: 14px;
     cursor: pointer;
   }
-  .palette [cmdk-item] svg {
+  :is(.palette, .picker) [cmdk-item] svg {
     width: 16px;
     height: 16px;
     color: var(--ink-muted);
   }
-  .palette [cmdk-item][data-selected="true"] {
+  :is(.palette, .picker) [cmdk-item][data-selected="true"] {
     background: var(--fill);
   }
-  .palette [cmdk-empty] {
+  :is(.palette, .picker) [cmdk-empty] {
     padding: 20px 12px;
     text-align: center;
     font-size: 13px;
@@ -1400,7 +1412,7 @@
     font-size: 14px;
   }
   .more-link:hover {
-    text-decoration: underline;
+    opacity: 0.8;
   }
   .margin-row {
     display: flex;
@@ -1898,9 +1910,7 @@
     text-decoration: none;
   }
   a.instrument:hover {
-    text-decoration: underline;
-    text-decoration-color: var(--line-strong);
-    text-underline-offset: 3px;
+    color: var(--link);
   }
   @media (max-width: 1439px) {
     .symbol-stats .stat {
@@ -2000,5 +2010,52 @@
   .page-title[data-tucked="true"],
   .bar-title[data-shown="false"] {
     transform: none;
+  }
+}
+
+@layer components {
+  /* Watchlist (ADR 36) */
+  .wl-tabs {
+    flex-wrap: wrap;
+  }
+  .wl-tabs .segmented {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 32px;
+  }
+  .wl-tabs .segmented button {
+    height: 28px;
+  }
+  .btn[aria-pressed="true"] .watch-star {
+    color: var(--accent);
+    fill: currentColor;
+  }
+  .empty-actions {
+    margin-top: 20px;
+  }
+  .empty-prompt {
+    max-width: 620px;
+    margin: 16px auto 0;
+    text-align: left;
+  }
+  /* the Add instrument search, inside a dialog */
+  .picker .palette-input {
+    height: 44px;
+    border: 0;
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .picker .palette-input:focus-within {
+    box-shadow:
+      inset 0 0 0 1px var(--focus),
+      0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+  }
+  .picker [cmdk-list] {
+    max-height: 320px;
+    overflow: auto;
+    padding: 6px 0 0;
+  }
+  .picker [cmdk-item][aria-disabled="true"] {
+    cursor: default;
   }
 }

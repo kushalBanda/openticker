@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { type Instrument, useInstrumentSearch } from "../api/queries";
-import { symbolPath } from "../components/Instrument";
+import { useOpenSymbol } from "../components/Instrument";
 import { direction, instrumentName, price, qty, signed } from "../lib/format";
 import { duration, ease, spring } from "../lib/motion";
 import type { OrderDraft, Side } from "../lib/orders";
@@ -66,6 +66,7 @@ function Palette({
   onOrder: (draft: OrderDraft) => void;
 }) {
   const navigate = useNavigate();
+  const openSymbol = useOpenSymbol();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -179,7 +180,7 @@ function Palette({
                   value="open"
                   onSelect={() => {
                     onClose();
-                    navigate(symbolPath(target.exchange, target.symbol));
+                    openSymbol(target.exchange, target.symbol);
                   }}
                 >
                   <ChartCandlestick aria-hidden />

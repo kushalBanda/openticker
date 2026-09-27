@@ -41,6 +41,9 @@ export const keys = {
     ["bars", broker, exchange, symbol, interval, from] as const,
   depth: (broker: string, exchange: string, symbol: string) =>
     ["depth", broker, exchange, symbol] as const,
+  // Watchlists (ADR 36).
+  watchlists: ["watchlists"] as const,
+  quotes: (broker: string, instruments: string) => ["quotes", broker, instruments] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -806,4 +809,78 @@ export function useDepth(broker: string | undefined, exchange: Exchange, symbol:
     enabled: broker !== undefined,
     refetchInterval: 2_000,
   });
+}
+
+// Watchlists (ADR 36): shared with agents, so a change from either side
+// reaches the other through the audit log (the stream refetches them).
+
+export type Watchlist = Schemas["WatchlistResult"];
+export type WatchlistItem = Schemas["WatchlistItemResult"];
+export type Quote = Schemas["QuoteResult"];
+type InstrumentRef = Schemas["InstrumentRef"];
+
+export function useWatchlists() {
+  return useQuery({
+    queryKey: keys.watchlists,
+    queryFn: () => unwrap(api.GET("/api/v1/watchlists")),
+  });
+}
+
+/** Quotes for up to 50 instruments (bid, ask, the day's range, volume), every 2 s. */
+export function useQuotes(broker: string | undefined, instruments: InstrumentRef[]) {
+  const joined = instruments.map((i) => `${i.exchange}:${i.symbol}`).join("|");
+  return useQuery({
+    queryKey: keys.quotes(broker ?? "", joined),
+    queryFn: () =>
+      unwrap(api.POST("/api/v1/quotes", { body: { broker: broker ?? "", instruments } })),
+    enabled: broker !== undefined && instruments.length > 0,
+    refetchInterval: 2_000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+function useWatchlistMutation<V, R>(run: (vars: V) => Promise<R>) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: run,
+    onSettled: () => client.invalidateQueries({ queryKey: keys.watchlists }),
+  });
+}
+
+export function useCreateWatchlist() {
+  return useWatchlistMutation((name: string) =>
+    unwrap(api.POST("/api/v1/watchlists", { body: { name } })),
+  );
+}
+
+export function useRenameWatchlist() {
+  return useWatchlistMutation(({ id, name }: { id: string; name: string }) =>
+    unwrap(
+      api.PATCH("/api/v1/watchlists/{watchlist_id}", {
+        params: { path: { watchlist_id: id } },
+        body: { name },
+      }),
+    ),
+  );
+}
+
+export function useDeleteWatchlist() {
+  return useWatchlistMutation((id: string) =>
+    unwrap(
+      api.DELETE("/api/v1/watchlists/{watchlist_id}", { params: { path: { watchlist_id: id } } }),
+    ),
+  );
+}
+
+export function useWatch() {
+  return useWatchlistMutation(
+    ({ id, instruments, add }: { id: string; instruments: InstrumentRef[]; add: boolean }) => {
+      const options = { params: { path: { watchlist_id: id } }, body: { instruments } };
+      return unwrap(
+        add
+          ? api.POST("/api/v1/watchlists/{watchlist_id}/instruments", options)
+          : api.DELETE("/api/v1/watchlists/{watchlist_id}/instruments", options),
+      );
+    },
+  );
 }

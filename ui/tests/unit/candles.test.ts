@@ -6,6 +6,7 @@ import {
   clockSeconds,
   daysBefore,
   fillMarks,
+  toWeeks,
 } from "../../src/lib/candles";
 
 const utc = (text: string) => Date.parse(`${text}Z`) / 1000;
@@ -80,4 +81,40 @@ test("fills are marked on their candle, one arrow per side", () => {
 
 test("ranges count back calendar days", () => {
   expect(daysBefore("2026-09-22", 14)).toBe("2026-09-08");
+});
+
+describe("weeks, from the days", () => {
+  const week = choiceOf("week");
+  const day = (d: string, o: number, h: number, l: number, c: number) => ({
+    time: utc(`${d}T00:00:00`),
+    open: o,
+    high: h,
+    low: l,
+    close: c,
+  });
+
+  test("a week starts on Monday", () => {
+    expect(bucket("2026-09-24T11:00:00+05:30", week)).toBe(utc("2026-09-21T00:00:00")); // Thu
+    expect(bucket("2026-09-21T09:15:00+05:30", week)).toBe(utc("2026-09-21T00:00:00")); // Mon
+    expect(bucket("2026-09-27T12:00:00+05:30", week)).toBe(utc("2026-09-21T00:00:00")); // Sun
+  });
+
+  test("days sum into their week: first open, highest high, lowest low, last close", () => {
+    expect(
+      toWeeks([
+        day("2026-09-18", 10, 12, 9, 11), // Fri
+        day("2026-09-21", 11, 15, 10, 14), // Mon
+        day("2026-09-22", 14, 16, 8, 9), // Tue
+      ]),
+    ).toEqual([
+      { time: utc("2026-09-14T00:00:00"), open: 10, high: 12, low: 9, close: 11 },
+      { time: utc("2026-09-21T00:00:00"), open: 11, high: 16, low: 8, close: 9 },
+    ]);
+  });
+
+  test("30m candles count from 09:15 too", () => {
+    expect(bucket("2026-09-22T10:31:20+05:30", choiceOf("30minute"))).toBe(
+      utc("2026-09-22T10:15:00"),
+    );
+  });
 });

@@ -47,7 +47,10 @@ export function Dialog({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      before?.focus();
+      // Not into a row's pill: it shows on hover only, and focus would
+      // leave it showing on a row the pointer has left.
+      if (before?.closest(".row-actions")) (document.activeElement as HTMLElement | null)?.blur();
+      else before?.focus();
     };
   }, [open, onClose]);
 

@@ -1,20 +1,19 @@
-import { useAnimate, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { type Position, useCloseAll, useFunds, usePositions } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { HoldButton } from "../../components/HoldButton";
-import { Instrument } from "../../components/Instrument";
+import { Instrument, useOpenSymbol } from "../../components/Instrument";
+import { LivePrice } from "../../components/LivePrice";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
 import { direction, MISSING, price, qty, rupees, signed, sourceLabel } from "../../lib/format";
-import { duration, ease } from "../../lib/motion";
 import type { OrderDraft } from "../../lib/orders";
 import { livePrice, markToMarket, total } from "../../lib/pnl";
 import { useActions } from "../../shell/actions";
 import type { InstrumentKey, Tick } from "../../stream/connection";
-import { useIsStale, usePrices } from "../../stream/prices";
+import { usePrices } from "../../stream/prices";
 import { useLive } from "../../stream/StreamProvider";
 import { CloseDialog } from "./CloseDialog";
 
@@ -49,37 +48,7 @@ function Money({ value, currency }: { value: number | null; currency?: boolean }
 
 /** The last price, flashing on a change (DESIGN.md), with Stale after a quiet minute. */
 function Ltp({ row, watching }: { row: Row; watching: boolean }) {
-  const [scope, animate] = useAnimate<HTMLSpanElement>();
-  const reduced = useReducedMotion();
-  const before = useRef(row.ltp);
-  const stale = useIsStale(row.tick, watching);
-
-  useEffect(() => {
-    const was = before.current;
-    before.current = row.ltp;
-    if (reduced || was === null || row.ltp === null || was === row.ltp || !scope.current) return;
-    const soft = getComputedStyle(document.documentElement)
-      .getPropertyValue(row.ltp > was ? "--up-soft" : "--down-soft")
-      .trim();
-    animate(
-      scope.current,
-      { backgroundColor: [soft, "rgba(0, 0, 0, 0)"] },
-      { duration: duration.slow, ease: ease.out },
-    );
-  }, [row.ltp, reduced, animate, scope]);
-
-  return (
-    <span className="inline-flex items-center justify-end gap-2">
-      {stale && (
-        <span className="badge" data-tone="warn">
-          Stale
-        </span>
-      )}
-      <span ref={scope} className="rounded-sm px-1" data-testid="ltp">
-        {row.ltp === null ? <span className="missing">{MISSING}</span> : price(row.ltp)}
-      </span>
-    </span>
-  );
+  return <LivePrice value={row.ltp} tick={row.tick} watching={watching} />;
 }
 
 /** One more lot the same way, at the last price (Kite's Add). */
@@ -162,6 +131,7 @@ export function Positions() {
   const funds = useFunds(broker);
   const closeAll = useCloseAll();
   const { order } = useActions();
+  const openSymbol = useOpenSymbol();
   const source = view === "open" ? open : withClosed;
 
   const listed = useMemo(
@@ -431,6 +401,10 @@ export function Positions() {
             rows={rows}
             rowKey={rowKey}
             selected={closing ?? undefined}
+            onSelect={(key) => {
+              const [exchange = "", symbol = ""] = key.split(":");
+              openSymbol(exchange, symbol);
+            }}
             actions={
               view === "open"
                 ? (row) => (

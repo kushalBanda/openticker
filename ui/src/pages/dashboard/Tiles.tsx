@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
 import type { DayPnl } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
-import { Instrument } from "../../components/Instrument";
+import { Instrument, useOpenSymbol } from "../../components/Instrument";
 import { TableEmpty } from "../../components/TableStates";
 import { byLabel, describe } from "../../lib/events";
 import {
@@ -36,6 +36,7 @@ function heldBy(position: Position): string {
 }
 
 export function OpenPositionsTile({ rows, loading }: { rows: LiveRow[]; loading: boolean }) {
+  const openSymbol = useOpenSymbol();
   const columns: Column<LiveRow>[] = [
     {
       key: "instrument",
@@ -95,6 +96,10 @@ export function OpenPositionsTile({ rows, loading }: { rows: LiveRow[]; loading:
           columns={columns}
           rows={rows.slice(0, 6)}
           rowKey={(r) => `${r.position.exchange}:${r.position.symbol}:${r.position.product}`}
+          onSelect={(key) => {
+            const [exchange = "", symbol = ""] = key.split(":");
+            openSymbol(exchange, symbol);
+          }}
         />
       )}
     </section>

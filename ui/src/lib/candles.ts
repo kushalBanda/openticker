@@ -13,24 +13,31 @@ export interface Candle {
 }
 
 export interface Choice {
+  /** What the switch and this browser remember it by. */
+  key: string;
+  /** What the broker is asked for: a week is built from its days. */
   interval: Interval;
   label: string;
   /** Calendar days of history asked for. */
   days: number;
-  /** Minutes a candle spans; 0 for a day. */
+  /** Minutes a candle spans; 0 for a day or a week. */
   minutes: number;
+  /** Days summed into weeks from Monday, as Kite draws them. */
+  weekly?: true;
 }
 
 export const CHOICES: Choice[] = [
-  { interval: "minute", label: "1m", days: 4, minutes: 1 },
-  { interval: "5minute", label: "5m", days: 14, minutes: 5 },
-  { interval: "15minute", label: "15m", days: 40, minutes: 15 },
-  { interval: "60minute", label: "1h", days: 120, minutes: 60 },
-  { interval: "day", label: "Day", days: 400, minutes: 0 },
+  { key: "minute", interval: "minute", label: "1m", days: 4, minutes: 1 },
+  { key: "5minute", interval: "5minute", label: "5m", days: 14, minutes: 5 },
+  { key: "15minute", interval: "15minute", label: "15m", days: 40, minutes: 15 },
+  { key: "30minute", interval: "30minute", label: "30m", days: 60, minutes: 30 },
+  { key: "60minute", interval: "60minute", label: "1h", days: 120, minutes: 60 },
+  { key: "day", interval: "day", label: "Day", days: 400, minutes: 0 },
+  { key: "week", interval: "day", label: "1W", days: 1100, minutes: 0, weekly: true },
 ];
 
-export const choiceOf = (interval: Interval): Choice =>
-  CHOICES.find((c) => c.interval === interval) ?? (CHOICES[1] as Choice);
+export const choiceOf = (key: string): Choice =>
+  CHOICES.find((c) => c.key === key) ?? (CHOICES[1] as Choice);
 
 const IST_MS = 330 * 60_000;
 const OPEN_MINUTE = 9 * 60 + 15; // candles count from 09:15, as Kite's do
@@ -44,6 +51,7 @@ export function clockSeconds(at: string | Date): number {
 export function bucket(at: string | Date, choice: Choice): number {
   const seconds = clockSeconds(at);
   const day = seconds - (seconds % 86_400);
+  if (choice.weekly) return monday(day);
   if (choice.minutes === 0) return day;
   const minute = Math.floor((seconds - day) / 60);
   const since = minute - OPEN_MINUTE;
@@ -68,6 +76,24 @@ export function applyTick(
     low: Math.min(last.low, price),
     close: price,
   };
+}
+
+/** The Monday of the week a day (clock seconds at 00:00) falls in; 1 Jan 1970 was a Thursday. */
+const monday = (day: number) => day - ((day / 86_400 + 3) % 7) * 86_400;
+
+/** Day candles, oldest first, summed into weeks from Monday. */
+export function toWeeks(days: Candle[]): Candle[] {
+  const weeks: Candle[] = [];
+  for (const day of days) {
+    const time = monday(day.time - (day.time % 86_400));
+    const last = weeks.at(-1);
+    if (last && last.time === time) {
+      last.high = Math.max(last.high, day.high);
+      last.low = Math.min(last.low, day.low);
+      last.close = day.close;
+    } else weeks.push({ ...day, time });
+  }
+  return weeks;
 }
 
 /** The date `days` before `today` (YYYY-MM-DD, both exchange dates). */

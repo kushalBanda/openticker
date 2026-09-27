@@ -83,6 +83,19 @@ test("quote, depth, your fills and your position", async ({ page }) => {
   await expect(
     page.getByRole("group", { name: "Interval" }).getByRole("button", { name: "1h", exact: true }),
   ).toHaveAttribute("aria-pressed", "true"); // remembered
+  // 30m from the broker; 1W summed from its days. The live price moves the last candle of each.
+  for (const label of ["30m", "1W"]) {
+    await page
+      .getByRole("group", { name: "Interval" })
+      .getByRole("button", { name: label, exact: true })
+      .click();
+    await expect(page.getByText(`NSE · ${label} · IST`)).toBeVisible();
+    await expect(async () => {
+      const close = await chart.getAttribute("data-last-close");
+      const ltp = await page.getByTestId("ltp-value").getAttribute("data-value");
+      expect(Number(close)).toBeCloseTo(Number(ltp), 2);
+    }).toPass({ timeout: 3000 });
+  }
   await page
     .getByRole("group", { name: "Interval" })
     .getByRole("button", { name: "5m", exact: true })

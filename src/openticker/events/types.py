@@ -117,6 +117,21 @@ class PaperAccountReset:
 
 
 @dataclass(frozen=True)
+class WatchlistChanged:
+    """A watchlist was created, renamed or deleted, or instruments were added
+    to or removed from it (ADR 36). Audited, so the web app hears of an
+    agent's change as it does of any other."""
+
+    watchlist_id: str
+    name: str
+    change: str  # created, renamed, deleted, added, removed
+    triggered_by: str
+    symbols: tuple[str, ...] = ()  # added or removed, as OpenTicker names them
+    previous_name: str | None = None  # renamed only
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class PositionSettled:
     """An expired futures or options position closed at its settlement price."""
 

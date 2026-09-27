@@ -6,6 +6,7 @@ reach the server only through the audit log.
     uv run python -m tests.fixtures.e2e_agent --home <dir> kill
     uv run python -m tests.fixtures.e2e_agent --home <dir> end-runs
     uv run python -m tests.fixtures.e2e_agent --home <dir> later
+    uv run python -m tests.fixtures.e2e_agent --home <dir> watch
 
 `order`: Claude Code buys 5 TCS through the MCP tools, as an in-memory MCP
 client named "Claude Code" (the stdio transport is the only difference).
@@ -15,6 +16,8 @@ runner reports it.
 after a stop.
 `later`: 15 minutes pass on the shared clock, so a browser's next request
 starts a new visit (ADR 31); the unused sign-in links are made again.
+`watch`: Claude Code adds RELIANCE to the Core watchlist through the MCP
+tools (ADR 36).
 """
 
 import argparse
@@ -53,6 +56,21 @@ async def _order() -> None:
             raise SystemExit(f"place_order failed: {result.content}")
 
 
+async def _watch() -> None:
+    info = Implementation(name="Claude Code", version="2.1.0")
+    async with Client(mcp_server.mcp, client_info=info) as client:
+        lists = await client.call_tool("list_watchlists", {})
+        assert lists.structured_content is not None
+        [core] = [w for w in lists.structured_content["watchlists"] if w["name"] == "Core"]
+        arguments = {
+            "watchlist_id": core["watchlist_id"],
+            "instruments": [{"symbol": "RELIANCE", "exchange": "NSE"}],
+        }
+        result = await client.call_tool("add_to_watchlist", arguments)
+        if result.is_error:
+            raise SystemExit(f"add_to_watchlist failed: {result.content}")
+
+
 def _kill(home: Path) -> None:
     [strategy] = [s for s in list_strategies() if s.name == "SBIN mean reversion"]
     events = build_event_bus({})
@@ -89,7 +107,7 @@ def _later(home: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", required=True)
-    parser.add_argument("what", choices=["order", "kill", "end-runs", "later"])
+    parser.add_argument("what", choices=["order", "kill", "end-runs", "later", "watch"])
     args = parser.parse_args()
     os.environ["OPENTICKER_HOME"] = args.home
     os.environ.update(E2E_ENV)
@@ -99,6 +117,8 @@ def main() -> None:
         asyncio.run(_order())
     elif args.what == "kill":
         _kill(Path(args.home))
+    elif args.what == "watch":
+        asyncio.run(_watch())
     elif args.what == "end-runs":
         _end_runs()
     else:

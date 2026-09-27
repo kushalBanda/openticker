@@ -1074,3 +1074,49 @@ def test_client_noted_once_a_minute() -> None:
     assert [(c.calls, c.last_seen_at) for c in second] == [
         (4, TRADING_TIME + timedelta(seconds=61))
     ]
+
+
+def test_watchlist_tools_round_trip_and_say_who_changed_it() -> None:
+    from openticker.adapters.inbound.mcp_models import InstrumentRef
+
+    mcp_server.sync_instruments(broker="fake")
+    reliance = [InstrumentRef(symbol="RELIANCE", exchange=Exchange.NSE)]
+    with as_client("claude-code"):
+        core = mcp_server.create_watchlist(name="Core")
+        added = mcp_server.add_to_watchlist(watchlist_id=core.watchlist_id, instruments=reliance)
+        mcp_server.rename_watchlist(watchlist_id=core.watchlist_id, name="Main")
+
+    [item] = added.items
+    assert (item.symbol, item.exchange, item.instrument_type) == (
+        "RELIANCE",
+        Exchange.NSE,
+        InstrumentType.EQ,
+    )
+    [listed] = mcp_server.list_watchlists().watchlists
+    assert (listed.name, [i.symbol for i in listed.items]) == ("Main", ["RELIANCE"])
+    [entry, *_] = mcp_server.get_audit_log(event_type="WatchlistChanged").entries
+    assert entry.triggered_by == "mcp:claude-code"
+
+    emptied = mcp_server.remove_from_watchlist(watchlist_id=core.watchlist_id, instruments=reliance)
+    assert emptied.items == []
+    gone = mcp_server.delete_watchlist(watchlist_id=core.watchlist_id)
+    assert (gone.name, gone.deleted) == ("Main", True)
+    assert mcp_server.list_watchlists().watchlists == []
+
+
+def test_watchlist_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import InstrumentRef
+
+    mcp_server.sync_instruments(broker="fake")
+    core = mcp_server.create_watchlist(name="Core")
+    with pytest.raises(ToolError, match="already exists"):
+        mcp_server.create_watchlist(name="core")
+    with pytest.raises(ToolError, match="1 to 40"):
+        mcp_server.create_watchlist(name=" ")
+    with pytest.raises(ToolError, match="sync_instruments"):
+        mcp_server.add_to_watchlist(
+            watchlist_id=core.watchlist_id,
+            instruments=[InstrumentRef(symbol="NOPE", exchange=Exchange.NSE)],
+        )
+    with pytest.raises(ToolError, match="list_watchlists"):
+        mcp_server.delete_watchlist(watchlist_id="wl_nope")

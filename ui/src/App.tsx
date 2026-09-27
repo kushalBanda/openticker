@@ -13,6 +13,7 @@ import { Strategies } from "./pages/strategies/Strategies";
 import { Strategy } from "./pages/strategy/Strategy";
 import { SymbolPage } from "./pages/symbol/Symbol";
 import { Trades } from "./pages/trades/Trades";
+import { WatchlistPage } from "./pages/watchlist/Watchlist";
 import { AppShell } from "./shell/AppShell";
 import { PAGES, SETTINGS } from "./shell/nav";
 
@@ -27,6 +28,7 @@ function Gate() {
 // Pages built so far; the rest say so (ADR 30).
 const BUILT: Record<string, ReactNode> = {
   "/": <Dashboard />,
+  "/watchlist": <WatchlistPage />,
   "/positions": <Positions />,
   "/orders": <Orders />,
   "/trades": <Trades />,

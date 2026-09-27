@@ -94,6 +94,7 @@ from openticker.storage.sqlite.audit_repo import AuditEntry
 from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
+from openticker.storage.sqlite.watchlists_repo import Watchlist
 from openticker.use_cases.agents.manage import AgentJobLog
 from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
@@ -2459,3 +2460,53 @@ class MonthChargesResult(BaseModel):
 class ChargesSummaryResult(BaseModel):
     months: list[MonthChargesResult] = Field(description="Oldest first; months with fills only.")
     total: float
+
+
+class WatchlistItemResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    instrument_type: InstrumentType | None = Field(
+        description="None when the instrument isn't in the instrument master; "
+        "sync_instruments brings it back."
+    )
+    expiry: date | None
+    strike: float | None
+    lot_size: int | None
+
+
+class WatchlistResult(BaseModel):
+    watchlist_id: str = Field(description="Pass this to the other watchlist tools.")
+    name: str
+    items: list[WatchlistItemResult] = Field(
+        description="In the order they were added; get_quotes prices them in one call."
+    )
+
+    @classmethod
+    def of(
+        cls, watchlist: Watchlist, instruments: Sequence[Instrument | None]
+    ) -> "WatchlistResult":
+        return cls(
+            watchlist_id=watchlist.watchlist_id,
+            name=watchlist.name,
+            items=[
+                WatchlistItemResult(
+                    symbol=item.symbol,
+                    exchange=Exchange(item.exchange),
+                    instrument_type=found.instrument_type if found else None,
+                    expiry=found.expiry if found else None,
+                    strike=found.strike if found else None,
+                    lot_size=found.lot_size if found else None,
+                )
+                for item, found in zip(watchlist.items, instruments, strict=True)
+            ],
+        )
+
+
+class WatchlistsResult(BaseModel):
+    watchlists: list[WatchlistResult] = Field(description="In the order they were made.")
+
+
+class DeleteWatchlistResult(BaseModel):
+    watchlist_id: str
+    name: str
+    deleted: bool

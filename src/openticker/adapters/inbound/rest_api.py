@@ -46,6 +46,7 @@ from openticker.adapters.inbound.mcp_models import (
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
+    DeleteWatchlistResult,
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
@@ -88,6 +89,8 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySummary,
     SyncResult,
     TradebookResult,
+    WatchlistResult,
+    WatchlistsResult,
     WebhookResult,
     closing_result,
 )
@@ -128,6 +131,12 @@ from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.storage.sqlite.watchlists_repo import (
+    MAX_ITEMS,
+    DuplicateWatchlistNameError,
+    Watchlist,
+    WatchlistLimitError,
+)
 from openticker.use_cases.agents import manage as agent_jobs
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
@@ -202,6 +211,17 @@ from openticker.use_cases.strategies.define import (
 from openticker.use_cases.strategies.ledger import MAX_LEDGER_RUNS, get_strategy_ledger
 from openticker.use_cases.strategies.signals import SignalResult, accept_signal
 from openticker.use_cases.sync_instruments import sync_instruments
+from openticker.use_cases.watchlists import (
+    InvalidWatchlistNameError,
+    UnknownWatchlistError,
+    add_to_watchlist,
+    create_watchlist,
+    delete_watchlist,
+    get_watchlists,
+    instruments_of,
+    remove_from_watchlist,
+    rename_watchlist,
+)
 
 # The errors the MCP server turns into agent-facing messages (ADR 7 in docs/adr),
 # here as HTTP statuses carrying the same message.
@@ -217,6 +237,10 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownRunError, 404),
     (UnknownScriptError, 404),
     (UnknownApiKeyError, 404),
+    (UnknownWatchlistError, 404),
+    (DuplicateWatchlistNameError, 409),
+    (WatchlistLimitError, 409),
+    (InvalidWatchlistNameError, 422),
     (DuplicateStrategyNameError, 409),
     (DuplicateApiKeyNameError, 409),
     (ManagedApiKeyError, 409),
@@ -283,6 +307,18 @@ _PREVIEW_NEXT_STEP = (
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
+
+
+class WatchlistNameBody(BaseModel):
+    name: str = Field(description="1 to 40 characters, unique whatever its case.")
+
+
+class WatchlistInstrumentsBody(BaseModel):
+    instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_ITEMS)
+
+
+def _watchlist_result(watchlist: Watchlist) -> WatchlistResult:
+    return WatchlistResult.of(watchlist, instruments_of(watchlist))
 
 
 class BrokerBody(BaseModel):
@@ -744,6 +780,45 @@ def create_app(
         return ChargesSummaryResult(
             months=[MonthChargesResult.of(m) for m in months],
             total=round(sum(m.total for m in months), 2),
+        )
+
+    @api.get("/watchlists")
+    def watchlists() -> WatchlistsResult:
+        """Every watchlist with its instruments, in the order they were made."""
+        return WatchlistsResult(watchlists=[_watchlist_result(w) for w in get_watchlists()])
+
+    @api.post("/watchlists")
+    def new_watchlist(body: WatchlistNameBody, caller: Caller) -> WatchlistResult:
+        """A new, empty list. At most 20."""
+        return _watchlist_result(create_watchlist(body.name, events, clock(), caller.triggered_by))
+
+    @api.patch("/watchlists/{watchlist_id}")
+    def rename(watchlist_id: str, body: WatchlistNameBody, caller: Caller) -> WatchlistResult:
+        return _watchlist_result(
+            rename_watchlist(watchlist_id, body.name, events, clock(), caller.triggered_by)
+        )
+
+    @api.delete("/watchlists/{watchlist_id}")
+    def remove_watchlist(watchlist_id: str, caller: Caller) -> DeleteWatchlistResult:
+        gone = delete_watchlist(watchlist_id, events, clock(), caller.triggered_by)
+        return DeleteWatchlistResult(watchlist_id=gone.watchlist_id, name=gone.name, deleted=True)
+
+    @api.post("/watchlists/{watchlist_id}/instruments")
+    def watch(watchlist_id: str, body: WatchlistInstrumentsBody, caller: Caller) -> WatchlistResult:
+        """Adds to the end of the list; one already on it stays where it is. At most 50."""
+        wanted = [(i.symbol, i.exchange.value) for i in body.instruments]
+        return _watchlist_result(
+            add_to_watchlist(watchlist_id, wanted, events, clock(), caller.triggered_by)
+        )
+
+    @api.delete("/watchlists/{watchlist_id}/instruments")
+    def unwatch(
+        watchlist_id: str, body: WatchlistInstrumentsBody, caller: Caller
+    ) -> WatchlistResult:
+        """Takes instruments off the list; one not on it is ignored."""
+        unwanted = [(i.symbol, i.exchange.value) for i in body.instruments]
+        return _watchlist_result(
+            remove_from_watchlist(watchlist_id, unwanted, events, clock(), caller.triggered_by)
         )
 
     @api.get("/positions")
