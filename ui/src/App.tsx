@@ -6,6 +6,7 @@ import { NotFound } from "./pages/NotFound";
 import { Orders } from "./pages/orders/Orders";
 import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
+import { Trades } from "./pages/trades/Trades";
 import { AppShell } from "./shell/AppShell";
 import { PAGES, SETTINGS } from "./shell/nav";
 
@@ -21,6 +22,7 @@ function Gate() {
 const BUILT: Record<string, ReactNode> = {
   "/positions": <Positions />,
   "/orders": <Orders />,
+  "/trades": <Trades />,
 };
 
 const router = createBrowserRouter([

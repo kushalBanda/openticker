@@ -150,7 +150,7 @@ from openticker.use_cases.get_orderbook import get_orderbook
 from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.get_quotes import MAX_QUOTES, get_quotes
-from openticker.use_cases.get_tradebook import get_tradebook, session_start
+from openticker.use_cases.get_tradebook import Period, get_tradebook, period_start, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
@@ -696,12 +696,13 @@ def create_app(
 
     @api.get("/trades")
     def tradebook(
-        broker: Broker, limit: Annotated[int, Query(ge=1, le=500)] = 50
+        broker: Broker, limit: Annotated[int, Query(ge=1, le=500)] = 50, period: Period = "today"
     ) -> TradebookResult:
-        """Today's fills, newest first."""
+        """Fills since the start of today, this week or this month, newest first."""
         now = clock()
+        trades = get_tradebook(order_broker(broker, env, clock), limit, now, period)
         return TradebookResult.of(
-            get_tradebook(order_broker(broker, env, clock), limit, now), session_start(now)
+            trades, period_start(now, period), placer_names(t.triggered_by for t in trades)
         )
 
     @api.get("/positions")

@@ -888,6 +888,12 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
         (placed.order_id, 3, "mcp")
     ]
     assert book.trades[0].filled_at == TRADING_TIME  # the server's clock, not the wall's
+    trade = book.trades[0]
+    assert trade.realized_pnl == 0.0 and trade.charges_detail is not None
+    assert round(sum(trade.charges_detail.values()), 2) == trade.charges
+    assert (trade.source, trade.placed_by, trade.instrument_type) == ("agent", None, "EQ")
+    month = mcp_server.get_tradebook(broker="fake", period="month")
+    assert len(month.trades) == 1 and month.since.day == 1
     with pytest.raises(ToolError, match="get_orderbook"):
         mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
 

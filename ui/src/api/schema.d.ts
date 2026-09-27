@@ -444,7 +444,7 @@ export interface paths {
         };
         /**
          * Tradebook
-         * @description Today's fills, newest first.
+         * @description Fills since the start of today, this week or this month, newest first.
          */
         get: operations["tradebook_api_v1_trades_get"];
         put?: never;
@@ -3484,16 +3484,40 @@ export interface components {
             charges: number | null;
             product: components["schemas"]["Product"];
             /**
+             * Charges Detail
+             * @description The charges itemised: brokerage, transaction_tax (STT), exchange_txn, sebi, stamp_duty and gst; they sum to charges. None: not modelled, or a trade from before they were recorded.
+             */
+            charges_detail: {
+                [key: string]: number;
+            } | null;
+            /**
+             * Realized Pnl
+             * @description What this fill closed made or lost, before charges; 0 for one that only opened. None: a trade from before it was recorded.
+             */
+            realized_pnl: number | null;
+            /**
              * Triggered By
              * @description Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, script:<id>, schedule, or the server itself (square-off, expiry-settlement).
              */
             triggered_by: string;
             /** @description triggered_by read as who did it, as the web app labels it. */
             source: components["schemas"]["Source"];
+            /**
+             * Placed By
+             * @description The name of the strategy or hosted script that placed it; None for anyone else, or when it has since been deleted.
+             */
+            placed_by?: string | null;
             /** Strategy Id */
             strategy_id: string | null;
             /** Run Id */
             run_id: string | null;
+            instrument_type: components["schemas"]["InstrumentType"];
+            /** Expiry */
+            expiry: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Lot Size */
+            lot_size: number;
         };
         /** TradebookResult */
         TradebookResult: {
@@ -3505,7 +3529,7 @@ export interface components {
             /**
              * Since
              * Format: date-time
-             * @description Start of today, exchange-local.
+             * @description Start of the period (today, this week or this month), exchange-local.
              */
             since: string;
         };
@@ -4429,6 +4453,7 @@ export interface operations {
                 /** @description Broker name, e.g. zerodha. */
                 broker: string;
                 limit?: number;
+                period?: "today" | "week" | "month";
             };
             header?: never;
             path?: never;

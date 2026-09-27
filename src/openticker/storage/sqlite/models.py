@@ -96,6 +96,9 @@ class SandboxTradeRow(Base):
     # table (ADR 18); NULL: filled before costs were modelled.
     charges: Mapped[float | None]
     expected_price: Mapped[float | None]  # what the order was placed against
+    # NULL: filled before they were recorded.
+    realized_pnl: Mapped[float | None]  # what this fill closed, before charges
+    charges_detail: Mapped[str | None]  # JSON: each charge, and "gst"; they sum to `charges`
 
 
 class SandboxPositionRow(Base):

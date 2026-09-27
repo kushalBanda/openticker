@@ -114,7 +114,11 @@ export function OrderDialog({
   const [error, setError] = useState<string | null>(null);
 
   const listings = useListings(draft.symbol);
-  const found = listings.data ?? [];
+  // NSE before BSE, as Kite lists them.
+  const found = useMemo(
+    () => [...(listings.data ?? [])].sort((a, b) => b.exchange.localeCompare(a.exchange)),
+    [listings.data],
+  );
   const contract = found.find((listing) => listing.exchange === exchange);
   const keys = useMemo(
     () => found.map((listing) => `${listing.exchange}:${listing.symbol}` as InstrumentKey),
@@ -125,13 +129,15 @@ export function OrderDialog({
   const ltp = ltpOf(exchange)?.last_price;
   const quote = useQuote(broker, exchange, draft.symbol);
 
-  // A limit starts at the last price, once; clearing it later leaves it clear.
+  // A limit starts at the last price on the tick grid, once; clearing it
+  // later leaves it clear.
   const prefilled = useRef(limit !== "");
+  const tick = contract?.tick_size;
   useEffect(() => {
-    if (prefilled.current || ltp === undefined || !needsPrice(orderType)) return;
+    if (prefilled.current || ltp === undefined || !tick || !needsPrice(orderType)) return;
     prefilled.current = true;
-    setLimit(ltp.toFixed(2));
-  }, [ltp, orderType]);
+    setLimit((Math.round(ltp / tick) * tick).toFixed(2));
+  }, [ltp, tick, orderType]);
 
   const current: OrderDraft = {
     symbol: draft.symbol,
@@ -227,7 +233,7 @@ export function OrderDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      width={480}
+      width={520}
       tone={tone}
       title={
         <>
@@ -346,32 +352,41 @@ export function OrderDialog({
               {error}
             </div>
           )}
+          {!marketOpen && (
+            <div className="note-line" role="status">
+              The market is closed. Orders can be placed from 09:15 IST on a trading day.
+            </div>
+          )}
         </div>
         <div className="dialog-foot">
-          <div className="muted" data-testid="order-cost">
-            Margin required{" "}
-            <span style={{ color: "var(--ink)" }}>
-              {margin.data ? rupees(margin.data.required) : "—"}
-            </span>
-            {charges.data && ` + ${rupees(charges.data.total)} charges`} (est.)
-            <br />
-            Available{" "}
-            <span style={{ color: "var(--ink)" }}>
-              {margin.data ? rupees(margin.data.available) : "—"}
-            </span>
-          </div>
+          <dl className="order-cost" data-testid="order-cost">
+            <div>
+              <dt>Margin</dt>
+              <dd>{margin.data ? rupees(margin.data.required) : "—"}</dd>
+            </div>
+            <div>
+              <dt>Charges (est.)</dt>
+              <dd>{charges.data ? rupees(charges.data.total) : "—"}</dd>
+            </div>
+            <div>
+              <dt>Available</dt>
+              <dd>{margin.data ? rupees(margin.data.available) : "—"}</dd>
+            </div>
+          </dl>
           <span className="flex-1" />
-          <button
-            type="submit"
-            className="btn"
-            data-variant={side === "BUY" ? "buy" : "sell"}
-            disabled={!marketOpen || busy}
-          >
-            {!marketOpen ? "Market closed" : busy ? "Sending…" : modifying ? "Modify" : verb}
-          </button>
-          <button type="button" className="btn" data-variant="ghost" onClick={onClose}>
-            Cancel
-          </button>
+          <div className="dialog-actions">
+            <button
+              type="submit"
+              className="btn"
+              data-variant={side === "BUY" ? "buy" : "sell"}
+              disabled={!marketOpen || busy}
+            >
+              {busy ? "Sending…" : modifying ? "Modify" : verb}
+            </button>
+            <button type="button" className="btn" data-variant="ghost" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
         </div>
       </form>
     </Dialog>

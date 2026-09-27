@@ -10,6 +10,7 @@ export const keys = {
     ["quote", broker, exchange, symbol] as const,
   charges: (params: ChargesParams) => ["charges", params] as const,
   orders: (broker: string) => ["orders", broker] as const,
+  trades: (broker: string, period: Period) => ["trades", broker, period] as const,
   margin: (params: MarginParams) => ["margin", params] as const,
   search: (query: string) => ["search", query] as const,
   listings: (symbol: string) => ["listings", symbol] as const,
@@ -178,6 +179,24 @@ export function useOrders(broker: string | undefined) {
   });
 }
 
+export type Trade = Schemas["TradeResult"];
+export type Period = "today" | "week" | "month";
+
+/** Fills since the start of the period, newest first; resting orders fill in the server. */
+export function useTrades(broker: string | undefined, period: Period) {
+  return useQuery({
+    queryKey: keys.trades(broker ?? "", period),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/trades", {
+          params: { query: { broker: broker ?? "", limit: 500, period } },
+        }),
+      ),
+    enabled: broker !== undefined,
+    refetchInterval: 5_000,
+  });
+}
+
 /** After anything that moves positions or orders: refetch them and the funds. */
 function useRefreshAccount() {
   const client = useQueryClient();
@@ -186,6 +205,7 @@ function useRefreshAccount() {
       client.invalidateQueries({ queryKey: ["positions"] }),
       client.invalidateQueries({ queryKey: ["funds"] }),
       client.invalidateQueries({ queryKey: ["orders"] }),
+      client.invalidateQueries({ queryKey: ["trades"] }),
       client.invalidateQueries({ queryKey: ["margin"] }),
     ]);
 }

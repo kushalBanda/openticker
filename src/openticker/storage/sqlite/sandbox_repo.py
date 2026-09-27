@@ -7,7 +7,8 @@ IMMEDIATE): a second writer waits for the first instead of both reading the
 same funds and one overwriting the other (ADR 11 in docs/adr).
 """
 
-from collections.abc import Iterator, Sequence
+import json
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -72,6 +73,8 @@ class StoredOrder:
     # Set when it fills and kept on its trade, not on the order row.
     charges: float | None = None
     expected_price: float | None = None
+    realized_pnl: float | None = None
+    charges_detail: Mapping[str, float] | None = None
 
     def to_order(self, instrument: Instrument) -> Order:
         return Order(
@@ -109,6 +112,8 @@ class StoredTrade:
     run_id: str | None
     charges: float | None = None  # None: filled before costs were modelled
     expected_price: float | None = None
+    realized_pnl: float | None = None  # None: filled before it was recorded
+    charges_detail: Mapping[str, float] | None = None
 
     def to_trade(self, instrument: Instrument) -> Trade:
         return Trade(
@@ -124,6 +129,8 @@ class StoredTrade:
             run_id=self.run_id,
             charges=self.charges,
             expected_price=self.expected_price,
+            realized_pnl=self.realized_pnl,
+            charges_detail=self.charges_detail,
         )
 
 
@@ -256,6 +263,10 @@ def _add_trade(session: Session, order: StoredOrder, price: float, filled_at: da
             run_id=order.run_id,
             charges=order.charges,
             expected_price=order.expected_price,
+            realized_pnl=order.realized_pnl,
+            charges_detail=(
+                json.dumps(dict(order.charges_detail)) if order.charges_detail is not None else None
+            ),
         )
     )
 
@@ -340,6 +351,8 @@ def _trades(rows: Sequence[Row[tuple[SandboxTradeRow, str]]]) -> list[StoredTrad
             run_id=trade.run_id,
             charges=trade.charges,
             expected_price=trade.expected_price,
+            realized_pnl=trade.realized_pnl,
+            charges_detail=json.loads(trade.charges_detail) if trade.charges_detail else None,
         )
         for trade, triggered_by in rows
     ]

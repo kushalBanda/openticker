@@ -170,8 +170,8 @@ from openticker.use_cases.get_positions import get_positions as get_positions_us
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
 from openticker.use_cases.get_quotes import MAX_QUOTES
 from openticker.use_cases.get_quotes import get_quotes as get_quotes_use_case
+from openticker.use_cases.get_tradebook import Period, period_start, session_start
 from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
-from openticker.use_cases.get_tradebook import session_start
 from openticker.use_cases.modify_order import modify_order as modify_order_use_case
 from openticker.use_cases.place_basket import MAX_BASKET
 from openticker.use_cases.place_basket import place_basket as place_basket_use_case
@@ -1094,13 +1094,23 @@ def get_tradebook(
     limit: Annotated[int, Field(ge=1, le=500, description="Most trades to return.")] = (
         DEFAULT_TRADEBOOK_LIMIT
     ),
+    period: Annotated[
+        Period,
+        Field(
+            description="today, this week (from Monday) or this month (from the 1st), "
+            "exchange-local."
+        ),
+    ] = "today",
 ) -> TradebookResult:
-    """Today's sandbox fills, newest first: what actually traded, at what
-    price and when. Includes resting orders filled later and strategy fills."""
+    """Sandbox fills, newest first: what actually traded, at what price and
+    when, what each paid in charges (itemised) and what it realized.
+    Includes resting orders filled later and strategy fills."""
     now = clock()
     with _agent_facing_errors():
-        trades = get_tradebook_use_case(order_broker(broker, os.environ, clock), limit, now)
-    return TradebookResult.of(trades, session_start(now))
+        trades = get_tradebook_use_case(order_broker(broker, os.environ, clock), limit, now, period)
+    return TradebookResult.of(
+        trades, period_start(now, period), placer_names(t.triggered_by for t in trades)
+    )
 
 
 @mcp.tool(

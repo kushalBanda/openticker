@@ -1,19 +1,14 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router";
 import { useCancelAll, useCancelOrder, useOrders } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { HoldButton } from "../../components/HoldButton";
 import { Instrument } from "../../components/Instrument";
 import { Page } from "../../components/Page";
+import { PlacedBy, SideBadge } from "../../components/PlacedBy";
 import { Segmented } from "../../components/Segmented";
+import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import { istClock, MISSING, price, qty } from "../../lib/format";
-import {
-  type Order,
-  type PlacerFilter,
-  placedBy,
-  placedByAny,
-  statusLabel,
-} from "../../lib/orders";
+import { type Order, type PlacerFilter, placedByAny, statusLabel } from "../../lib/orders";
 import { useActions } from "../../shell/actions";
 import type { InstrumentKey } from "../../stream/connection";
 import { usePrices } from "../../stream/prices";
@@ -23,14 +18,6 @@ type Executed = "all" | "FILLED" | "REJECTED" | "CANCELLED";
 
 const time = (order: Order) => istClock(new Date(order.placed_at));
 const filled = (order: Order) => (order.status === "FILLED" ? order.quantity : 0);
-
-function Side({ order }: { order: Order }) {
-  return (
-    <span className="badge" data-tone={order.side === "BUY" ? "up" : "down"}>
-      {order.side === "BUY" ? "Buy" : "Sell"}
-    </span>
-  );
-}
 
 function Status({ order }: { order: Order }) {
   const tone =
@@ -44,24 +31,6 @@ function Status({ order }: { order: Order }) {
       {statusLabel(order)}
     </span>
   );
-}
-
-function PlacedBy({ order }: { order: Order }) {
-  if (order.source === "strategy" && order.strategy_id && order.placed_by) {
-    return (
-      <Link to={`/strategies/${order.strategy_id}`} className="badge" data-tone="name">
-        {order.placed_by}
-      </Link>
-    );
-  }
-  if (order.placed_by) {
-    return (
-      <span className="badge" data-tone="name">
-        {order.placed_by}
-      </span>
-    );
-  }
-  return <span>{placedBy(order)}</span>;
 }
 
 const instrument: Column<Order> = {
@@ -85,7 +54,7 @@ const lead: Column<Order>[] = [
     align: "left",
     cell: (o) => <span className="muted">{time(o)}</span>,
   },
-  { key: "type", head: "Type", align: "left", cell: (o) => <Side order={o} /> },
+  { key: "type", head: "Type", align: "left", cell: (o) => <SideBadge side={o.side} /> },
   instrument,
   {
     key: "product",
@@ -97,31 +66,8 @@ const lead: Column<Order>[] = [
 ];
 const tail: Column<Order>[] = [
   { key: "status", head: "Status", align: "left", cell: (o) => <Status order={o} /> },
-  { key: "by", head: "Placed by", align: "left", cell: (o) => <PlacedBy order={o} /> },
+  { key: "by", head: "Placed by", align: "left", cell: (o) => <PlacedBy row={o} /> },
 ];
-
-function Skeleton({ label }: { label: string }) {
-  return (
-    <div role="status" aria-busy="true" aria-label={label}>
-      {[0, 1].map((i) => (
-        <div key={i} className="flex items-center gap-6 px-6" style={{ height: 44 }}>
-          <span className="skeleton" style={{ width: 60 }} />
-          <span className="skeleton" style={{ width: 140 }} />
-          <span className="flex-1" />
-          <span className="skeleton" style={{ width: 80 }} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Empty({ children }: { children: string }) {
-  return (
-    <p className="note" style={{ margin: 0, padding: "12px 24px 20px" }}>
-      {children}
-    </p>
-  );
-}
 
 /** Today's orders, Kite's way: open ones above (modify, cancel), executed below. */
 export function Orders() {
@@ -269,13 +215,13 @@ export function Orders() {
               )}
             </div>
             {loading ? (
-              <Skeleton label="Loading open orders" />
+              <TableSkeleton label="Loading open orders" />
             ) : open.length === 0 ? (
-              <Empty>
+              <TableEmpty>
                 {placer === "anyone"
                   ? "No open orders. A limit or stop order waits here until the price reaches it."
                   : "No open orders from them."}
-              </Empty>
+              </TableEmpty>
             ) : (
               <DataTable
                 label="Open orders"
@@ -328,13 +274,13 @@ export function Orders() {
               />
             </div>
             {loading ? (
-              <Skeleton label="Loading executed orders" />
+              <TableSkeleton label="Loading executed orders" />
             ) : done.length === 0 ? (
-              <Empty>
+              <TableEmpty>
                 {all.length === 0
                   ? "No orders today. Press ⌘K to find an instrument and place a paper order, or ask your agent to."
                   : "None with this status."}
-              </Empty>
+              </TableEmpty>
             ) : (
               <DataTable
                 label="Executed orders"

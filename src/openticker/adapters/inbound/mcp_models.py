@@ -999,13 +999,31 @@ class TradeResult(BaseModel):
         "this instrument (MCX), or a trade from before charges were."
     )
     product: Product
+    charges_detail: dict[str, float] | None = Field(
+        description="The charges itemised: brokerage, transaction_tax (STT), exchange_txn, "
+        "sebi, stamp_duty and gst; they sum to charges. None: not modelled, or a trade from "
+        "before they were recorded."
+    )
+    realized_pnl: float | None = Field(
+        description="What this fill closed made or lost, before charges; 0 for one that only "
+        "opened. None: a trade from before it was recorded."
+    )
     triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
     source: Source = Field(description=SOURCE_DESCRIPTION)
+    placed_by: str | None = Field(
+        default=None,
+        description="The name of the strategy or hosted script that placed it; None for "
+        "anyone else, or when it has since been deleted.",
+    )
     strategy_id: str | None
     run_id: str | None
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
 
     @classmethod
-    def of(cls, trade: Trade) -> "TradeResult":
+    def of(cls, trade: Trade, names: Mapping[str, str] | None = None) -> "TradeResult":
         return cls(
             order_id=trade.order_id,
             filled_at=trade.filled_at.astimezone(EXCHANGE_TIMEZONE),
@@ -1017,22 +1035,33 @@ class TradeResult(BaseModel):
             expected_price=trade.expected_price,
             value=round(trade.price * trade.quantity, 2),
             charges=trade.charges,
+            charges_detail=dict(trade.charges_detail) if trade.charges_detail else None,
+            realized_pnl=trade.realized_pnl,
             product=trade.product,
             triggered_by=trade.triggered_by,
             source=source_of(trade.triggered_by),
+            placed_by=(names or {}).get(trade.triggered_by),
             strategy_id=trade.strategy_id,
             run_id=trade.run_id,
+            instrument_type=trade.instrument.instrument_type,
+            expiry=trade.instrument.expiry,
+            strike=trade.instrument.strike,
+            lot_size=trade.instrument.lot_size,
         )
 
 
 class TradebookResult(BaseModel):
     trades: list[TradeResult] = Field(description="Newest first.")
-    since: datetime = Field(description="Start of today, exchange-local.")
+    since: datetime = Field(
+        description="Start of the period (today, this week or this month), exchange-local."
+    )
 
     @classmethod
-    def of(cls, trades: Sequence[Trade], since: datetime) -> "TradebookResult":
+    def of(
+        cls, trades: Sequence[Trade], since: datetime, names: Mapping[str, str] | None = None
+    ) -> "TradebookResult":
         return cls(
-            trades=[TradeResult.of(trade) for trade in trades],
+            trades=[TradeResult.of(trade, names) for trade in trades],
             since=since.astimezone(EXCHANGE_TIMEZONE),
         )
 

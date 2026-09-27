@@ -13,6 +13,8 @@ straddle and part of a NIFTY future held by two running strategies, the rest
 of the future and RELIANCE placed from the web app, HDFCBANK by Claude. Its
 order book is the Orders mock's: a resting HDFCBANK limit, a hosted script's
 RELIANCE stop, Codex's refused NIFTY future and a cancelled RELIANCE limit.
+Its trades add a TCS round trip today, and one yesterday from before fills
+kept their realized P&L and charge breakdown.
 """
 
 import argparse
@@ -27,6 +29,7 @@ from functools import partial
 from pathlib import Path
 
 import uvicorn
+from sqlalchemy import update
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
@@ -52,6 +55,7 @@ from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite import runs_repo, scripts_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
+from openticker.storage.sqlite.models import SandboxTradeRow
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
@@ -69,6 +73,7 @@ CLOSES = {
     "SENSEX": 81103.71,
     "RELIANCE": 2931.50,
     "HDFCBANK": 1652.10,
+    "TCS": 4139.00,
     "NIFTY27OCT26FUT": 24858.20,
     "NIFTY29SEP2624800CE": 142.30,
     "NIFTY29SEP2624800PE": 131.80,
@@ -111,10 +116,12 @@ FUT = _derivative("NIFTY27OCT26FUT", InstrumentType.FUT, date(2026, 10, 27), Non
 CE = _derivative("NIFTY29SEP2624800CE", InstrumentType.CE, MONTHLY, 24800.0)
 PE = _derivative("NIFTY29SEP2624800PE", InstrumentType.PE, MONTHLY, 24800.0)
 HDFCBANK = replace(FAKE_INSTRUMENT, symbol="HDFCBANK", broker_symbol="HDFCBANK", token="e2e-hdfc")
+TCS = replace(FAKE_INSTRUMENT, symbol="TCS", broker_symbol="TCS", token="e2e-tcs")
 
 INSTRUMENTS = [
     FAKE_INSTRUMENT,
     HDFCBANK,
+    TCS,
     FUT,
     CE,
     PE,
@@ -248,6 +255,21 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
     assert refused.status is OrderStatus.REJECTED
     assert dropped.broker_order_id is not None
     cancel_order(dropped.broker_order_id, sandbox, events, "ui")
+
+    # The Trades mock's TCS round trips (see the module docstring).
+    yesterday = order_broker("fake", env, lambda: clock() - timedelta(days=1))
+    for broker, bought, sold in ((yesterday, 4010.0, 4031.0), (sandbox, 3970.0, 4139.0)):
+        for side, at in ((Side.BUY, bought), (Side.SELL, sold)):
+            PRICES["TCS"] = at
+            request = OrderRequest(TCS, side, 15, Product.MIS, OrderType.MARKET, None, "ui")
+            filled = place_order(request, broker, events, None, load_calendar(), clock())
+            assert filled.status is OrderStatus.FILLED, filled.reason
+    with write_transaction() as session:
+        session.execute(
+            update(SandboxTradeRow)
+            .where(SandboxTradeRow.filled_at < SESSION_START.replace(tzinfo=None))
+            .values(realized_pnl=None, charges_detail=None)
+        )
     events.close()
 
 

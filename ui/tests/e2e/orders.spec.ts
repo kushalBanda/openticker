@@ -74,7 +74,7 @@ test("proof: place a limit from ⌘K, modify it, cancel it", async ({ page }) =>
   await dialog.getByLabel("Qty.").fill("10");
   await dialog.getByLabel("Price", { exact: true }).fill("2900");
   await expect(dialog.getByTestId("order-cost")).toContainText("₹");
-  await expect(dialog.getByTestId("order-cost")).toContainText("charges");
+  await expect(dialog.getByTestId("order-cost")).toContainText("Charges (est.)");
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((t) => {
       document.documentElement.dataset.theme = t;
@@ -127,3 +127,66 @@ test("an order the funds can't cover is refused in the window, with the reason",
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
+
+async function noSidewaysScroll(page: Page) {
+  const overflow = await page.evaluate(() =>
+    [...document.querySelectorAll(".dialog, .dialog *")]
+      .filter(
+        (el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX !== "visible",
+      )
+      .map((el) => el.className || el.tagName),
+  );
+  expect(overflow).toEqual([]);
+}
+
+for (const width of [390, 1440]) {
+  test(`the order window never scrolls sideways at ${width}px, open or closed`, async ({
+    page,
+  }) => {
+    let closed = false;
+    await page.routeWebSocket(/\/stream/, (socket) => {
+      const server = socket.connectToServer();
+      server.onMessage((message) => {
+        const data = JSON.parse(String(message));
+        if (closed && data.type === "status") data.feed.market_open = false;
+        socket.send(JSON.stringify(data));
+      });
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await openOrders(page);
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.keyboard.type("RELI");
+    await expect(page.getByRole("option", { name: /RELIANCE/ }).first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: /Buy RELIANCE/ });
+    await expect(dialog.getByTestId("order-cost")).toContainText("₹");
+    await expect(dialog.getByLabel("Price", { exact: true })).toBeFocused();
+    await expect(dialog.getByText("In steps of")).toHaveCount(0);
+    await page.waitForTimeout(400);
+    await noSidewaysScroll(page);
+    await page.screenshot({ path: `test-results/screens/order-dialog-${width}-open.png` });
+    await page.keyboard.press("Escape");
+
+    closed = true;
+    await page.reload();
+    await expect(page.getByRole("table", { name: "Open orders" })).toBeVisible({ timeout: 5000 });
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.keyboard.type("RELI");
+    await expect(page.getByRole("option", { name: /RELIANCE/ }).first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(dialog.getByRole("status")).toContainText("The market is closed");
+    await expect(dialog.locator("button[type=submit]")).toBeDisabled();
+    await expect(dialog.locator("button[type=submit]")).toHaveText("Buy");
+    await page.waitForTimeout(400);
+    await noSidewaysScroll(page);
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((t) => {
+        document.documentElement.dataset.theme = t;
+      }, theme);
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: `test-results/screens/order-dialog-${width}-closed-${theme}.png`,
+      });
+    }
+  });
+}

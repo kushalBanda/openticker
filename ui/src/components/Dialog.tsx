@@ -36,9 +36,10 @@ export function Dialog({
   useEffect(() => {
     if (!open) return;
     const before = document.activeElement as HTMLElement | null;
-    const first = box.current?.querySelector<HTMLElement>(
-      "[data-autofocus], input:checked, input, button:not([disabled])",
-    );
+    // In order of preference, not document order: the head's controls come first.
+    const first = ["[data-autofocus]", "input:checked", "input", "button:not([disabled])"]
+      .map((selector) => box.current?.querySelector<HTMLElement>(selector))
+      .find((element) => element);
     first?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();

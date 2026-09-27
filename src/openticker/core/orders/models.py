@@ -1,6 +1,7 @@
 """Order shapes shared by every entry point (MCP, REST, strategies) and every
 order adapter. Only the sandbox places orders (ADR 6 and ADR 11 in docs/adr)."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -83,6 +84,8 @@ class Trade:
     run_id: str | None
     charges: float | None = None  # None: filled before costs were modelled (ADR 28)
     expected_price: float | None = None  # what the order was placed against
+    realized_pnl: float | None = None  # what this fill closed, before charges; None: not recorded
+    charges_detail: Mapping[str, float] | None = None  # each charge, and "gst"; None: not recorded
 
 
 @dataclass(frozen=True)

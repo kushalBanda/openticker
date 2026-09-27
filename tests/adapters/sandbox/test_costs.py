@@ -144,7 +144,8 @@ def test_expiry_settlement_pays_no_charges() -> None:
     sandbox.settle_position(FAKE_INSTRUMENT, Product.MIS, 1000.0, "expired", NOW)
 
     settled = sandbox.get_trades(NOW, 5)[0]
-    assert (settled.price, settled.charges) == (1000.0, None)
+    assert (settled.price, settled.charges, settled.charges_detail) == (1000.0, None, None)
+    assert settled.realized_pnl == -5.0  # bought at the ask, 1000.5
 
 
 def test_mcx_fills_carry_no_charges_until_its_contract_size_is_known() -> None:
@@ -160,9 +161,53 @@ def test_trades_from_before_costs_read_as_such() -> None:
     sandbox = _sandbox(BookedBroker(1000.0, spread=1.0))
     sandbox.place_order(_order(Side.BUY))
     with Session(get_engine()) as session:
-        session.query(SandboxTradeRow).update({"charges": None, "expected_price": None})
+        session.query(SandboxTradeRow).update(
+            {"charges": None, "expected_price": None, "realized_pnl": None, "charges_detail": None}
+        )
         session.commit()
 
     [trade] = sandbox.get_trades(NOW, 5)
 
     assert (trade.charges, trade.expected_price) == (None, None)
+    assert (trade.realized_pnl, trade.charges_detail) == (None, None)
+
+
+def test_opening_fill_records_zero_realized() -> None:
+    sandbox = _sandbox(BookedBroker(1000.0, spread=1.0))
+
+    sandbox.place_order(_order(Side.BUY))
+
+    [trade] = sandbox.get_trades(NOW, 5)
+    assert trade.realized_pnl == 0.0
+
+
+def test_closing_fill_records_realized_pnl_on_its_trade() -> None:
+    market = BookedBroker(1000.0, spread=1.0)
+    sandbox = _sandbox(market)
+    sandbox.place_order(_order(Side.BUY, quantity=10))  # at 1000.5
+    market.price = 1100.0
+
+    sandbox.place_order(_order(Side.SELL, quantity=4))  # at 1099.5
+    placed = sandbox.place_order(_order(Side.SELL, quantity=6, kind=OrderType.LIMIT, price=1150))
+    [pending] = sandbox.pending_orders()
+    sandbox.fill_pending(pending, 1150.0, NOW)
+
+    rest, first, opening = sandbox.get_trades(NOW, 5)
+    assert placed.status is OrderStatus.PENDING
+    assert (opening.realized_pnl, first.realized_pnl, rest.realized_pnl) == (0.0, 396.0, 897.0)
+    assert sandbox.get_funds().realized_pnl == pytest.approx(396.0 + 897.0)
+
+
+def test_fill_records_charges_breakdown_that_sums_to_total() -> None:
+    market = BookedBroker(1000.0, spread=1.0)
+    sandbox = _sandbox(market)
+    sandbox.place_order(_order(Side.BUY))
+
+    sandbox.close_position(
+        FAKE_INSTRUMENT, Product.MIS, market.get_quote(FAKE_INSTRUMENT), NOW, "mcp"
+    )
+
+    for trade in sandbox.get_trades(NOW, 5):
+        assert trade.charges_detail is not None and trade.charges is not None
+        assert {"brokerage", "transaction_tax", "gst"} <= set(trade.charges_detail)
+        assert round(sum(trade.charges_detail.values()), 2) == trade.charges

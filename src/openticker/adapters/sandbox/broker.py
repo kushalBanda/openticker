@@ -72,6 +72,16 @@ class SandboxSettings:
     charges: ChargeBook | None = None  # None: the charges file (ADR 28 in docs/adr)
 
 
+@dataclass(frozen=True)
+class FillCost:
+    """What one fill closed and paid: the P&L it realized, before charges,
+    and its charges itemised (None: the charges file has no schedule for it,
+    or a settlement, which pays none). Kept on its trade."""
+
+    realized_pnl: float
+    charges: Charges | None
+
+
 class SandboxBroker:
     def __init__(
         self,
@@ -155,16 +165,18 @@ class SandboxBroker:
                     reason: str | None = (
                         f"no fresh price for {order.symbol} (last {price}); not filled"
                     )
-                    charges = None
+                    cost = None
                 else:
-                    reason, charges = self._fill(session, request.instrument, order, fill_at, funds)
-                order = replace(
-                    order,
-                    status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
-                    fill_price=None if reason else fill_at,
-                    reason=reason,
-                    charges=charges,
-                    expected_price=price,
+                    reason, cost = self._fill(session, request.instrument, order, fill_at, funds)
+                order = _costed(
+                    cost,
+                    replace(
+                        order,
+                        status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
+                        fill_price=None if reason else fill_at,
+                        reason=reason,
+                        expected_price=price,
+                    ),
                 )
             elif (
                 fresh
@@ -243,19 +255,21 @@ class SandboxBroker:
             funds = replace(funds, used_margin=funds.used_margin - order.reserved_margin)
             if instrument is None:
                 reason: str | None = f"{order.symbol} is no longer in the instrument master"
-                charges = None
+                cost = None
             else:
-                reason, charges = self._fill(session, instrument, order, price, funds)
+                reason, cost = self._fill(session, instrument, order, price, funds)
             if reason is not None:
                 sandbox_repo.save_funds(session, funds)
-            order = replace(
-                order,
-                status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
-                fill_price=None if reason else price,
-                reason=reason,
-                reserved_margin=0.0,
-                charges=charges,
-                expected_price=order.price if order.price is not None else order.trigger_price,
+            order = _costed(
+                cost,
+                replace(
+                    order,
+                    status=OrderStatus.REJECTED if reason else OrderStatus.FILLED,
+                    fill_price=None if reason else price,
+                    reason=reason,
+                    reserved_margin=0.0,
+                    expected_price=order.price if order.price is not None else order.trigger_price,
+                ),
             )
             sandbox_repo.update_order(session, order, now)
         return _result(order)
@@ -361,6 +375,14 @@ class SandboxBroker:
             charges = (
                 self._charges_of(instrument, product, side, quantity, price) if charged else None
             )
+            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
+            outcome = apply_fill(
+                held,
+                side,
+                quantity,
+                price,
+                leverage_for(instrument, product, side, self._settings.leverage),
+            )
             order = StoredOrder(
                 order_id=f"SB{uuid.uuid4().hex[:12].upper()}",
                 placed_at=now,
@@ -376,17 +398,9 @@ class SandboxBroker:
                 triggered_by=triggered_by,
                 strategy_id=None,
                 run_id=None,
-                charges=charges,
                 expected_price=expected_price,
             )
-            funds = sandbox_repo.load_funds(session, self._settings.starting_capital)
-            outcome = apply_fill(
-                held,
-                side,
-                quantity,
-                price,
-                leverage_for(instrument, product, side, self._settings.leverage),
-            )
+            order = _costed(FillCost(outcome.realized_pnl, charges), order)
             sandbox_repo.save_position(
                 session, exchange, instrument.symbol, product, outcome.position
             )
@@ -396,7 +410,7 @@ class SandboxBroker:
                     funds,
                     used_margin=funds.used_margin - outcome.margin_released,
                     realized_pnl=funds.realized_pnl + outcome.realized_pnl,
-                    charges=funds.charges + (charges or 0.0),
+                    charges=funds.charges + (order.charges or 0.0),
                 ),
             )
             sandbox_repo.record_order(session, order)
@@ -479,10 +493,9 @@ class SandboxBroker:
         order: StoredOrder,
         price: float,
         funds: FundsState,
-    ) -> tuple[str | None, float | None]:
+    ) -> tuple[str | None, FillCost | None]:
         """Applies the fill and its charges to position and funds: why it
-        can't, or None and the charges paid (None when the charges file has
-        no schedule for it)."""
+        can't, or None and what the fill closed and paid."""
         held = sandbox_repo.load_position(session, order.exchange, order.symbol, order.product)
         outcome = apply_fill(
             held,
@@ -509,16 +522,16 @@ class SandboxBroker:
                 funds,
                 used_margin=funds.used_margin - outcome.margin_released + outcome.margin_required,
                 realized_pnl=funds.realized_pnl + outcome.realized_pnl,
-                charges=funds.charges + (charges or 0.0),
+                charges=funds.charges + (charges.total if charges else 0.0),
             ),
         )
-        return None, charges
+        return None, FillCost(outcome.realized_pnl, charges)
 
     def _charges_of(
         self, instrument: Instrument, product: Product, side: Side, quantity: int, price: float
-    ) -> float | None:
+    ) -> Charges | None:
         schedule = self._charges.for_fill(instrument, product)
-        return charges_for(schedule, side, quantity, price).total if schedule else None
+        return charges_for(schedule, side, quantity, price) if schedule else None
 
     def _rest(
         self, session: Session, instrument: Instrument, order: StoredOrder, funds: FundsState
@@ -559,6 +572,17 @@ _CNC_SHORT = "delivery (CNC) shares can't be sold short; use MIS to short intrad
 
 def _insufficient(needed: float, available: float) -> str:
     return f"insufficient sandbox funds: needs {needed:,.2f} margin, {available:,.2f} available"
+
+
+def _costed(cost: FillCost | None, order: StoredOrder) -> StoredOrder:
+    if cost is None:
+        return order
+    return replace(
+        order,
+        realized_pnl=round(cost.realized_pnl, 2),
+        charges=cost.charges.total if cost.charges else None,
+        charges_detail=dict(cost.charges.items) if cost.charges else None,
+    )
 
 
 def _result(order: StoredOrder) -> OrderResult:

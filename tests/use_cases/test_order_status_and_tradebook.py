@@ -37,6 +37,24 @@ def test_today_is_the_exchange_local_date() -> None:
     assert get_tradebook(sandbox, 10, tuesday_early) == []
 
 
+def test_this_week_starts_monday_and_this_month_the_first() -> None:
+    sandbox = _buy_at(datetime(2026, 9, 14, 5, 0, tzinfo=UTC))  # Monday of last week
+    sandbox.place_order(
+        OrderRequest(FAKE_INSTRUMENT, Side.BUY, 1, Product.NRML, OrderType.MARKET, None, "mcp")
+    )
+    this_monday = SandboxBroker(
+        "fake", PricedBroker(), FRICTIONLESS, lambda: datetime(2026, 9, 21, 3, 50, tzinfo=UTC)
+    )
+    this_monday.place_order(
+        OrderRequest(FAKE_INSTRUMENT, Side.BUY, 1, Product.NRML, OrderType.MARKET, None, "mcp")
+    )
+    tuesday = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
+
+    assert get_tradebook(sandbox, 10, tuesday) == []
+    assert len(get_tradebook(sandbox, 10, tuesday, "week")) == 1
+    assert len(get_tradebook(sandbox, 10, tuesday, "month")) == 3
+
+
 def test_order_status_returns_the_order_or_names_the_way_to_find_one() -> None:
     sandbox = _buy_at(datetime(2026, 9, 22, 5, 0, tzinfo=UTC))
     [placed] = sandbox.get_orderbook(1)

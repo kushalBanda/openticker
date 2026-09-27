@@ -97,7 +97,7 @@ export function statusLabel(order: Pick<Order, "status" | "order_type" | "trigge
 }
 
 /** Who placed it: the strategy's or script's name when there is one. */
-export function placedBy(order: Pick<Order, "source" | "placed_by">): string {
+export function placedBy(order: { source: string; placed_by?: string | null }): string {
   return order.placed_by ?? sourceLabel(order.source as Source);
 }
 
