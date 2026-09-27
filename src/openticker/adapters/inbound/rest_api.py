@@ -1,6 +1,7 @@
 """REST API: the MCP tools as HTTP routes, each a thin call into use_cases,
 returning the same result shapes. Every route under /api/v1 needs an API key
-in the `X-API-Key` header (ADR 17 in docs/adr). A hosted script's key reaches
+in the `X-API-Key` header (ADR 17 in docs/adr), or a browser signed in to
+the web app (ADR 31). A hosted script's key reaches
 only prices, orders and positions (ADR 25). Signal strategies' alert URLs,
 under /webhooks, are authenticated by the token in the URL instead (ADR 24).
 
@@ -15,9 +16,8 @@ from datetime import UTC, date, datetime
 from importlib.metadata import version
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from openticker.adapters.brokers.registry import (
@@ -87,7 +87,13 @@ from openticker.adapters.inbound.mcp_models import (
     WebhookResult,
     closing_result,
 )
-from openticker.adapters.inbound.scopes import refusal
+from openticker.adapters.inbound.web.app import mount_web
+from openticker.adapters.inbound.web.auth import (
+    Caller,
+    WebSettings,
+    require_scope,
+)
+from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.composition import (
     AgentConfigError,
     SandboxConfigError,
@@ -114,8 +120,6 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import runs_repo
-from openticker.storage.sqlite.api_keys_repo import StoredApiKey
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.use_cases.agents import manage as agent_jobs
@@ -125,7 +129,6 @@ from openticker.use_cases.agents.manage import (
     AgentJobCapError,
     UnknownAgentJobError,
 )
-from openticker.use_cases.api_keys import FULL_SCOPE, authenticate
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.check_charge_rates import NoChargeSamplesError, check_charge_rates
@@ -179,8 +182,6 @@ from openticker.use_cases.strategies.define import (
 from openticker.use_cases.strategies.ledger import MAX_LEDGER_RUNS, get_strategy_ledger
 from openticker.use_cases.strategies.signals import SignalResult, accept_signal
 from openticker.use_cases.sync_instruments import sync_instruments
-
-API_KEY_HEADER = "X-API-Key"
 
 # The errors the MCP server turns into agent-facing messages (ADR 7 in docs/adr),
 # here as HTTP statuses carrying the same message.
@@ -251,43 +252,6 @@ _SCRIPT_COMMAND_NEXT_STEP = (
 _PREVIEW_NEXT_STEP = (
     "Nothing was placed. Change the legs with PUT /api/v1/strategies/{strategy_id}."
 )
-
-_api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
-
-
-def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> StoredApiKey:
-    stored = authenticate(key) if key else None
-    if stored is None:
-        raise HTTPException(
-            status_code=401,
-            detail=f"missing or invalid API key: send one in the {API_KEY_HEADER} header "
-            "(create one with `openticker-serve keys create <name>`)",
-        )
-    return stored
-
-
-ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
-
-
-def require_scope(request: Request, key: ApiKey) -> StoredApiKey:
-    """Holds a script's or a review's key to its routes (adapters/inbound/scopes.py)."""
-    path = getattr(request.scope.get("route"), "path", None)
-    why = refusal(key.scope, request.method, path, request.path_params, _strategy_of_run)
-    if why is not None:
-        raise HTTPException(status_code=403, detail=why)
-    return key
-
-
-def _strategy_of_run(run_id: str) -> str | None:
-    run = runs_repo.find_run(run_id)
-    return run.strategy_id if run is not None else None
-
-
-def _caller(key: StoredApiKey) -> str:
-    """Who an order came from, as the audit log records it: the scope of a
-    job's or a script's key (script:<id>), rest:<key name> for a full key."""
-    return key.scope if key.scope != FULL_SCOPE else f"rest:{key.name}"
-
 
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
@@ -423,9 +387,18 @@ def _utc_now() -> datetime:
 
 
 def create_app(
-    events: EventBus, env: Mapping[str, str], clock: Callable[[], datetime] = _utc_now
+    events: EventBus,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime] = _utc_now,
+    *,
+    hub: StreamHub | None = None,
+    web: WebSettings | None = None,
 ) -> FastAPI:
+    """With `hub` and `web`, the web app too (ADR 30 in docs/adr); without,
+    the REST API alone, for API keys only."""
     app = FastAPI(title="OpenTicker", version=version("openticker"))
+    app.state.clock = clock
+    app.state.web = web
     for error, status in _ERROR_STATUSES:
         app.add_exception_handler(error, _responder(status))
 
@@ -540,7 +513,7 @@ def create_app(
         return OptionChainResult.of(chain, expiries, now)
 
     @api.post("/orders")
-    def create_order(body: PlaceOrderBody, key: ApiKey) -> PlaceOrderResult:
+    def create_order(body: PlaceOrderBody, caller: Caller) -> PlaceOrderResult:
         """Paper trade in the local sandbox; nothing is sent to the broker. A
         rejection is still a 200, with the reason in the body."""
         request = OrderRequest(
@@ -551,7 +524,7 @@ def create_app(
             order_type=body.order_type,
             price=body.price,
             trigger_price=body.trigger_price,
-            triggered_by=_caller(key),
+            triggered_by=caller.triggered_by,
         )
         result = place_order(
             request,
@@ -581,11 +554,13 @@ def create_app(
         return ChargesResult.of(preview_charges(symbol, exchange, side, quantity, price, product))
 
     @api.post("/charges/check")
-    def charges_check(body: BrokerBody, key: ApiKey) -> ChargeCheckResult:
+    def charges_check(body: BrokerBody, caller: Caller) -> ChargeCheckResult:
         """Prices sample orders through the broker's contract note and compares
         them with the rates the sandbox charges. Nothing is placed."""
         return ChargeCheckResult.of(
-            check_charge_rates(body.broker, get_adapter(body.broker), events, clock(), _caller(key))
+            check_charge_rates(
+                body.broker, get_adapter(body.broker), events, clock(), caller.triggered_by
+            )
         )
 
     @api.post("/margin")
@@ -597,7 +572,7 @@ def create_app(
         )
 
     @api.post("/orders/basket")
-    def create_basket(body: BasketBody, key: ApiKey) -> BasketResult:
+    def create_basket(body: BasketBody, caller: Caller) -> BasketResult:
         """Up to 50 sandbox orders as one set, every BUY before any SELL. Not
         atomic: each order says its own status, and a refused one doesn't stop
         the rest."""
@@ -608,7 +583,7 @@ def create_app(
             capital_cap(env),
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return BasketResult.of(
             placements,
@@ -618,20 +593,22 @@ def create_app(
         )
 
     @api.delete("/orders/{order_id}")
-    def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
+    def delete_order(order_id: str, broker: Broker, caller: Caller) -> CancelOrderResult:
         """Withdraws a PENDING order; anything else is left as it is."""
-        result = cancel_order(order_id, order_broker(broker, env, clock), events, _caller(key))
+        result = cancel_order(
+            order_id, order_broker(broker, env, clock), events, caller.triggered_by
+        )
         return CancelOrderResult.of(order_id, result)
 
     @api.post("/orders/cancel-all")
-    def cancel_all(body: BrokerBody, key: ApiKey) -> CancelAllResult:
+    def cancel_all(body: BrokerBody, caller: Caller) -> CancelAllResult:
         """Withdraws every PENDING order, strategies' included. Strategies keep running."""
         return CancelAllResult.of(
-            cancel_all_orders(order_broker(body.broker, env, clock), events, _caller(key))
+            cancel_all_orders(order_broker(body.broker, env, clock), events, caller.triggered_by)
         )
 
     @api.post("/positions/close")
-    def close_one(body: ClosePositionBody, key: ApiKey) -> PlaceOrderResult:
+    def close_one(body: ClosePositionBody, caller: Caller) -> PlaceOrderResult:
         """Closes one position at the market for exactly what is held. A refusal
         (exchange closed, no fresh price) is a 200 with the reason."""
         position, result = close_position(
@@ -641,21 +618,25 @@ def create_app(
             events,
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return closing_result(position, result, _close_next_step)
 
     @api.post("/positions/close-all")
-    def close_all(body: BrokerBody, key: ApiKey) -> CloseAllResult:
+    def close_all(body: BrokerBody, caller: Caller) -> CloseAllResult:
         """Closes every open position at the market. Strategies are not stopped;
         pending orders stay (POST /orders/cancel-all withdraws them)."""
         closed = close_all_positions(
-            order_broker(body.broker, env, clock), events, load_calendar(), clock(), _caller(key)
+            order_broker(body.broker, env, clock),
+            events,
+            load_calendar(),
+            clock(),
+            caller.triggered_by,
         )
         return CloseAllResult.of(closed, _close_next_step)
 
     @api.patch("/orders/{order_id}")
-    def patch_order(order_id: str, body: ModifyOrderBody, key: ApiKey) -> ModifyOrderResult:
+    def patch_order(order_id: str, body: ModifyOrderBody, caller: Caller) -> ModifyOrderResult:
         """Changes a PENDING order's quantity, price or trigger; never fills it."""
         sandbox = order_broker(body.broker, env, clock)
         result = modify_order(
@@ -668,7 +649,7 @@ def create_app(
             capital_cap(env),
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return ModifyOrderResult.of(order_id, result, get_order_status(sandbox, order_id))
 
@@ -762,21 +743,21 @@ def create_app(
         )
 
     @api.post("/strategies/{strategy_id}/start")
-    def start(strategy_id: str, body: BrokerBody, key: ApiKey) -> StrategyCommandResult:
+    def start(strategy_id: str, body: BrokerBody, caller: Caller) -> StrategyCommandResult:
         """Enters the strategy now in the sandbox; openticker-serve watches it from then on."""
-        command = control.request_start(strategy_id, body.broker, f"rest:{key.name}", clock())
+        command = control.request_start(strategy_id, body.broker, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/stop")
-    def stop(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+    def stop(strategy_id: str, caller: Caller) -> StrategyCommandResult:
         """Closes every open leg and ends the run."""
-        command = control.request_stop(strategy_id, f"rest:{key.name}", clock())
+        command = control.request_stop(strategy_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/kill")
-    def kill(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+    def kill(strategy_id: str, caller: Caller) -> StrategyCommandResult:
         """Locks the strategy, then closes every open leg."""
-        command = control.request_kill(strategy_id, f"rest:{key.name}", clock())
+        command = control.request_kill(strategy_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/release")
@@ -797,9 +778,9 @@ def create_app(
         return StrategyResult.of(control.unschedule_strategy(strategy_id))
 
     @api.post("/strategies/{strategy_id}/legs/{leg_id}/close")
-    def close_leg(strategy_id: str, leg_id: str, key: ApiKey) -> StrategyCommandResult:
+    def close_leg(strategy_id: str, leg_id: str, caller: Caller) -> StrategyCommandResult:
         """Closes one leg; the run carries on with the others."""
-        command = control.request_close_leg(strategy_id, leg_id, f"rest:{key.name}", clock())
+        command = control.request_close_leg(strategy_id, leg_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/signal-strategies")
@@ -850,9 +831,11 @@ def create_app(
         return StrategyLedgerResult.of(get_strategy_ledger(strategy_id, limit))
 
     @api.post("/strategies/{strategy_id}/review")
-    def review(strategy_id: str, key: ApiKey) -> StartReviewResult:
+    def review(strategy_id: str, caller: Caller) -> StartReviewResult:
         """Asks openticker-serve to review the strategy now with the user's coding agent."""
-        job = agent_jobs.start_review(strategy_id, agent_settings(env), _caller(key), clock())
+        job = agent_jobs.start_review(
+            strategy_id, agent_settings(env), caller.triggered_by, clock()
+        )
         return StartReviewResult(job=AgentJobResult.of(job))
 
     @api.post("/strategies/{strategy_id}/review-schedule")
@@ -919,13 +902,13 @@ def create_app(
         return DeleteScriptResult(script_id=script_id, deleted=True)
 
     @api.post("/scripts/{script_id}/start")
-    def start_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
-        command = scripts.request_start(script_id, f"rest:{key.name}", clock())
+    def start_script(script_id: str, caller: Caller) -> ScriptCommandResult:
+        command = scripts.request_start(script_id, caller.triggered_by, clock())
         return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
     @api.post("/scripts/{script_id}/stop")
-    def stop_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
-        command = scripts.request_stop(script_id, f"rest:{key.name}", clock())
+    def stop_script(script_id: str, caller: Caller) -> ScriptCommandResult:
+        command = scripts.request_stop(script_id, caller.triggered_by, clock())
         return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
     @api.post("/scripts/{script_id}/schedule")
@@ -945,6 +928,8 @@ def create_app(
         return ScriptLogsResult.of(scripts.get_logs(script_id, run_id, lines))
 
     app.include_router(api)
+    if hub is not None and web is not None:
+        mount_web(app, hub=hub, web=web, clock=clock)
     return app
 
 

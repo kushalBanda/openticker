@@ -42,6 +42,11 @@ class LatestPrices:
         with self._lock:
             return self._streamed_at.get(_key(instrument))
 
+    def last_streamed_at(self) -> datetime | None:
+        """When the live feed last priced anything."""
+        with self._lock:
+            return max(self._streamed_at.values(), default=None)
+
     def snapshot(self) -> list[Tick]:
         with self._lock:
             return list(self._ticks.values())

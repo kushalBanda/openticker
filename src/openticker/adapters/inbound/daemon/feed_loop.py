@@ -34,13 +34,17 @@ class FeedLoop:
         prices: LatestPrices,
         events: EventPublisher,
         clock: Callable[[], float] = time.monotonic,
+        wake: threading.Event | None = None,
     ) -> None:
+        """`wake`, once set, resubscribes on the next pass instead of up to
+        5 seconds later: a browser opening a page wants its prices now (ADR 32)."""
         self._broker = broker
         self._open_feed = open_feed
         self._watched = watched
         self._prices = prices
         self._events = events
         self._clock = clock
+        self._wake = wake
         self._feed: MarketFeedPort | None = None
         self._subscribed: dict[tuple[str, str], Instrument] = {}
         self._next_open = 0.0
@@ -68,7 +72,9 @@ class FeedLoop:
             if self._feed is None:
                 return False
         feed = self._feed
-        if now >= self._next_resubscribe:
+        if now >= self._next_resubscribe or (self._wake is not None and self._wake.is_set()):
+            if self._wake is not None:
+                self._wake.clear()
             self._resubscribe(feed)
             self._next_resubscribe = now + RESUBSCRIBE_SECONDS
         try:

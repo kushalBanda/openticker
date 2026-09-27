@@ -1,3 +1,4 @@
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -118,3 +119,25 @@ def test_missing_broker_settings_are_logged_not_notified() -> None:
 
     assert loop.step(0) is False
     assert events.events == []
+
+
+def test_wake_resubscribes_before_the_5s_period() -> None:
+    wake = threading.Event()
+    harness = _Harness([FAKE_INSTRUMENT])
+    harness.loop = FeedLoop(
+        "zerodha",
+        harness.open_feed,
+        lambda: harness.watched,
+        harness.prices,
+        harness.events,
+        harness.clock,
+        wake=wake,
+    )
+    harness.loop.step(0)
+    harness.watched = [FAKE_INSTRUMENT, NIFTY]
+
+    wake.set()
+    harness.loop.step(0)
+
+    assert set(harness.feeds[0].subscribed) == {"RELIANCE", "NIFTY 50"}
+    assert not wake.is_set()

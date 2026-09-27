@@ -339,3 +339,29 @@ class AgentJobRow(Base):
     ended_at: Mapped[datetime | None]  # UTC, stored naive
     summary: Mapped[str | None]  # the agent's final answer, capped
     cost_usd: Mapped[float | None]
+
+
+# The web app's browser sign-in (ADR 31 in docs/adr). Only hashes of the
+# link tokens and session secrets are stored.
+
+
+class SignInLinkRow(Base):
+    __tablename__ = "ui_sign_in_links"
+
+    token_hash: Mapped[str] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime]  # UTC, stored naive
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]
+
+
+class WebSessionRow(Base):
+    __tablename__ = "ui_sessions"
+
+    id_hash: Mapped[str] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime]  # UTC, stored naive
+    expires_at: Mapped[datetime]  # sliding: pushed on while the session is used
+    last_seen_at: Mapped[datetime]
+    visit_started_at: Mapped[datetime | None]
+    previous_visit_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]
+    user_agent: Mapped[str | None]

@@ -36,3 +36,13 @@ def test_pending_orders_are_streamed_too() -> None:
     )
 
     assert [i.symbol for i in watched_instruments([])] == ["INFY"]
+
+
+def test_instruments_a_browser_watches_are_streamed_too() -> None:
+    upsert_instruments([FAKE_INSTRUMENT, NIFTY])
+
+    watched = watched_instruments(
+        [("RELIANCE", Exchange.NSE)], browser=lambda: [NIFTY, FAKE_INSTRUMENT]
+    )
+
+    assert [i.symbol for i in watched] == ["RELIANCE", "NIFTY 50"]

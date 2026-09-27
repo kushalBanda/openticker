@@ -26,3 +26,13 @@ def test_a_polled_quote_never_replaces_a_newer_streamed_price() -> None:
     prices.update_polled([Tick(FAKE_INSTRUMENT, 102.0, later)])
     assert prices.get(FAKE_INSTRUMENT) == Tick(FAKE_INSTRUMENT, 102.0, later)
     assert prices.streamed_at(FAKE_INSTRUMENT) == NOW
+
+
+def test_last_streamed_is_the_newest_live_price_and_ignores_polled_ones() -> None:
+    prices = LatestPrices()
+    assert prices.last_streamed_at() is None
+
+    prices.update([Tick(FAKE_INSTRUMENT, 101.0, NOW)])
+    prices.update_polled([Tick(FAKE_INSTRUMENT, 102.0, NOW + timedelta(seconds=30))])
+
+    assert prices.last_streamed_at() == NOW

@@ -1,0 +1,49 @@
+/* shadcn / Bklit names pointed at OpenTicker tokens (DESIGN.md, Theme bridge). */
+:root,
+[data-theme] {
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--ink);
+  --muted: var(--surface);
+  --muted-foreground: var(--ink-muted);
+  --secondary: var(--fill);
+  --secondary-foreground: var(--ink);
+  --primary: var(--action);
+  --primary-foreground: var(--on-action);
+  --accent-foreground: var(--ink);
+  --destructive: var(--down);
+  --border: var(--line);
+  --input: var(--ink-muted);
+  --ring: var(--focus);
+  --radius: var(--radius-lg);
+
+  --chart-1: var(--up);
+  --chart-2: var(--accent);
+  --chart-3: var(--paper);
+  --chart-4: var(--warn);
+  --chart-5: var(--down);
+  --chart-background: var(--surface-hover);
+  --chart-foreground: var(--ink);
+  --chart-foreground-muted: var(--ink-muted);
+  --chart-label: var(--ink-muted);
+  --chart-crosshair: var(--ink-muted);
+  --chart-indicator-color: var(--focus);
+  --chart-indicator-secondary-color: var(--ink-muted);
+  --chart-line-primary: var(--accent);
+  --chart-line-secondary: var(--ink-muted);
+  --chart-tooltip-background: var(--surface-raised);
+  --chart-marker-background: var(--surface-raised);
+  --chart-marker-border: var(--line-strong);
+  --chart-marker-foreground: var(--ink);
+  --chart-marker-badge-background: var(--accent);
+  --chart-marker-badge-foreground: var(--on-accent);
+  --chart-scale-01: var(--surface-hover);
+  --chart-scale-02: var(--line);
+  --chart-scale-03: var(--line-strong);
+  --chart-scale-04: var(--ink-muted);
+  --chart-scale-05: var(--accent);
+  --chart-scale-pattern-color: var(--surface);
+}
