@@ -438,7 +438,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Positions */
+        /**
+         * Positions
+         * @description Each with the running strategies holding part of it.
+         */
         get: operations["positions_api_v1_positions_get"];
         put?: never;
         post?: never;
@@ -1173,9 +1176,11 @@ export interface components {
             event_type: string;
             /**
              * Triggered By
-             * @description Which entry point caused it: mcp, rest, webhook.
+             * @description Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, script:<id>, schedule, or the server itself (square-off, expiry-settlement).
              */
             triggered_by: string | null;
+            /** @description triggered_by read as who did it, as the web app labels it. */
+            source: components["schemas"]["Source"];
             /**
              * Details
              * @description The event's own fields.
@@ -1540,6 +1545,31 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** HolderResult */
+        HolderResult: {
+            /**
+             * Strategy Id
+             * @description None: the part no running strategy holds.
+             */
+            strategy_id: string | null;
+            /**
+             * Name
+             * @description The strategy's name; None for the rest.
+             */
+            name: string | null;
+            /** @description strategy, or for the rest who last added to it (you, claude-code, ...). */
+            source: components["schemas"]["Source"];
+            /**
+             * Quantity
+             * @description Net and signed, as the position's.
+             */
+            quantity: number;
+            /**
+             * Leg Ids
+             * @description The strategy's open legs on this contract: close_strategy_leg takes one.
+             */
+            leg_ids: string[];
         };
         /**
          * Horizon
@@ -2124,8 +2154,13 @@ export interface components {
             fill_price: number | null;
             /** Reason */
             reason: string | null;
-            /** Triggered By */
+            /**
+             * Triggered By
+             * @description Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, script:<id>, schedule, or the server itself (square-off, expiry-settlement).
+             */
             triggered_by: string;
+            /** @description triggered_by read as who did it, as the web app labels it. */
+            source: components["schemas"]["Source"];
         };
         /** OrderbookResult */
         OrderbookResult: {
@@ -2193,6 +2228,13 @@ export interface components {
             /** Symbol */
             symbol: string;
             exchange: components["schemas"]["Exchange"];
+            instrument_type: components["schemas"]["InstrumentType"];
+            /** Expiry */
+            expiry: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Lot Size */
+            lot_size: number;
             product: components["schemas"]["Product"];
             /**
              * Quantity
@@ -2210,6 +2252,16 @@ export interface components {
             unrealized_pnl: number | null;
             /** Realized Pnl */
             realized_pnl: number;
+            /**
+             * Held By
+             * @description Running strategies holding part of it, then the rest; empty when closed.
+             */
+            held_by: components["schemas"]["HolderResult"][];
+            /**
+             * Shared
+             * @description True when the strategies' legs don't fit inside the position (opposite sides, or more than it holds): closing it closes what they think they hold.
+             */
+            shared: boolean;
         };
         /** PositionsResult */
         PositionsResult: {
@@ -2934,6 +2986,11 @@ export interface components {
              */
             exit_on_expiry: boolean;
         };
+        /**
+         * Source
+         * @enum {string}
+         */
+        Source: "you" | "claude-code" | "codex" | "agent" | "strategy" | "alert" | "script" | "schedule" | "rest" | "system";
         /** StartReviewResult */
         StartReviewResult: {
             job: components["schemas"]["AgentJobResult"];
@@ -3360,8 +3417,13 @@ export interface components {
              */
             charges: number | null;
             product: components["schemas"]["Product"];
-            /** Triggered By */
+            /**
+             * Triggered By
+             * @description Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, script:<id>, schedule, or the server itself (square-off, expiry-settlement).
+             */
             triggered_by: string;
+            /** @description triggered_by read as who did it, as the web app labels it. */
+            source: components["schemas"]["Source"];
             /** Strategy Id */
             strategy_id: string | null;
             /** Run Id */

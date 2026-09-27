@@ -3,13 +3,18 @@ import { useBarTitle } from "../shell/title";
 
 const BAR_HEIGHT = 44;
 
-/** A page: its large title (which settles into the bar on scroll), then its content. */
+/**
+ * A page: its large title (which settles into the bar on scroll), then its
+ * content. `count` follows the title, Kite's way: Positions (5).
+ */
 export function Page({
   title,
+  count,
   actions,
   children,
 }: {
   title: string;
+  count?: number;
   actions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -45,6 +50,7 @@ export function Page({
       <div className="page-head">
         <h1 ref={heading} className="page-title" data-tucked={tucked}>
           {title}
+          {count !== undefined && <span className="count"> ({count})</span>}
         </h1>
         <span className="flex-1" />
         {actions}

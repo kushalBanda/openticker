@@ -197,10 +197,6 @@ export function StatusBar() {
   const bar = useBarTitle();
   return (
     <header className="statusbar">
-      <span className="badge" data-tone="paper">
-        <span className="dot" />
-        Paper
-      </span>
       <span className="index-strip">
         {INDICES.map((index) => (
           <Index key={index.key} id={index.key} name={index.name} />

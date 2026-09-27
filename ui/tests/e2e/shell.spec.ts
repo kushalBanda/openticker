@@ -40,6 +40,6 @@ test("g then p goes to Positions", async ({ page }) => {
   await page.keyboard.press("p");
 
   await expect(page).toHaveURL("/positions");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Positions");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Positions/);
   await expect(page).toHaveTitle("Positions · OpenTicker");
 });

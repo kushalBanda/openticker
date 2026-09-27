@@ -82,7 +82,7 @@ from openticker.adapters.inbound.mcp_models import (
     WebhookResult,
     closing_result,
 )
-from openticker.adapters.inbound.mcp_scoped import ScopedMCPServer
+from openticker.adapters.inbound.mcp_scoped import ScopedMCPServer, current_client
 from openticker.composition import (
     AgentConfigError,
     SandboxConfigError,
@@ -124,6 +124,7 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.use_cases.agent_clients import note_agent_client
 from openticker.use_cases.agents import manage as agent_jobs
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
@@ -174,6 +175,7 @@ from openticker.use_cases.modify_order import modify_order as modify_order_use_c
 from openticker.use_cases.place_basket import MAX_BASKET
 from openticker.use_cases.place_basket import place_basket as place_basket_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
+from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError
 from openticker.use_cases.preview_charges import preview_charges as preview_charges_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
@@ -288,6 +290,20 @@ EVENT_TYPE_NAMES = [
 
 # The tools' clock; tests replace it to run at a fixed market time.
 clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+
+def _who() -> str:
+    """`triggered_by` for this call: "mcp:<client>" when the client gave its
+    name, else "mcp" (ADR 35)."""
+    client = current_client()
+    return f"mcp:{client}" if client else "mcp"
+
+
+def _note_client(name: str, transport: str, version: str | None) -> None:
+    note_agent_client(name, transport, version, clock())
+
+
+mcp.on_client = _note_client
 
 _event_bus: EventBus | None = None
 _event_bus_lock = threading.Lock()
@@ -680,7 +696,7 @@ def place_order(
             order_type=order_type,
             price=price,
             trigger_price=trigger_price,
-            triggered_by="mcp",
+            triggered_by=_who(),
         )
         result = place_order_use_case(
             request,
@@ -738,7 +754,7 @@ def check_charge_rates(broker: Broker) -> ChargeCheckResult:
     openticker-serve runs this once a day by itself."""
     with _agent_facing_errors():
         check = check_charge_rates_use_case(
-            broker, get_adapter(broker), event_bus(), clock(), "mcp"
+            broker, get_adapter(broker), event_bus(), clock(), _who()
         )
     return ChargeCheckResult.of(check)
 
@@ -803,7 +819,7 @@ def place_basket(
             capital_cap(os.environ),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
     return BasketResult.of(
         placements,
@@ -842,7 +858,7 @@ def cancel_order(
     order that already filled or was cancelled is left as it is."""
     with _agent_facing_errors():
         result = cancel_order_use_case(
-            order_id, order_broker(broker, os.environ, clock), event_bus(), "mcp"
+            order_id, order_broker(broker, os.environ, clock), event_bus(), _who()
         )
     return CancelOrderResult.of(order_id, result)
 
@@ -858,7 +874,7 @@ def cancel_all_orders(broker: Broker) -> CancelAllResult:
     the margin they held. Strategies keep running."""
     with _agent_facing_errors():
         outcomes = cancel_all_orders_use_case(
-            order_broker(broker, os.environ, clock), event_bus(), "mcp"
+            order_broker(broker, os.environ, clock), event_bus(), _who()
         )
     return CancelAllResult.of(outcomes)
 
@@ -897,7 +913,7 @@ def close_position(
             event_bus(),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
     return closing_result(position, result, _close_next_step)
 
@@ -915,7 +931,7 @@ def close_all_positions(broker: Broker) -> CloseAllResult:
     withdraws them."""
     with _agent_facing_errors():
         closed = close_all_positions_use_case(
-            order_broker(broker, os.environ, clock), event_bus(), load_calendar(), clock(), "mcp"
+            order_broker(broker, os.environ, clock), event_bus(), load_calendar(), clock(), _who()
         )
     return CloseAllResult.of(closed, _close_next_step)
 
@@ -956,7 +972,7 @@ def modify_order(
             capital_cap(os.environ),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
         order = get_order_status_use_case(sandbox, order_id)
     return ModifyOrderResult.of(order_id, result, order)
@@ -972,10 +988,11 @@ def get_positions(
         bool, Field(description="Also list positions closed earlier, with their realized P&L.")
     ] = False,
 ) -> PositionsResult:
-    """Sandbox net positions valued at the broker's live prices."""
+    """Sandbox net positions valued at the broker's live prices, each with
+    the running strategies holding part of it."""
     with _agent_facing_errors():
         positions = get_positions_use_case(order_broker(broker, os.environ, clock))
-    return PositionsResult.of(positions, include_closed)
+    return PositionsResult.of(positions, include_closed, holders(positions))
 
 
 @mcp.tool(
@@ -1311,7 +1328,7 @@ def start_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyCommandRe
     intraday square-off close it. The market must be open. If a leg can't be
     entered, the legs already entered are closed."""
     with _agent_facing_errors():
-        command = control.request_start(strategy_id, broker, "mcp", clock())
+        command = control.request_start(strategy_id, broker, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1325,7 +1342,7 @@ def stop_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
     """Close every open leg at the market and end the run. A start not carried
     out yet is cancelled instead."""
     with _agent_facing_errors():
-        command = control.request_stop(strategy_id, "mcp", clock())
+        command = control.request_stop(strategy_id, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1339,7 +1356,7 @@ def kill_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
     """Lock the strategy at once so nothing can start it, then close every open
     leg. It stays locked until release_kill_switch."""
     with _agent_facing_errors():
-        command = control.request_kill(strategy_id, "mcp", clock())
+        command = control.request_kill(strategy_id, _who(), clock())
     return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
 
 
@@ -1400,7 +1417,7 @@ def close_strategy_leg(strategy_id: StrategyId, leg_id: Leg) -> StrategyCommandR
     carries on with the others. Closing a leg by hand never moves the other
     legs' stops to entry."""
     with _agent_facing_errors():
-        command = control.request_close_leg(strategy_id, leg_id, "mcp", clock())
+        command = control.request_close_leg(strategy_id, leg_id, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1453,7 +1470,7 @@ def start_review(strategy_id: StrategyId) -> StartReviewResult:
     The verdict goes into the strategy's note. Refused while a review of it
     is pending or running, or once the day's cap of jobs has run."""
     with _agent_facing_errors():
-        job = agent_jobs.start_review(strategy_id, agent_settings(os.environ), "mcp", clock())
+        job = agent_jobs.start_review(strategy_id, agent_settings(os.environ), _who(), clock())
     return StartReviewResult(job=AgentJobResult.of(job))
 
 
@@ -1657,7 +1674,7 @@ def start_script(script_id: ScriptId) -> ScriptCommandResult:
     or its schedule's stop_time. It gets a fresh API key limited to prices,
     orders and positions, revoked when the run ends."""
     with _agent_facing_errors():
-        command = scripts.request_start(script_id, "mcp", clock())
+        command = scripts.request_start(script_id, _who(), clock())
     return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
 
@@ -1672,7 +1689,7 @@ def stop_script(script_id: ScriptId) -> ScriptCommandResult:
     open positions are left as they are. A scheduled script stopped this
     way isn't started again until its next day."""
     with _agent_facing_errors():
-        command = scripts.request_stop(script_id, "mcp", clock())
+        command = scripts.request_stop(script_id, _who(), clock())
     return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
 

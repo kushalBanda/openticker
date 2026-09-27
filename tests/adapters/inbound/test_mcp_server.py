@@ -15,7 +15,9 @@ from mcp.types import Tool
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
+from openticker.adapters.inbound.mcp_scoped import as_client
 from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
+from openticker.use_cases import agent_clients
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
 TRADING_TIME = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
@@ -944,3 +946,71 @@ def test_preview_charges_through_the_tool() -> None:
             price=1.0,
             product=Product.MIS,
         )
+
+
+@pytest.fixture
+def _fresh_client_notes() -> Iterator[None]:
+    agent_clients.forget_noted()
+    yield
+    agent_clients.forget_noted()
+
+
+@pytest.mark.usefixtures("_fresh_client_notes")
+def test_orders_record_mcp_client_name() -> None:
+    from mcp.client import Client
+    from mcp.types import Implementation
+
+    mcp_server.sync_instruments(broker="fake")
+
+    async def place() -> None:
+        info = Implementation(name="Claude Code", version="2.1.0")
+        async with Client(mcp_server.mcp, client_info=info) as client:
+            arguments = {
+                "broker": "fake",
+                "symbol": "RELIANCE",
+                "exchange": "NSE",
+                "side": "BUY",
+                "quantity": 1,
+                "product": "MIS",
+            }
+            await client.call_tool("place_order", arguments)
+
+    asyncio.run(place())
+    audit = mcp_server.get_audit_log(event_type="OrderFilled")
+    clients = agent_clients.get_agent_clients()
+
+    assert audit.entries[0].triggered_by == "mcp:claude-code"
+    assert [(c.name, c.transport, c.version, c.calls) for c in clients] == [
+        ("claude-code", "stdio", "2.1.0", 1)
+    ]
+
+
+def test_unknown_client_records_plain_mcp() -> None:
+    mcp_server.sync_instruments(broker="fake")
+    with as_client(None):
+        mcp_server.place_order(
+            broker="fake",
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=1,
+            product=Product.MIS,
+        )
+
+    assert mcp_server.get_audit_log(event_type="OrderFilled").entries[0].triggered_by == "mcp"
+
+
+@pytest.mark.usefixtures("_fresh_client_notes")
+def test_client_noted_once_a_minute() -> None:
+    for seconds in (0, 30, 59):
+        agent_clients.note_agent_client(
+            "codex", "stdio", "1", TRADING_TIME + timedelta(seconds=seconds)
+        )
+    first = agent_clients.get_agent_clients()
+    agent_clients.note_agent_client("codex", "stdio", "1", TRADING_TIME + timedelta(seconds=61))
+    second = agent_clients.get_agent_clients()
+
+    assert [c.calls for c in first] == [1]  # the two after it wait for the next write
+    assert [(c.calls, c.last_seen_at) for c in second] == [
+        (4, TRADING_TIME + timedelta(seconds=61))
+    ]

@@ -1,6 +1,6 @@
 import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
 
-// apple.com's large title: the page's 34px title, once it scrolls under the
+// large title: the page's 34px title, once it scrolls under the
 // glass bar, shows in the bar instead (DESIGN.md, Scroll effects).
 
 interface BarTitle {

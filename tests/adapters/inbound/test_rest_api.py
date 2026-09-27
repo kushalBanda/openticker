@@ -125,6 +125,14 @@ def test_sandbox_round_trip_over_rest(client: TestClient) -> None:
     assert [entry["order_id"] for entry in book["orders"]] == [placed["order_id"]]
     assert book["orders"][0]["triggered_by"] == "rest:tests"
     assert audit["entries"][0]["triggered_by"] == "rest:tests"
+    trades = client.get("/api/v1/trades", params={"broker": "fake"}).json()["trades"]
+    assert book["orders"][0]["source"] == audit["entries"][0]["source"] == "rest"
+    assert trades[0]["source"] == "rest"
+    (position,) = positions["positions"]
+    assert position["held_by"] == [
+        {"strategy_id": None, "name": None, "source": "rest", "quantity": 4, "leg_ids": []}
+    ]
+    assert (position["instrument_type"], position["shared"]) == ("EQ", False)
 
 
 def test_a_rejected_order_is_a_normal_response_with_its_reason(client: TestClient) -> None:

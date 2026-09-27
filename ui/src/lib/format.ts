@@ -6,11 +6,18 @@ export const MISSING = "—";
 
 type Num = number | null | undefined;
 
-const grouped = (decimals: number) =>
-  new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
+const formats = new Map<number, Intl.NumberFormat>();
+const grouped = (decimals: number) => {
+  let format = formats.get(decimals);
+  if (!format) {
+    format = new Intl.NumberFormat("en-IN", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    formats.set(decimals, format);
+  }
+  return format;
+};
 const two = grouped(2);
 const none = grouped(0);
 
@@ -31,10 +38,10 @@ export function rupees(v: Num, opts: { sign?: boolean; decimals?: 0 | 2 } = {}):
   return opts.sign && v > 0 ? `+${body}` : body;
 }
 
-/** +13.70 / -4.25 / 0.00 */
+/** +13.70 / -4.25 / 0.00 / +1,065.00 */
 export function signed(v: Num, decimals = 2): string {
   if (!present(v)) return MISSING;
-  const body = Math.abs(v).toFixed(decimals);
+  const body = grouped(decimals).format(Math.abs(v));
   if (v > 0) return `+${body}`;
   return v < 0 ? `-${body}` : body;
 }
@@ -62,4 +69,79 @@ const clock = new Intl.DateTimeFormat("en-GB", {
 /** 11:42:07, exchange time */
 export function istClock(at: Date): string {
   return clock.format(at);
+}
+
+/** 1,500 / -75: quantities, no decimals. */
+export function qty(v: Num): string {
+  return present(v) ? none.format(v) : MISSING;
+}
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+function ordinal(day: number): string {
+  if (day % 100 >= 11 && day % 100 <= 13) return `${day}th`;
+  const suffix: Record<number, string> = { 1: "st", 2: "nd", 3: "rd" };
+  return `${day}${suffix[day % 10] ?? "th"}`;
+}
+
+// OpenTicker's symbols: <underlying><DDMMMYY>FUT and <underlying><DDMMMYY><strike><CE|PE>.
+const DERIVATIVE = /^(.+?)\d{2}[A-Z]{3}\d{2}(?:FUT|[\d.]+(?:CE|PE))$/;
+
+export type InstrumentType = "EQ" | "FUT" | "CE" | "PE" | "INDEX";
+
+/**
+ * Kite's name for an instrument and its exchange tag: RELIANCE; NIFTY OCT FUT
+ * NFO; NIFTY SEP 24800 CE NFO; a weekly option, NIFTY 7th w OCT 25000 CE.
+ * NSE cash needs no tag.
+ */
+export function instrumentName(
+  symbol: string,
+  exchange: string,
+  type?: InstrumentType,
+  expiry?: string | null,
+  strike?: number | null,
+): { name: string; tag: string } {
+  const tag = exchange === "NSE" ? "" : exchange;
+  const underlying = DERIVATIVE.exec(symbol)?.[1];
+  if (!type || type === "EQ" || type === "INDEX" || !expiry || !underlying) {
+    return { name: symbol, tag };
+  }
+  const [year, month, day] = expiry.split("-").map(Number) as [number, number, number];
+  const mon = MONTHS[month - 1] ?? "";
+  if (type === "FUT") return { name: `${underlying} ${mon} FUT`, tag };
+  // A monthly contract is the month's last expiry: a week later is next month.
+  const monthly = new Date(Date.UTC(year, month - 1, day + 7)).getUTCMonth() !== month - 1;
+  const when = monthly ? mon : `${ordinal(day)} w ${mon}`;
+  const at = strike == null ? "" : ` ${Number.isInteger(strike) ? strike : strike.toFixed(2)}`;
+  return { name: `${underlying} ${when}${at} ${type}`, tag };
+}
+
+export type Source =
+  | "you"
+  | "claude-code"
+  | "codex"
+  | "agent"
+  | "strategy"
+  | "alert"
+  | "script"
+  | "schedule"
+  | "rest"
+  | "system";
+
+const SOURCES: Record<Source, string> = {
+  you: "You",
+  "claude-code": "Claude",
+  codex: "Codex",
+  agent: "An agent",
+  strategy: "A strategy",
+  alert: "An alert",
+  script: "A script",
+  schedule: "Schedule",
+  rest: "REST API",
+  system: "OpenTicker",
+};
+
+/** Who did it, as a row says it: You, Claude, Codex, ... */
+export function sourceLabel(source: Source): string {
+  return SOURCES[source];
 }

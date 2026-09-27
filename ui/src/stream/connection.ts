@@ -17,6 +17,8 @@ export interface Tick {
   change_pct: number | null;
   as_of: string;
   streamed: boolean;
+  /** Browser time it arrived (ms), set by the price store. */
+  received?: number;
 }
 
 export interface FeedStatus {

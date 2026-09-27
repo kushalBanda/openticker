@@ -365,3 +365,18 @@ class WebSessionRow(Base):
     previous_visit_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]
     user_agent: Mapped[str | None]
+
+
+# MCP clients that have called a tool (ADR 35 in docs/adr): Claude Code,
+# Codex, ... by the name each gives in its initialize handshake.
+
+
+class AgentClientRow(Base):
+    __tablename__ = "agent_clients"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    transport: Mapped[str] = mapped_column(primary_key=True)  # stdio, http
+    version: Mapped[str | None]
+    first_seen_at: Mapped[datetime]  # UTC, stored naive
+    last_seen_at: Mapped[datetime]
+    calls: Mapped[int]

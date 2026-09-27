@@ -153,6 +153,7 @@ from openticker.use_cases.get_tradebook import get_tradebook, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
+from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
@@ -681,7 +682,9 @@ def create_app(
 
     @api.get("/positions")
     def positions(broker: Broker, include_closed: bool = False) -> PositionsResult:
-        return PositionsResult.of(get_positions(order_broker(broker, env, clock)), include_closed)
+        """Each with the running strategies holding part of it."""
+        held = get_positions(order_broker(broker, env, clock))
+        return PositionsResult.of(held, include_closed, holders(held))
 
     @api.get("/funds")
     def funds(broker: Broker) -> FundsResult:

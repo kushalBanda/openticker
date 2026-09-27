@@ -4,7 +4,7 @@ included), matching the trading dates the tools take as input. The REST API
 returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, time
 from typing import Annotated, Any, Literal
 
@@ -22,6 +22,7 @@ from openticker.core.orders.models import (
     OrderType,
     Trade,
 )
+from openticker.core.pnl import Source, source_of
 from openticker.core.risk.models import (
     BreachReason,
     LockMode,
@@ -91,6 +92,7 @@ from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
 from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
+from openticker.use_cases.position_holders import Holder, Holding, PositionKey, key_of
 from openticker.use_cases.preview_charges import ChargePreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
@@ -323,11 +325,20 @@ class BarsResult(BaseModel):
         )
 
 
+TRIGGERED_BY_DESCRIPTION = (
+    "Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; "
+    "plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, "
+    "script:<id>, schedule, or the server itself (square-off, expiry-settlement)."
+)
+SOURCE_DESCRIPTION = "triggered_by read as who did it, as the web app labels it."
+
+
 class AuditEntryResult(BaseModel):
     id: int
     occurred_at: datetime = Field(description="Exchange-local.")
     event_type: str
-    triggered_by: str | None = Field(description="Which entry point caused it: mcp, rest, webhook.")
+    triggered_by: str | None = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
     details: dict[str, Any] = Field(description="The event's own fields.")
 
     @classmethod
@@ -337,6 +348,7 @@ class AuditEntryResult(BaseModel):
             occurred_at=entry.occurred_at.astimezone(EXCHANGE_TIMEZONE),
             event_type=entry.event_type,
             triggered_by=entry.triggered_by,
+            source=source_of(entry.triggered_by),
             details=json.loads(entry.payload),
         )
 
@@ -731,21 +743,59 @@ class CloseAllResult(BaseModel):
         return cls(orders=[closing_result(p, r, next_step) for p, r in closed])
 
 
+class HolderResult(BaseModel):
+    strategy_id: str | None = Field(description="None: the part no running strategy holds.")
+    name: str | None = Field(description="The strategy's name; None for the rest.")
+    source: Source = Field(
+        description="strategy, or for the rest who last added to it (you, claude-code, ...)."
+    )
+    quantity: int = Field(description="Net and signed, as the position's.")
+    leg_ids: list[str] = Field(
+        description="The strategy's open legs on this contract: close_strategy_leg takes one."
+    )
+
+    @classmethod
+    def of(cls, holder: Holder) -> "HolderResult":
+        return cls(
+            strategy_id=holder.strategy_id,
+            name=holder.name,
+            source=holder.source,
+            quantity=holder.quantity,
+            leg_ids=list(holder.leg_ids),
+        )
+
+
 class PositionResult(BaseModel):
     symbol: str
     exchange: Exchange
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
     product: Product
     quantity: int = Field(description="Net and signed: negative is short, 0 is closed.")
     average_price: float
     last_price: float | None = Field(description="None when no fresh price was available.")
     unrealized_pnl: float | None
     realized_pnl: float
+    held_by: list[HolderResult] = Field(
+        description="Running strategies holding part of it, then the rest; empty when closed."
+    )
+    shared: bool = Field(
+        description="True when the strategies' legs don't fit inside the position (opposite "
+        "sides, or more than it holds): closing it closes what they think they hold."
+    )
 
     @classmethod
-    def of(cls, position: Position) -> "PositionResult":
+    def of(cls, position: Position, holding: Holding | None = None) -> "PositionResult":
+        instrument = position.instrument
         return cls(
-            symbol=position.instrument.symbol,
-            exchange=position.instrument.exchange,
+            symbol=instrument.symbol,
+            exchange=instrument.exchange,
+            instrument_type=instrument.instrument_type,
+            expiry=instrument.expiry,
+            strike=instrument.strike,
+            lot_size=instrument.lot_size,
             product=position.product,
             quantity=position.quantity,
             average_price=round(position.average_price, 4),
@@ -754,6 +804,8 @@ class PositionResult(BaseModel):
                 round(position.unrealized_pnl, 2) if position.unrealized_pnl is not None else None
             ),
             realized_pnl=round(position.realized_pnl, 2),
+            held_by=[HolderResult.of(h) for h in holding.holders] if holding else [],
+            shared=holding.shared if holding else False,
         )
 
 
@@ -765,11 +817,17 @@ class PositionsResult(BaseModel):
     total_realized_pnl: float
 
     @classmethod
-    def of(cls, positions: Sequence[Position], include_closed: bool) -> "PositionsResult":
+    def of(
+        cls,
+        positions: Sequence[Position],
+        include_closed: bool,
+        holdings: Mapping[PositionKey, Holding] | None = None,
+    ) -> "PositionsResult":
         shown = [position for position in positions if include_closed or position.quantity]
         unrealized = [position.unrealized_pnl for position in shown]
+        held = holdings or {}
         return cls(
-            positions=[PositionResult.of(position) for position in shown],
+            positions=[PositionResult.of(p, held.get(key_of(p))) for p in shown],
             total_unrealized_pnl=(
                 None
                 if any(value is None for value in unrealized)
@@ -818,7 +876,8 @@ class OrderbookEntryResult(BaseModel):
     )
     fill_price: float | None
     reason: str | None
-    triggered_by: str
+    triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
 
     @classmethod
     def of(cls, order: Order) -> "OrderbookEntryResult":
@@ -837,6 +896,7 @@ class OrderbookEntryResult(BaseModel):
             fill_price=order.fill_price,
             reason=order.reason,
             triggered_by=order.triggered_by,
+            source=source_of(order.triggered_by),
         )
 
 
@@ -893,7 +953,8 @@ class TradeResult(BaseModel):
         "this instrument (MCX), or a trade from before charges were."
     )
     product: Product
-    triggered_by: str
+    triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
     strategy_id: str | None
     run_id: str | None
 
@@ -912,6 +973,7 @@ class TradeResult(BaseModel):
             charges=trade.charges,
             product=trade.product,
             triggered_by=trade.triggered_by,
+            source=source_of(trade.triggered_by),
             strategy_id=trade.strategy_id,
             run_id=trade.run_id,
         )

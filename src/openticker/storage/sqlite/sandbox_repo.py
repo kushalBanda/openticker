@@ -368,6 +368,25 @@ def list_pending_orders() -> list[StoredOrder]:
     return [_stored(row) for row in rows]
 
 
+def last_placer(exchange: str, symbol: str, product: Product, side: Side) -> str | None:
+    """`triggered_by` of the newest filled `side` order in the contract that no
+    strategy placed: who opened or added to what is held outside strategies."""
+    with Session(get_engine()) as session:
+        return session.scalar(
+            select(SandboxOrderRow.triggered_by)
+            .where(
+                SandboxOrderRow.exchange == exchange,
+                SandboxOrderRow.symbol == symbol,
+                SandboxOrderRow.product == product.value,
+                SandboxOrderRow.side == side.value,
+                SandboxOrderRow.status == OrderStatus.FILLED.value,
+                SandboxOrderRow.strategy_id.is_(None),
+            )
+            .order_by(SandboxOrderRow.placed_at.desc(), literal_column("rowid").desc())
+            .limit(1)
+        )
+
+
 def _stored(row: SandboxOrderRow) -> StoredOrder:
     return StoredOrder(
         order_id=row.order_id,

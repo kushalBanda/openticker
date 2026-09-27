@@ -1,7 +1,9 @@
+import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 import { useSession } from "./api/queries";
 import { Building } from "./pages/Building";
 import { NotFound } from "./pages/NotFound";
+import { Positions } from "./pages/positions/Positions";
 import { SignIn } from "./pages/SignIn";
 import { AppShell } from "./shell/AppShell";
 import { PAGES, SETTINGS } from "./shell/nav";
@@ -14,6 +16,11 @@ function Gate() {
   return <Outlet />;
 }
 
+// Pages built so far; the rest say so (ADR 30).
+const BUILT: Record<string, ReactNode> = {
+  "/positions": <Positions />,
+};
+
 const router = createBrowserRouter([
   {
     element: <Gate />,
@@ -23,7 +30,7 @@ const router = createBrowserRouter([
         children: [
           ...[...PAGES, SETTINGS].map((page) => ({
             path: page.path,
-            element: <Building title={page.label} />,
+            element: BUILT[page.path] ?? <Building title={page.label} />,
           })),
           { path: "*", element: <NotFound /> },
         ],
