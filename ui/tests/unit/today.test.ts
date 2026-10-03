@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Schemas } from "../../src/api/client";
-import { dayStats, sinceSentence, tabTitle, weeks } from "../../src/lib/today";
+import { dayStats, sinceSentence, weeks } from "../../src/lib/today";
 
 type Entry = Schemas["AuditEntryResult"];
 
@@ -61,12 +61,6 @@ describe("since you were here", () => {
       ["4 more", "/activity"],
     ]);
   });
-});
-
-test("tab title: the figure, else the page", () => {
-  expect(tabTitle(6976.4, "Dashboard")).toBe("+₹6,976 · OpenTicker");
-  expect(tabTitle(-12, "Positions")).toBe("-₹12 · Positions");
-  expect(tabTitle(null, "Positions")).toBe("Positions · OpenTicker");
 });
 
 test("calendar weeks run Monday to Friday, blank outside the range", () => {

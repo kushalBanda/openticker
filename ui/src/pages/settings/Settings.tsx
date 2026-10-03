@@ -8,7 +8,6 @@ import {
   turnDesktopOn,
   useDesktopNotifications,
 } from "../../lib/desktop";
-import { brokerName } from "../../lib/format";
 import { type ThemeChoice, useThemeChoice } from "../../lib/theme";
 import { useActions } from "../../shell/actions";
 import { useLive } from "../../stream/StreamProvider";
@@ -163,7 +162,7 @@ export function Settings() {
                 document.getElementById(section.id)?.scrollIntoView({ block: "start" });
               }}
             >
-              {section.id === "broker" ? brokerName(broker) : section.label}
+              {section.label}
             </a>
           ))}
         </nav>

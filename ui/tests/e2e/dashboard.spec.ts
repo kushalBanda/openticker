@@ -47,7 +47,7 @@ test("proof: back after a while, the Dashboard says what happened meanwhile", as
   await expect(page.getByTestId("today-net")).toContainText("₹");
   await expect(page.getByTestId("intraday-chart")).toBeVisible();
   await expect(page.locator("#tv-attr-logo")).toHaveCount(0); // credited in Settings instead
-  await expect(page).toHaveTitle(/^[+-]₹[\d,]+ · OpenTicker$/, { timeout: 7000 });
+  await expect(page).toHaveTitle("Dashboard · OpenTicker");
 
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((t) => {
@@ -62,7 +62,7 @@ test("proof: back after a while, the Dashboard says what happened meanwhile", as
   }
 
   await page.getByRole("link", { name: "Positions" }).first().click();
-  await expect(page).toHaveTitle(/^[+-]₹[\d,]+ · Positions$/, { timeout: 7000 });
+  await expect(page).toHaveTitle("Positions · OpenTicker");
 });
 
 for (const width of [1280, 1920]) {

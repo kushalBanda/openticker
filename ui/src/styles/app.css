@@ -1700,6 +1700,17 @@
     font: 600 21px / 26px var(--font-display);
     letter-spacing: -0.02em;
   }
+  .connector-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .connector-name {
+    font-weight: 600;
+  }
   .settings-kv {
     grid-template-columns: minmax(0, 1fr) minmax(0, auto);
     align-items: center;

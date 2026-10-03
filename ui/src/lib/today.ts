@@ -74,13 +74,6 @@ export function sinceSentence(
   return { lead: `Since you were here at ${at}: `, parts };
 }
 
-/** The tab: "+₹6,976 · Positions"; the page alone without a figure. */
-export function tabTitle(net: number | null | undefined, page: string): string {
-  if (net === null || net === undefined) return `${page} · OpenTicker`;
-  const figure = rupees(Math.round(net), { sign: true, decimals: 0 });
-  return `${figure} · ${page === "Dashboard" ? "OpenTicker" : page}`;
-}
-
 export interface CalendarDay {
   date: string; // YYYY-MM-DD
   net: number | null; // null: traded nothing recorded, or no price

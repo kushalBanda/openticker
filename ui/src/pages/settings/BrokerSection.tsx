@@ -13,12 +13,15 @@ import { brokerName, istDate, qty } from "../../lib/format";
 import { useActions } from "../../shell/actions";
 
 const LOGIN_PAGE: Record<string, string> = { zerodha: "Kite" };
+// What each connector talks to, under its name.
+const CONNECTOR_API: Record<string, string> = { zerodha: "Kite Connect" };
 const EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX"];
 
 const failed = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * Log in to the broker (ADR 33): its login page comes back to this server's
+ * The broker connection, by connector: Zerodha is the one built today
+ * (adapters/brokers/registry.py). Log in to the broker (ADR 33): its login page comes back to this server's
  * callback, which stores the session and returns here with `?connected=`.
  * Pasting the request token is the way when the redirect goes elsewhere.
  */
@@ -55,7 +58,11 @@ export function BrokerSection({ broker }: { broker: string }) {
   return (
     <section className="tile" id="broker" aria-labelledby="broker-title">
       <div className="settings-head">
-        <h2 id="broker-title">{title}</h2>
+        <h2 id="broker-title">Broker</h2>
+      </div>
+      <div className="connector-head">
+        <span className="connector-name">{title}</span>
+        {CONNECTOR_API[broker] && <span className="muted">{CONNECTOR_API[broker]}</span>}
         {badge && (
           <span className="badge" data-tone={badge.tone}>
             {badge.text}
