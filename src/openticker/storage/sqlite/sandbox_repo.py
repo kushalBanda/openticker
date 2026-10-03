@@ -359,7 +359,7 @@ def list_strategy_trades(strategy_id: str) -> list[StoredTrade]:
     return _trades(rows)
 
 
-def _trades(rows: Sequence[Row[tuple[SandboxTradeRow, str]]]) -> list[StoredTrade]:
+def _trades(rows: Sequence[Row[SandboxTradeRow, str]]) -> list[StoredTrade]:
     return [
         StoredTrade(
             order_id=trade.order_id,
