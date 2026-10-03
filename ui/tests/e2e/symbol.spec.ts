@@ -158,6 +158,17 @@ test("an instrument's name anywhere opens its page; ⌘K too", async ({ page }) 
   await expect(page).toHaveURL(/\/symbols\/NSE\/HDFCBANK$/);
 });
 
+test("a stock's page opens its option chain; a contract's has no link", async ({ page }) => {
+  await signIn(page);
+  await page.goto(RELIANCE);
+  await page.getByRole("link", { name: "Option chain" }).click();
+  await expect(page).toHaveURL(/\/options\/NSE\/RELIANCE$/);
+  await expect(page.getByRole("button", { name: /Underlying: RELIANCE/ })).toBeVisible();
+  await page.goto("/symbols/NFO/NIFTY29SEP2624800PE");
+  await expect(page.getByRole("button", { name: "Place paper order" })).toBeEnabled();
+  await expect(page.getByRole("link", { name: "Option chain" })).toHaveCount(0);
+});
+
 test("an instrument that isn't listed says how to find it", async ({ page }) => {
   await signIn(page);
   await page.goto("/symbols/NSE/NOPE");

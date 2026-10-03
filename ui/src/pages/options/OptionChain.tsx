@@ -17,6 +17,7 @@ import { StatCard } from "../../components/StatCard";
 import { TableSkeleton } from "../../components/TableStates";
 import {
   addPick,
+  INDICES,
   inTheMoney,
   type Leg,
   type Pick,
@@ -43,17 +44,6 @@ import { useLive, useServerNow } from "../../stream/StreamProvider";
 import { Basket } from "./Basket";
 import { type ByStrike, OiChart, PayoffChart, SmileChart } from "./charts";
 
-// The underlyings with listed options OpenTicker knows by name (ADR 4);
-// any stock with options can be searched for.
-const INDICES: { symbol: string; exchange: Exchange }[] = [
-  { symbol: "NIFTY 50", exchange: "NSE" },
-  { symbol: "NIFTY BANK", exchange: "NSE" },
-  { symbol: "NIFTY FIN SERVICE", exchange: "NSE" },
-  { symbol: "NIFTY MID SELECT", exchange: "NSE" },
-  { symbol: "NIFTY NEXT 50", exchange: "NSE" },
-  { symbol: "SENSEX", exchange: "BSE" },
-  { symbol: "BANKEX", exchange: "BSE" },
-];
 const LAST_KEY = "options.underlying";
 const STRIKES = [10, 20, 30] as const;
 const SHOWN_EXPIRIES = 4;

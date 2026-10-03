@@ -21,6 +21,7 @@ import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
 import { type Failure, failureOf, TableFailed, TableSkeleton } from "../../components/TableStates";
+import { chainPath } from "../../lib/basket";
 import {
   type Candle,
   CHOICES,
@@ -379,6 +380,7 @@ export function SymbolPage() {
         .join(" · ")
     : undefined;
   const currency = contract?.instrument_type !== "INDEX";
+  const chain = contract && chainPath(symbol, exchange, contract.instrument_type);
 
   return (
     <Page
@@ -393,6 +395,11 @@ export function SymbolPage() {
       actions={
         <>
           <WatchButton symbol={symbol} exchange={exchange} disabled={!contract} />
+          {chain && (
+            <Link to={chain} className="btn" data-variant="ghost">
+              Option chain
+            </Link>
+          )}
           {contract?.instrument_type !== "INDEX" && (
             <>
               <button

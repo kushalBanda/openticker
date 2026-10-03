@@ -1,6 +1,28 @@
 import { dayMonth } from "./format";
 import type { Exchange, Side } from "./orders";
 
+// The underlyings with listed options OpenTicker knows by name (ADR 4);
+// any stock with options can be searched for.
+export const INDICES: { symbol: string; exchange: Exchange }[] = [
+  { symbol: "NIFTY 50", exchange: "NSE" },
+  { symbol: "NIFTY BANK", exchange: "NSE" },
+  { symbol: "NIFTY FIN SERVICE", exchange: "NSE" },
+  { symbol: "NIFTY MID SELECT", exchange: "NSE" },
+  { symbol: "NIFTY NEXT 50", exchange: "NSE" },
+  { symbol: "SENSEX", exchange: "BSE" },
+  { symbol: "BANKEX", exchange: "BSE" },
+];
+
+/**
+ * The Option chain page for an instrument that can be an underlying: one of
+ * the indices above, or a stock on NSE or BSE (what the chain's picker offers).
+ */
+export function chainPath(symbol: string, exchange: Exchange, type: string | undefined) {
+  const index = INDICES.some((i) => i.symbol === symbol && i.exchange === exchange);
+  const stock = type === "EQ" && (exchange === "NSE" || exchange === "BSE");
+  return index || stock ? `/options/${exchange}/${encodeURIComponent(symbol)}` : undefined;
+}
+
 /** One leg of the basket on the Option chain page: lots of one contract, one way. */
 export interface Leg {
   symbol: string;

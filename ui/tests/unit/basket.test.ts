@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   addPick,
   basketTitle,
+  chainPath,
   inTheMoney,
   type Leg,
   netPremium,
@@ -84,4 +85,17 @@ test("in the money: a call below the underlying, a put above it", () => {
   expect(inTheMoney("CE", 24700, 24812)).toBe(true);
   expect(inTheMoney("PE", 24700, 24812)).toBe(false);
   expect(inTheMoney("PE", 24850, 24812)).toBe(true);
+});
+
+describe("chainPath", () => {
+  test("an index with options and a stock on NSE or BSE open their chain", () => {
+    expect(chainPath("NIFTY 50", "NSE", "INDEX")).toBe("/options/NSE/NIFTY%2050");
+    expect(chainPath("SENSEX", "BSE", "INDEX")).toBe("/options/BSE/SENSEX");
+    expect(chainPath("RELIANCE", "NSE", "EQ")).toBe("/options/NSE/RELIANCE");
+  });
+  test("a contract, or an index without options, has none", () => {
+    expect(chainPath("NIFTY29SEP2624800PE", "NFO", "PE")).toBeUndefined();
+    expect(chainPath("NIFTY OCT FUT", "NFO", "FUT")).toBeUndefined();
+    expect(chainPath("NIFTY IT", "NSE", "INDEX")).toBeUndefined();
+  });
 });
