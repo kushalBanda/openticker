@@ -13,7 +13,9 @@ import {
 import { CopyLine } from "../../components/CopyLine";
 import { type Column, DataTable } from "../../components/DataTable";
 import { Dialog } from "../../components/Dialog";
+import { Markdown } from "../../components/Markdown";
 import { Page } from "../../components/Page";
+import { Select } from "../../components/Select";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import {
   CONNECT,
@@ -123,16 +125,22 @@ function ReviewDialog({ open, onClose }: { open: boolean; onClose: () => void })
         <p className="note">No strategies yet: there's nothing to review.</p>
       ) : (
         <>
-          <label className="field">
-            <span className="label">Strategy</span>
-            <select className="select" value={id} onChange={(e) => setPicked(e.target.value)}>
-              {all.map((s) => (
-                <option key={s.strategy_id} value={s.strategy_id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="field">
+            <span className="label" aria-hidden>
+              Strategy
+            </span>
+            <Select<string>
+              label="Strategy"
+              className="select-wide"
+              value={id}
+              onChange={setPicked}
+              options={all.map((s) => ({
+                value: s.strategy_id,
+                label: s.name,
+                hint: s.kind === "options" ? "Options" : "Signal",
+              }))}
+            />
+          </div>
           <p className="note" style={{ margin: 0 }}>
             {summary?.last_review ? (
               <>
@@ -193,23 +201,39 @@ function Reviews({ jobs }: { jobs: AgentJob[] | undefined }) {
   );
 }
 
+// The log box fits what was printed: 19px a line, a line wrapping at about
+// 84 characters in the 720px dialog, between 4 lines and the full 440px.
+const logHeight = (text: string) => {
+  const lines = text
+    .split("\n")
+    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 84)), 0);
+  return Math.min(440, Math.max(4, lines + 1) * 19 + 24);
+};
+
 /** A job's answer and the end of what it printed. */
 function JobDialog({ job, onClose }: { job: AgentJob | null; onClose: () => void }) {
   const log = useAgentJobLog(job?.job_id ?? null);
+  const text = log.data?.log ?? "";
+  const silent = log.data !== undefined && !log.data.log;
   return (
     <Dialog open={job !== null} onClose={onClose} title="Review job" width={720}>
-      {job?.summary && <p style={{ margin: 0, whiteSpace: "pre-line" }}>{job.summary}</p>}
+      {job?.summary && <Markdown text={job.summary} />}
       {job && !job.summary && job.end_detail && <p className="note">{job.end_detail}</p>}
-      <div className="code-tile" data-size="sm">
-        <Suspense fallback={<div className="skeleton" style={{ height: "100%" }} />}>
-          <CodeView
-            language="log"
-            label="What the agent printed"
-            follow={job?.status !== "ended"}
-            text={log.data ? log.data.log || "It printed nothing." : ""}
-          />
-        </Suspense>
-      </div>
+      <div className="label job-log-label">What it printed</div>
+      {silent ? (
+        <p className="note">It printed nothing.</p>
+      ) : (
+        <div className="code-tile" style={{ height: logHeight(text) }}>
+          <Suspense fallback={<div className="skeleton" style={{ height: "100%" }} />}>
+            <CodeView
+              language="log"
+              label="What the agent printed"
+              follow={job?.status !== "ended"}
+              text={text}
+            />
+          </Suspense>
+        </div>
+      )}
       {log.data?.truncated && <p className="note">Older output left out.</p>}
     </Dialog>
   );

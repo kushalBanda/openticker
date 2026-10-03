@@ -7,7 +7,7 @@ import { Instrument } from "../../components/Instrument";
 import { Page } from "../../components/Page";
 import { PlacedBy, SideBadge } from "../../components/PlacedBy";
 import { Segmented } from "../../components/Segmented";
-import { StatCard } from "../../components/StatCard";
+import { loaded, StatCard } from "../../components/StatCard";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import {
   direction,
@@ -136,8 +136,6 @@ export function Trades() {
     { key: "by", head: "Placed by", align: "left", cell: (t) => <PlacedBy row={t} /> },
   ];
 
-  const skeleton = <span className="skeleton" style={{ width: 120 }} />;
-
   return (
     <Page
       title="Trades"
@@ -164,20 +162,16 @@ export function Trades() {
       }
     >
       <div className="stats">
-        <StatCard label="Fills" value={loading ? skeleton : sum.fills} />
-        <StatCard label="Turnover" value={loading ? skeleton : rupees(sum.turnover)} />
+        <StatCard label="Fills" value={loaded(trades, () => sum.fills)} />
+        <StatCard label="Turnover" value={loaded(trades, () => rupees(sum.turnover))} />
         <StatCard
           label="Realized P&L"
           testId="realized"
-          value={
-            loading ? (
-              skeleton
-            ) : (
-              <span className={direction(net)}>{rupees(net, { sign: true })}</span>
-            )
-          }
+          value={loaded(trades, () => (
+            <span className={direction(net)}>{rupees(net, { sign: true })}</span>
+          ))}
           note={
-            loading
+            !trades.data
               ? undefined
               : sum.unrecorded > 0
                 ? `after charges; ${sum.unrecorded} older fill${sum.unrecorded === 1 ? "" : "s"} not counted`
@@ -186,7 +180,7 @@ export function Trades() {
         />
         <StatCard
           label="Charges"
-          value={loading ? skeleton : rupees(sum.charges)}
+          value={loaded(trades, () => rupees(sum.charges))}
           note={share === null ? undefined : `${Number(share.toPrecision(2))}% of turnover`}
         />
       </div>

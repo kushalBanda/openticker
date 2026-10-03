@@ -6,10 +6,16 @@ import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { shouldRetry } from "./api/client";
 import { spring } from "./lib/motion";
 
 const queries = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: shouldRetry,
+    },
+  },
 });
 
 const root = document.getElementById("root");

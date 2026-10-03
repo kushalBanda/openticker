@@ -4,10 +4,15 @@ import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { useEffect, useRef, useState } from "react";
 import { useSession, useSignOut } from "../api/queries";
-import { change, direction, istClock, price } from "../lib/format";
+import { brokerName, change, direction, istClock, price } from "../lib/format";
 import { enter, leave } from "../lib/motion";
 import { useTheme } from "../lib/theme";
-import type { FeedStatus, InstrumentKey, StreamState } from "../stream/connection";
+import {
+  type FeedStatus,
+  type InstrumentKey,
+  type StreamState,
+  sessionExpired,
+} from "../stream/connection";
 import { usePrice } from "../stream/prices";
 import { useLive } from "../stream/StreamProvider";
 import { useActions } from "./actions";
@@ -65,8 +70,6 @@ function Market({ status }: { status: FeedStatus | null }) {
   );
 }
 
-const title = (broker: string) => broker.charAt(0).toUpperCase() + broker.slice(1);
-
 /** One item for where prices come from: the broker session and the stream share a dot. */
 export function priceSource(
   status: FeedStatus | null,
@@ -74,14 +77,13 @@ export function priceSource(
   now: Date,
 ): { tone: "up" | "warn" | "down" | "muted"; text: string; warn?: boolean } {
   if (state === "connecting" || state === "polling") {
-    const broker = status ? title(status.broker) : "Prices";
+    const broker = status ? brokerName(status.broker) : "Prices";
     return { tone: "warn", text: `${broker} · reconnecting` };
   }
   if (status === null) return { tone: "muted", text: "Connecting" };
-  const broker = title(status.broker);
+  const broker = brokerName(status.broker);
   if (!status.broker_connected) {
-    const expired = status.broker_expires_at !== null && new Date(status.broker_expires_at) <= now;
-    return expired
+    return sessionExpired(status, now)
       ? { tone: "down", text: `${broker} expired`, warn: true }
       : { tone: "muted", text: "No broker" };
   }

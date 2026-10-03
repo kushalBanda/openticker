@@ -1,5 +1,6 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { Schemas } from "../../api/client";
+import { Markdown } from "../../components/Markdown";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import { istDate } from "../../lib/format";
 import { askedBy } from "../../lib/strategies";
@@ -62,7 +63,7 @@ export function ReviewsTab({
           into the strategy's note.
         </TableEmpty>
       ) : (
-        <ol className="review-list">
+        <ol className="review-list" aria-label="Reviews">
           {reviews.data.jobs.map((job) => (
             <li key={job.job_id}>
               <div className="flex items-center gap-2">
@@ -73,7 +74,7 @@ export function ReviewsTab({
                   {job.cost_usd != null && ` · $${job.cost_usd.toFixed(2)}`}
                 </span>
               </div>
-              {job.summary && <p>{job.summary}</p>}
+              {job.summary && <Markdown text={job.summary} />}
               {!job.summary && job.status === "ended" && job.end_detail && (
                 <p className="note">{job.end_detail}</p>
               )}

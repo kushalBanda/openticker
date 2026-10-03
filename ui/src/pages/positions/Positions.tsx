@@ -7,12 +7,22 @@ import { Instrument, useOpenSymbol } from "../../components/Instrument";
 import { LivePrice } from "../../components/LivePrice";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
-import { StatCard } from "../../components/StatCard";
-import { direction, MISSING, price, qty, rupees, signed, sourceLabel } from "../../lib/format";
+import { loaded, StatCard } from "../../components/StatCard";
+import {
+  brokerName,
+  direction,
+  MISSING,
+  percent,
+  price,
+  qty,
+  rupees,
+  signed,
+  sourceLabel,
+} from "../../lib/format";
 import type { OrderDraft } from "../../lib/orders";
 import { livePrice, markToMarket, total } from "../../lib/pnl";
 import { useActions } from "../../shell/actions";
-import type { InstrumentKey, Tick } from "../../stream/connection";
+import { type InstrumentKey, sessionExpired, type Tick } from "../../stream/connection";
 import { usePrices } from "../../stream/prices";
 import { useLive } from "../../stream/StreamProvider";
 import { CloseDialog } from "./CloseDialog";
@@ -239,7 +249,7 @@ export function Positions() {
     },
   ];
 
-  const count = view === "open" ? openPositions.length : undefined;
+  const count = view === "open" && open.data ? openPositions.length : undefined;
   const loading = broker === undefined || source.isPending;
 
   return (
@@ -277,59 +287,37 @@ export function Positions() {
         <StatCard
           label="Open P&L"
           testId="open-pnl"
-          value={
-            open.data ? (
-              <Money value={openPnl} currency />
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
-          tone={undefined}
-          note={marketOpen ? "marked live" : "at the last price"}
+          value={loaded(open, () => <Money value={openPnl} currency />)}
+          note={open.isError ? undefined : marketOpen ? "marked live" : "at the last price"}
         />
         <StatCard
           label="Realized"
-          value={
-            funds.data ? (
-              <Money value={funds.data.realized_pnl - funds.data.charges} currency />
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
+          value={loaded(funds, (f) => <Money value={f.realized_pnl - f.charges} currency />)}
           note={funds.data ? `after ${rupees(funds.data.charges)} charges, all time` : undefined}
         />
         <StatCard
           label="Margin used"
-          value={
-            funds.data ? (
-              rupees(funds.data.used_margin)
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
+          value={loaded(funds, (f) => rupees(f.used_margin))}
           note={
             funds.data && funds.data.total_capital > 0
-              ? `${Math.round((funds.data.used_margin / funds.data.total_capital) * 100)}% of capital`
+              ? `${percent(funds.data.used_margin / funds.data.total_capital)}% of capital`
               : undefined
           }
         />
         <StatCard
           label="Positions"
-          value={
-            open.data ? openPositions.length : <span className="skeleton" style={{ width: 40 }} />
-          }
+          value={loaded(open, () => openPositions.length, 40)}
           note={open.data ? `${heldByStrategies} held by strategies` : undefined}
         />
       </div>
 
-      {status && !status.broker_connected && (
+      {/* An expired session has its own banner, with the way back in. */}
+      {status && !status.broker_connected && !sessionExpired(status) && (
         <div className="notice" role="status">
           <span className="badge" data-tone="warn">
             No broker
           </span>
-          <span>
-            Connect {status.broker === "zerodha" ? "Zerodha" : status.broker} to get live prices.
-          </span>
+          <span>Log in to {brokerName(status.broker)} to get live prices.</span>
           <span className="flex-1" />
           <Link to="/settings">Settings ›</Link>
         </div>

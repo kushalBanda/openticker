@@ -77,7 +77,17 @@ test("a review a strategy dialog opens over the current strategies, and closes c
   await page.getByRole("button", { name: "Review a strategy…" }).click();
   const dialog = page.getByRole("dialog", { name: "Review a strategy" });
   await expect(dialog).toContainText("read-only");
-  await expect(dialog.getByRole("combobox", { name: "Strategy" })).toBeVisible();
+  const strategy = dialog.getByRole("combobox", { name: "Strategy" });
+  await strategy.click();
+  const list = page.getByRole("listbox", { name: "Strategy" });
+  await list.getByRole("option", { name: /BANKNIFTY iron condor/ }).click();
+  await expect(strategy).toHaveText("BANKNIFTY iron condor");
+  // Escape closes the open list first, then the dialog.
+  await strategy.press("ArrowDown");
+  await expect(list).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list).toHaveCount(0);
+  await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
@@ -87,7 +97,7 @@ test("a row opens its job: a timed-out one shows what it printed", async ({ page
   await jobRow(page, "BANKNIFTY iron condor").first().click();
   const dialog = page.getByRole("dialog", { name: "Review job" });
   await expect(dialog).toContainText("still running after 15 minutes");
-  await expect(dialog.getByTestId("code-log")).toContainText("It printed nothing.");
+  await expect(dialog).toContainText("It printed nothing.");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });

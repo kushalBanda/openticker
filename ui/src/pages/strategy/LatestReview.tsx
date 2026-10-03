@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Schemas } from "../../api/client";
 import { useReviewSchedule, useStartReview } from "../../api/queries";
 import { Dialog } from "../../components/Dialog";
+import { Markdown } from "../../components/Markdown";
 import { istDate, rupees } from "../../lib/format";
 import { askedBy, type Strategy, verdictBadge } from "../../lib/strategies";
 import { useActions } from "../../shell/actions";
@@ -212,11 +213,14 @@ export function LatestReview({
           </span>
         )}
       </div>
-      <p style={{ margin: "10px 0 16px", whiteSpace: "pre-line" }}>
-        {latest
-          ? latest.summary
-          : "Not reviewed yet. A review reads the ledger after costs and writes a verdict (keep, change one thing, retire) into the strategy's note."}
-      </p>
+      {latest ? (
+        <Markdown text={latest.summary ?? ""} className="review-text" />
+      ) : (
+        <p className="review-text">
+          Not reviewed yet. A review reads the ledger after costs and writes a verdict (keep, change
+          one thing, retire) into the strategy's note.
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <ReviewNow id={id} reviews={reviews} />
         <ReviewScheduleButton key={when ?? "none"} id={id} current={schedule} />

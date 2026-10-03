@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
+import { ApiError } from "../../api/client";
 import {
   useKillStrategy,
   useLedger,
@@ -14,7 +15,8 @@ import {
 import { HoldButton } from "../../components/HoldButton";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
-import { StatCard } from "../../components/StatCard";
+import { loaded, StatCard } from "../../components/StatCard";
+import { failureOf, TableFailed } from "../../components/TableStates";
 import { direction, MISSING, rupees } from "../../lib/format";
 import {
   isToday,
@@ -90,7 +92,22 @@ export function Strategy() {
     }
   };
 
-  if (list.isSuccess && !summary && (detail.isError || detail.isSuccess)) {
+  const gone =
+    list.isSuccess &&
+    !summary &&
+    (detail.isSuccess || (detail.error instanceof ApiError && detail.error.status === 404));
+  const failed =
+    summary || detail.data || gone ? undefined : (failureOf(list) ?? failureOf(detail));
+  if (failed) {
+    return (
+      <Page title="Strategy" back={{ to: "/strategies", label: "Strategies" }}>
+        <div className="tile">
+          <TableFailed what="This strategy" failure={failed} />
+        </div>
+      </Page>
+    );
+  }
+  if (gone) {
     return (
       <Page title="Strategy not found" back={{ to: "/strategies", label: "Strategies" }}>
         <div className="tile empty">
@@ -231,13 +248,7 @@ export function Strategy() {
         <StatCard
           label="Open"
           testId="open-run"
-          value={
-            summary ? (
-              <Money value={summary.active_run ? openPnl : null} />
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
+          value={loaded(list, () => <Money value={summary?.active_run ? openPnl : null} />)}
           note={
             summary?.active_run
               ? `${rupees(openRun?.charges ?? 0)} charges so far`
@@ -248,17 +259,9 @@ export function Strategy() {
         />
         <StatCard
           label="All time, after costs"
-          value={
-            totals ? (
-              totals.runs ? (
-                <Money value={totals.net_pnl} />
-              ) : (
-                <span className="missing">{MISSING}</span>
-              )
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
+          value={loaded(ledger, ({ totals: t }) =>
+            t.runs ? <Money value={t.net_pnl} /> : <span className="missing">{MISSING}</span>,
+          )}
           note={
             totals
               ? [`${ledger.data?.total_runs ?? 0} runs`, winRate(totals.wins, totals.runs)]
@@ -271,13 +274,7 @@ export function Strategy() {
           <>
             <StatCard
               label="Alerts today"
-              value={
-                signals.data ? (
-                  callsToday.length
-                ) : (
-                  <span className="skeleton" style={{ width: 40 }} />
-                )
-              }
+              value={loaded(signals, () => callsToday.length, 40)}
               note={
                 signals.data
                   ? `${callsToday.filter((c) => c.result !== "accepted").length} not acted on`
@@ -304,13 +301,9 @@ export function Strategy() {
           <>
             <StatCard
               label="Max drawdown"
-              value={
-                totals ? (
-                  <Money value={totals.runs ? -totals.max_drawdown : null} />
-                ) : (
-                  <span className="skeleton" style={{ width: 120 }} />
-                )
-              }
+              value={loaded(ledger, ({ totals: t }) => (
+                <Money value={t.runs ? -t.max_drawdown : null} />
+              ))}
               note="net, run by run"
             />
             <StatCard

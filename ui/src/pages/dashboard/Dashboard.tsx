@@ -11,7 +11,8 @@ import {
 } from "../../api/queries";
 import { Page } from "../../components/Page";
 import { Reveal } from "../../components/Reveal";
-import { StatCard } from "../../components/StatCard";
+import { loaded, StatCard } from "../../components/StatCard";
+import { failureOf, TableFailed } from "../../components/TableStates";
 import { istClock, istDate, qty, rupees } from "../../lib/format";
 import { livePrice, markToMarket, total } from "../../lib/pnl";
 import { useEvents } from "../../shell/events";
@@ -54,7 +55,7 @@ function useLiveRows(broker: string | undefined) {
   const server = total(open.map((p) => p.unrealized_pnl));
   const live = total(rows.map((r) => r.pnl));
   const drift = server === null || live === null ? 0 : live - server;
-  return { rows, drift, loading: positions.isPending };
+  return { rows, drift, loading: positions.isPending, positions };
 }
 
 export function Dashboard() {
@@ -67,7 +68,7 @@ export function Dashboard() {
   const strategies = useStrategies();
   const recent = useRecentEvents(6);
   const { names } = useEvents();
-  const { rows, drift, loading } = useLiveRows(broker);
+  const { rows, drift, loading, positions } = useLiveRows(broker);
 
   const to = iso(now());
   const fromDate = new Date(now());
@@ -78,6 +79,7 @@ export function Dashboard() {
 
   const firstRun = setup.data !== undefined && setup.data.first_fill_at === null;
   const data = today.data;
+  const todayFailed = failureOf(today);
   const net = data?.net_pnl === null || data?.net_pnl === undefined ? null : data.net_pnl + drift;
   const list = strategies.data?.strategies;
   const running = list?.filter((s) => s.state === "running" || s.state === "listening").length;
@@ -105,6 +107,10 @@ export function Dashboard() {
               minute={istClock(now()).slice(0, 5)}
               names={names}
             />
+          ) : todayFailed ? (
+            <section className="today-hero" aria-label="Today">
+              <TableFailed what="Today's P&L" failure={todayFailed} />
+            </section>
           ) : (
             <section className="today-hero" aria-busy="true" aria-label="Loading today">
               <span className="skeleton" style={{ width: 160, height: 16 }} />
@@ -115,22 +121,28 @@ export function Dashboard() {
           <div className="stats stats-small">
             <StatCard
               label="Available funds"
-              value={rupees(funds.data?.available_cash)}
+              value={loaded(funds, (f) => rupees(f.available_cash))}
               note={funds.data ? `of ${rupees(funds.data.total_capital)}` : undefined}
             />
             <StatCard
               label="Open positions"
-              value={loading ? "—" : qty(rows.length)}
-              note={held ? `${held} held by strategies` : "None held by strategies"}
+              value={loaded(positions, () => qty(rows.length), 40)}
+              note={
+                !positions.data
+                  ? undefined
+                  : held
+                    ? `${held} held by strategies`
+                    : "None held by strategies"
+              }
             />
             <StatCard
               label="Strategies running"
-              value={running === undefined ? "—" : qty(running)}
+              value={loaded(strategies, () => qty(running ?? 0), 40)}
               note={
-                killed ? (
+                !list ? undefined : killed ? (
                   <span className="text-warn">{killed} killed</span>
                 ) : (
-                  `${list?.length ?? 0} in all`
+                  `${list.length} in all`
                 )
               }
             />
@@ -138,22 +150,31 @@ export function Dashboard() {
 
           <div className="dash-grid">
             <Reveal>
-              <OpenPositionsTile rows={rows} loading={loading} />
+              <OpenPositionsTile rows={rows} loading={loading} failed={failureOf(positions)} />
             </Reveal>
             <Reveal>
-              <MarginTile funds={funds.data} />
+              <MarginTile funds={funds.data} failed={failureOf(funds)} />
             </Reveal>
             <Reveal>
-              <DailyCalendar days={history.data?.days ?? []} from={from} to={to} />
+              <DailyCalendar
+                days={history.data?.days ?? []}
+                from={from}
+                to={to}
+                failed={failureOf(history)}
+              />
             </Reveal>
             <Reveal>
-              <ChargesTile summary={charges.data} />
+              <ChargesTile summary={charges.data} failed={failureOf(charges)} />
             </Reveal>
             <Reveal>
-              <StrategiesTile strategies={list} />
+              <StrategiesTile strategies={list} failed={failureOf(strategies)} />
             </Reveal>
             <Reveal>
-              <RecentEventsTile entries={recent.data?.entries} names={names} />
+              <RecentEventsTile
+                entries={recent.data?.entries}
+                names={names}
+                failed={failureOf(recent)}
+              />
             </Reveal>
           </div>
         </>

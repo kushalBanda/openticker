@@ -5,7 +5,7 @@ import { useReleaseStrategy, useStartStrategy, useStrategies } from "../../api/q
 import { type Column, DataTable } from "../../components/DataTable";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
-import { StatCard } from "../../components/StatCard";
+import { loaded, StatCard } from "../../components/StatCard";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import { direction, MISSING, qty, rupees, signed } from "../../lib/format";
 import {
@@ -24,17 +24,23 @@ import {
   when,
 } from "../../lib/strategies";
 import { useActions } from "../../shell/actions";
-import { useLive } from "../../stream/StreamProvider";
+import { useLive, useServerNow } from "../../stream/StreamProvider";
 import { useTodayPnl } from "./live";
 import { StopDialog } from "./StopDialog";
 
-/** The clock the page's relative times read; ticks once a minute. */
+/**
+ * The clock the page's relative times read, the server's (next entries and
+ * reviews are its times, whatever the browser's clock says); ticks once a
+ * minute.
+ */
 export function useMinute(): Date {
-  const [now, setNow] = useState(() => new Date());
+  const serverNow = useServerNow();
+  const [now, setNow] = useState(serverNow);
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60_000);
+    setNow(serverNow());
+    const timer = setInterval(() => setNow(serverNow()), 60_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverNow]);
   return now;
 }
 
@@ -201,35 +207,23 @@ export function Strategies() {
       <div className="stats">
         <StatCard
           label="Running"
-          value={list.data ? running : <span className="skeleton" style={{ width: 40 }} />}
+          value={loaded(list, () => running, 40)}
           note={list.data ? `${all.length - running} not running` : undefined}
         />
         <StatCard
           label="Scheduled"
-          value={list.data ? scheduled.length : <span className="skeleton" style={{ width: 40 }} />}
+          value={loaded(list, () => scheduled.length, 40)}
           note={soonest ? `next ${when(soonest, now)}` : list.data ? "none" : undefined}
         />
         <StatCard
           label="P&L today"
           testId="strategies-today"
-          value={
-            list.data ? (
-              <Money value={todayTotal} currency />
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
-          note="after charges, open legs live"
+          value={loaded(list, () => <Money value={todayTotal} currency />)}
+          note={list.isError ? undefined : "after charges, open legs live"}
         />
         <StatCard
           label="All time, after costs"
-          value={
-            list.data ? (
-              <Money value={allTime} currency />
-            ) : (
-              <span className="skeleton" style={{ width: 120 }} />
-            )
-          }
+          value={loaded(list, () => <Money value={allTime} currency />)}
           note={list.data ? `${qty(runs)} runs` : undefined}
         />
       </div>

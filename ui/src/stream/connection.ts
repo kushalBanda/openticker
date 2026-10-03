@@ -33,6 +33,12 @@ export interface FeedStatus {
   state: FeedState;
 }
 
+/** The broker's session ran out: logging in again is what brings prices back. */
+export const sessionExpired = (status: FeedStatus, now: Date = new Date()): boolean =>
+  !status.broker_connected &&
+  status.broker_expires_at !== null &&
+  new Date(status.broker_expires_at) <= now;
+
 /** The first message on every connection: the server's clock and newest audit entry. */
 export interface Hello {
   server_time: string;

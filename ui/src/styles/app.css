@@ -403,7 +403,7 @@
     width: 28px;
   }
 
-  /* page title extras: count, PAPER */
+  /* page title extras: count */
   .page-title .count {
     color: var(--ink-muted);
     font-weight: 400;
@@ -1312,10 +1312,6 @@
     align-items: center;
     gap: 10px;
   }
-  .badge[data-tone="paper"] {
-    background: var(--paper-soft);
-    color: var(--paper);
-  }
   .today-figure {
     margin-top: 10px;
     font: 600 64px / 68px var(--font-display);
@@ -1436,9 +1432,19 @@
   .gauge-fill {
     stroke: var(--accent);
   }
+  /* The figure in the ring, set like the Today hero's: display face, tight,
+     figures of one width, the unit smaller and quieter. */
   .gauge-text {
-    font: 600 18px var(--font-display);
+    font: 600 19px var(--font-display);
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
     fill: var(--ink);
+  }
+  .gauge-unit {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+    fill: var(--ink-muted);
   }
   .heatmap {
     display: flex;
@@ -2070,15 +2076,6 @@
     justify-content: space-between;
     font-weight: 600;
   }
-  .select {
-    height: 32px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: 9px;
-    background: var(--fill);
-    color: var(--ink);
-    font: 500 13px / 1 var(--font-text);
-  }
   .chain-stats .stat .value {
     font-size: 24px;
     line-height: 30px;
@@ -2487,5 +2484,198 @@
 @media (prefers-reduced-motion: reduce) {
   .live-dot {
     animation: none;
+  }
+}
+
+@layer components {
+  /* A tile whose data didn't load says so where the data would be. */
+  .table-failed {
+    margin: 0;
+  }
+  .table-failed .btn {
+    margin-left: 4px;
+    vertical-align: baseline;
+  }
+  .tile[data-flush="true"] > .table-failed {
+    padding: 12px 24px 20px;
+  }
+}
+
+@layer components {
+  /* A review's text, as its agent wrote it (Markdown.tsx). */
+  .prose {
+    color: var(--ink);
+    font: 400 14px / 21px var(--font-text);
+    letter-spacing: -0.01em;
+  }
+  .prose > * + * {
+    margin-top: 10px;
+  }
+  .prose p,
+  .prose ul,
+  .prose ol,
+  .prose h3 {
+    margin: 0;
+  }
+  .prose h3 {
+    font: 600 15px / 20px var(--font-display);
+  }
+  .prose strong {
+    font-weight: 600;
+  }
+  .prose ul,
+  .prose ol {
+    padding-left: 20px;
+  }
+  .prose ul {
+    list-style: none;
+    padding-left: 16px;
+  }
+  .prose ul > li {
+    position: relative;
+  }
+  .prose ul > li::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 8px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--ink-muted);
+  }
+  .prose li + li {
+    margin-top: 6px;
+  }
+  .prose li::marker {
+    color: var(--ink-muted);
+  }
+  .prose code {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--fill);
+    font: 400 12.5px / 1 var(--font-code);
+  }
+}
+
+@layer components {
+  .review-text {
+    margin: 10px 0 16px;
+  }
+}
+
+@layer components {
+  .job-log-label {
+    margin: 6px 0 -4px;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+}
+
+@layer components {
+  /* Every dropdown (Select.tsx): the segmented control's track, as one pill. */
+  .select-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px 0 12px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--fill);
+    color: var(--ink);
+    font: 500 13px / 1 var(--font-text);
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    transition:
+      background var(--duration-fast),
+      box-shadow var(--duration-fast);
+  }
+  .select-btn:hover {
+    background: var(--surface-hover);
+  }
+  .select-btn[aria-expanded="true"] {
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .select-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .select-btn[data-chosen="false"] .select-value {
+    color: var(--ink-muted);
+  }
+  .select-chevron {
+    flex: none;
+    color: var(--ink-muted);
+    transition: transform var(--duration-fast);
+  }
+  .select-btn[aria-expanded="true"] .select-chevron {
+    transform: rotate(180deg);
+  }
+  .select-list {
+    position: fixed;
+    z-index: 90; /* over a dialog's scrim */
+    overflow-y: auto;
+    padding: 5px;
+    border-radius: 12px;
+    background: var(--surface-raised);
+    box-shadow:
+      var(--shadow-pop),
+      inset 0 0 0 1px var(--glass-edge);
+    outline: none;
+    overscroll-behavior: contain;
+  }
+  .select-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 10px 0 6px;
+    border-radius: 8px;
+    color: var(--ink);
+    font: 400 13px / 1 var(--font-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    cursor: default;
+  }
+  .select-option[data-active="true"] {
+    background: var(--fill);
+  }
+  .select-option[aria-selected="true"] {
+    font-weight: 600;
+  }
+  .select-check {
+    display: inline-flex;
+    width: 16px;
+    flex: none;
+    justify-content: center;
+    color: var(--action);
+  }
+  .select-hint {
+    margin-left: 16px;
+    color: var(--ink-muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .select-chevron {
+      transition: none;
+    }
+  }
+}
+
+@layer components {
+  .select-wide {
+    width: 100%;
+    justify-content: space-between;
+    height: 40px;
+    border-radius: 12px;
+  }
+  /* A later expiry chosen reads as the segmented control's chosen one. */
+  .expiry-more[data-chosen="true"] {
+    background: var(--thumb);
+    box-shadow: 0 1px 3px #0000001f;
   }
 }

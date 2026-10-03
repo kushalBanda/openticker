@@ -22,3 +22,37 @@ export function TableEmpty({ children }: { children: string }) {
     </p>
   );
 }
+
+/** A query that failed with nothing to show: why, and how to ask again. */
+export interface Failure {
+  error: Error;
+  retry: () => void;
+}
+
+export function failureOf(query: {
+  data: unknown;
+  isError: boolean;
+  error: Error | null;
+  refetch: () => unknown;
+}): Failure | undefined {
+  if (!query.isError || query.data !== undefined || !query.error) return undefined;
+  return { error: query.error, retry: () => void query.refetch() };
+}
+
+/** What a tile says in place of its content when that didn't load. */
+export function TableFailed({ what, failure }: { what: string; failure: Failure }) {
+  return (
+    <p className="note table-failed" role="alert">
+      {what} didn't load: {failure.error.message.replace(/\.$/, "")}.{" "}
+      <button
+        type="button"
+        className="btn"
+        data-variant="ghost"
+        data-size="sm"
+        onClick={failure.retry}
+      >
+        Try again
+      </button>
+    </p>
+  );
+}

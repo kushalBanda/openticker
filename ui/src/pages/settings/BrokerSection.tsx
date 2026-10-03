@@ -9,11 +9,9 @@ import {
   useSyncInstruments,
 } from "../../api/queries";
 import { CopyLine } from "../../components/CopyLine";
-import { istDate, qty } from "../../lib/format";
+import { brokerName, istDate, qty } from "../../lib/format";
 import { useActions } from "../../shell/actions";
 
-export const brokerTitle = (broker: string) =>
-  broker === "zerodha" ? "Zerodha" : broker.charAt(0).toUpperCase() + broker.slice(1);
 const LOGIN_PAGE: Record<string, string> = { zerodha: "Kite" };
 const EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX"];
 
@@ -32,7 +30,7 @@ export function BrokerSection({ broker }: { broker: string }) {
   const { notify } = useActions();
   const [params, setParams] = useSearchParams();
   const [token, setToken] = useState("");
-  const title = brokerTitle(broker);
+  const title = brokerName(broker);
   const page = LOGIN_PAGE[broker] ?? title;
 
   // Back from the broker's login page: say how it went, once.
@@ -40,7 +38,7 @@ export function BrokerSection({ broker }: { broker: string }) {
     const connected = params.get("connected");
     const error = params.get("connect_error");
     if (connected === null && error === null) return;
-    notify(connected ? `${brokerTitle(connected)} connected` : `Not connected: ${error}`);
+    notify(connected ? `${brokerName(connected)} connected` : `Not connected: ${error}`);
     setParams({}, { replace: true });
   }, [params, setParams, notify]);
 

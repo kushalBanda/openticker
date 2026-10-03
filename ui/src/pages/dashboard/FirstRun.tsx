@@ -4,9 +4,8 @@ import type { Schemas } from "../../api/client";
 import { useSyncInstruments } from "../../api/queries";
 import { CopyLine } from "../../components/CopyLine";
 import { CONNECT } from "../../lib/agents";
-import { qty, rupees } from "../../lib/format";
+import { brokerName, qty, rupees } from "../../lib/format";
 import { useActions } from "../../shell/actions";
-import { brokerTitle } from "../settings/BrokerSection";
 
 const { claude: CLAUDE, codex: CODEX } = CONNECT;
 
@@ -58,7 +57,7 @@ export function FirstRun({
 }) {
   const sync = useSyncInstruments();
   const { notify } = useActions();
-  const broker = brokerTitle(setup.broker);
+  const broker = brokerName(setup.broker);
   const steps = [
     setup.broker_connected,
     setup.instrument_count > 0,

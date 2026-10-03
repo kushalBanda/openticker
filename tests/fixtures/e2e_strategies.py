@@ -257,8 +257,12 @@ def seed_strategies(now: Callable[[], datetime], straddle_id: str, trend_id: str
     _review(
         trend_id,
         today - timedelta(hours=2),
-        "Change one thing: exit by 15:00. Net is positive after costs, but runs held past "
-        "15:00 gave back a third of it. Ask for it as a new strategy to run side by side.",
+        # As a reviewer writes it: Markdown, which the page renders.
+        "**Change one thing: exit by 15:00.** Net is positive after costs, but runs held "
+        "past 15:00 gave back a third of it.\n\n"
+        "- **What held up:** 23 runs, `+₹26,506` after ₹4,120 of charges.\n"
+        "- **What didn't:** exits after 15:00 averaged *-₹380* each.\n"
+        "- **Least sure:** August had two expiry weeks in a row.",
         trigger="ui",
     )
     for minutes, result, message in (

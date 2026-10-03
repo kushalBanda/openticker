@@ -20,7 +20,7 @@ import type { From } from "../../components/Instrument";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
-import { TableSkeleton } from "../../components/TableStates";
+import { type Failure, failureOf, TableFailed, TableSkeleton } from "../../components/TableStates";
 import {
   type Candle,
   CHOICES,
@@ -100,7 +100,15 @@ const DEPTH_COLUMNS: Column<Level>[] = [
   { key: "ask-qty", head: "Qty.", cell: (l) => cell(l.ask?.quantity, qty) },
 ];
 
-function DepthTile({ depth, loading }: { depth: Depth | undefined; loading: boolean }) {
+function DepthTile({
+  depth,
+  loading,
+  failed,
+}: {
+  depth: Depth | undefined;
+  loading: boolean;
+  failed?: Failure;
+}) {
   const levels: Level[] = [0, 1, 2, 3, 4].map((n) => ({
     n,
     bid: depth?.bids[n],
@@ -111,7 +119,9 @@ function DepthTile({ depth, loading }: { depth: Depth | undefined; loading: bool
       <div className="tile-head">
         <h2 id="depth-title">Market depth</h2>
       </div>
-      {loading ? (
+      {failed ? (
+        <TableFailed what="Market depth" failure={failed} />
+      ) : loading ? (
         <TableSkeleton label="Loading market depth" />
       ) : (
         <>
@@ -135,7 +145,25 @@ function DepthTile({ depth, loading }: { depth: Depth | undefined; loading: bool
   );
 }
 
-function PositionCard({ position, ltp }: { position: Position | undefined; ltp: number | null }) {
+function PositionCard({
+  position,
+  ltp,
+  known,
+}: {
+  position: Position | undefined;
+  ltp: number | null;
+  /** Positions loaded: without them, "none" would be a guess. */
+  known: boolean;
+}) {
+  if (!known) {
+    return (
+      <StatCard
+        label="Your position"
+        value={<span className="missing">{MISSING}</span>}
+        testId="your-position"
+      />
+    );
+  }
   if (!position) {
     return (
       <StatCard
@@ -314,6 +342,16 @@ export function SymbolPage() {
     }
   };
 
+  const listingsFailed = failureOf(listings);
+  if (listingsFailed) {
+    return (
+      <Page title={symbol || "Symbol"} back={back}>
+        <div className="tile">
+          <TableFailed what={symbol} failure={listingsFailed} />
+        </div>
+      </Page>
+    );
+  }
   if (listings.isSuccess && !contract) {
     return (
       <Page title={symbol || "Symbol"} back={back}>
@@ -422,7 +460,7 @@ export function SymbolPage() {
               : `Last qty. ${qty(depth.data?.last_quantity)}`
           }
         />
-        <PositionCard position={position} ltp={ltp} />
+        <PositionCard position={position} ltp={ltp} known={positions.data !== undefined} />
       </div>
 
       <div className="toolbar">
@@ -482,7 +520,11 @@ export function SymbolPage() {
               month. Wheel to zoom, drag to pan.
             </p>
           </section>
-          <DepthTile depth={depth.data} loading={depth.isPending} />
+          <DepthTile depth={depth.data} loading={depth.isPending} failed={failureOf(depth)} />
+        </div>
+      ) : failureOf(orders) ? (
+        <div className="tile" data-flush="true">
+          <TableFailed what="Orders" failure={failureOf(orders) as Failure} />
         </div>
       ) : (
         <OrderBook

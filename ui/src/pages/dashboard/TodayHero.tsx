@@ -57,9 +57,6 @@ export function TodayHero({
         <span className="label" id="today-label">
           {today.market_open ? "Today, after charges" : `${day}, after charges`}
         </span>
-        <span className="badge" data-tone="paper">
-          Paper
-        </span>
         <span className="flex-1" />
         <span className="note">
           {today.market_open ? "live · " : "market closed · "}updated {istClock(updatedAt)}

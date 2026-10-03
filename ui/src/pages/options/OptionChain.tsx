@@ -12,6 +12,7 @@ import {
 import { Dialog } from "../../components/Dialog";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
+import { Select } from "../../components/Select";
 import { StatCard } from "../../components/StatCard";
 import { TableSkeleton } from "../../components/TableStates";
 import {
@@ -27,6 +28,7 @@ import {
 import {
   change,
   dayMonth,
+  daysUntil,
   direction,
   instrumentName,
   MISSING,
@@ -37,7 +39,7 @@ import {
 import type { Exchange, Side } from "../../lib/orders";
 import type { InstrumentKey } from "../../stream/connection";
 import { usePrice } from "../../stream/prices";
-import { useLive } from "../../stream/StreamProvider";
+import { useLive, useServerNow } from "../../stream/StreamProvider";
 import { Basket } from "./Basket";
 import { type ByStrike, OiChart, PayoffChart, SmileChart } from "./charts";
 
@@ -393,6 +395,7 @@ export function OptionChain() {
   const exchange = ((params.exchange ?? fallback.exchange).toUpperCase() as Exchange) || "NSE";
   const key = `${exchange}:${underlying}`;
   const { status } = useLive();
+  const serverNow = useServerNow();
   const broker = status?.broker;
   const [expiry, setExpiry] = useState<string | undefined>(undefined);
   const [strikes, setStrikes] = useState<number>(10);
@@ -443,13 +446,13 @@ export function OptionChain() {
       <div className="toolbar chain-toolbar">
         <button
           type="button"
-          className="btn underlying-btn"
-          data-variant="outline"
+          className="select-btn underlying-btn"
+          data-chosen="true"
           onClick={() => setChoosing(true)}
           aria-label={`Underlying: ${name}. Change`}
         >
-          {name}
-          <ChevronDown size={15} aria-hidden />
+          <span className="select-value">{name}</span>
+          <ChevronDown size={15} aria-hidden className="select-chevron" />
         </button>
         {expiries.length > 0 && current && (
           <Segmented<string>
@@ -462,19 +465,18 @@ export function OptionChain() {
           />
         )}
         {expiries.length > SHOWN_EXPIRIES && (
-          <select
-            className="select"
-            aria-label="Later expiries"
-            value={expiries.slice(0, SHOWN_EXPIRIES).includes(current ?? "") ? "" : current}
-            onChange={(e) => e.target.value && setExpiry(e.target.value)}
-          >
-            <option value="">More…</option>
-            {expiries.slice(SHOWN_EXPIRIES).map((e) => (
-              <option key={e} value={e}>
-                {dayMonth(e)} {e.slice(0, 4)}
-              </option>
-            ))}
-          </select>
+          <Select<string>
+            label="Later expiries"
+            className="expiry-more"
+            placeholder="More…"
+            value={expiries.slice(0, SHOWN_EXPIRIES).includes(current ?? "") ? "" : (current ?? "")}
+            onChange={setExpiry}
+            options={expiries.slice(SHOWN_EXPIRIES).map((e) => ({
+              value: e,
+              label: `${dayMonth(e)} ${e.slice(0, 4)}`,
+              hint: `${daysUntil(e, serverNow())} d`,
+            }))}
+          />
         )}
         <span className="flex-1" />
         <Segmented<string>

@@ -119,7 +119,7 @@ test("a signal strategy's frame: alerts, its definition and the alert URL", asyn
   await page.getByRole("button", { name: "Ledger" }).click();
   await expect(page.getByText("Net after costs")).toBeVisible();
   await page.getByRole("button", { name: /Reviews/ }).click();
-  await expect(page.getByRole("list")).toContainText("Change");
+  await expect(page.getByRole("list", { name: "Reviews" })).toContainText("Change");
 
   await page.getByRole("main").getByRole("link", { name: "Strategies", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Strategies (5)");

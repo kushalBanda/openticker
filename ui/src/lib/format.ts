@@ -4,6 +4,13 @@
 
 export const MISSING = "—";
 
+/** A share as a percentage to one decimal: 0.00125 is "0.1", 0.18 is "18.0". */
+export const percent = (share: number) => (share * 100).toFixed(1);
+
+/** A broker as people know it: "zerodha" is Zerodha. */
+export const brokerName = (broker: string) =>
+  broker === "zerodha" ? "Zerodha" : broker.charAt(0).toUpperCase() + broker.slice(1);
+
 type Num = number | null | undefined;
 
 const formats = new Map<number, Intl.NumberFormat>();
@@ -108,6 +115,12 @@ const MONTH_NAMES = [
 ];
 
 /** 6 Oct: a plain date ("2026-10-06"), an expiry, in Kite's months. */
+/** Calendar days from today (exchange-local) to a date: "2026-10-27" from 28 Sep is 29. */
+export function daysUntil(iso: string, now: Date): number {
+  const today = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  return Math.round((Date.parse(iso.slice(0, 10)) - Date.parse(today)) / 86_400_000);
+}
+
 export function dayMonth(iso: string): string {
   return `${Number(iso.slice(8, 10))} ${MONTH_NAMES[Number(iso.slice(5, 7)) - 1] ?? ""}`;
 }

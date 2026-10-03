@@ -3,12 +3,13 @@ import type { Schemas } from "../../api/client";
 import type { DayPnl } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { Instrument, useOpenSymbol } from "../../components/Instrument";
-import { TableEmpty } from "../../components/TableStates";
+import { type Failure, TableEmpty, TableFailed } from "../../components/TableStates";
 import { byLabel, describe } from "../../lib/events";
 import {
   direction,
   istClock,
   MISSING,
+  percent,
   price,
   qty,
   rupees,
@@ -35,7 +36,15 @@ function heldBy(position: Position): string {
   return rest ? `${names} + ${sourceLabel(rest.source).toLowerCase()}` : names;
 }
 
-export function OpenPositionsTile({ rows, loading }: { rows: LiveRow[]; loading: boolean }) {
+export function OpenPositionsTile({
+  rows,
+  loading,
+  failed,
+}: {
+  rows: LiveRow[];
+  loading: boolean;
+  failed?: Failure;
+}) {
   const openSymbol = useOpenSymbol();
   const columns: Column<LiveRow>[] = [
     {
@@ -86,7 +95,9 @@ export function OpenPositionsTile({ rows, loading }: { rows: LiveRow[]; loading:
           All positions ›
         </Link>
       </div>
-      {!loading && rows.length === 0 ? (
+      {failed ? (
+        <TableFailed what="Positions" failure={failed} />
+      ) : !loading && rows.length === 0 ? (
         <TableEmpty>
           No open positions. Fills from you, your agents and strategies show here.
         </TableEmpty>
@@ -115,7 +126,7 @@ function Gauge({ used }: { used: number }) {
       viewBox="0 0 100 56"
       className="gauge"
       role="img"
-      aria-label={`${Math.round(share * 100)}% of capital used`}
+      aria-label={`${percent(share)}% of capital used`}
     >
       <path d="M10 50 A40 40 0 0 1 90 50" className="gauge-track" />
       <path
@@ -123,33 +134,44 @@ function Gauge({ used }: { used: number }) {
         className="gauge-fill"
         strokeDasharray={`${arc * share} ${arc}`}
       />
-      <text x="50" y="48" textAnchor="middle" className="gauge-text">
-        {Math.round(share * 100)}%
+      <text x="50" y="47" textAnchor="middle" className="gauge-text">
+        {percent(share)}
+        <tspan className="gauge-unit">%</tspan>
       </text>
     </svg>
   );
 }
 
-export function MarginTile({ funds }: { funds: Schemas["FundsResult"] | undefined }) {
+export function MarginTile({
+  funds,
+  failed,
+}: {
+  funds: Schemas["FundsResult"] | undefined;
+  failed?: Failure;
+}) {
   const used = funds ? funds.used_margin / funds.total_capital : 0;
   return (
     <section className="tile" aria-labelledby="margin-title">
       <h2 className="tile-title" id="margin-title">
         Margin used
       </h2>
-      <div className="margin-row">
-        <Gauge used={used} />
-        <div className="kv grow">
-          <span className="muted">Used</span>
-          <span className="tabular">{rupees(funds?.used_margin)}</span>
-          <span className="muted">Available</span>
-          <span className="tabular">{rupees(funds?.available_cash)}</span>
-          <span className="muted">Capital</span>
-          <span className="tabular">{rupees(funds?.total_capital)}</span>
-          <span className="muted">Charges paid</span>
-          <span className="tabular">{rupees(funds?.charges)}</span>
+      {failed ? (
+        <TableFailed what="Funds" failure={failed} />
+      ) : (
+        <div className="margin-row">
+          <Gauge used={used} />
+          <div className="kv grow">
+            <span className="muted">Used</span>
+            <span className="tabular">{rupees(funds?.used_margin)}</span>
+            <span className="muted">Available</span>
+            <span className="tabular">{rupees(funds?.available_cash)}</span>
+            <span className="muted">Capital</span>
+            <span className="tabular">{rupees(funds?.total_capital)}</span>
+            <span className="muted">Charges paid</span>
+            <span className="tabular">{rupees(funds?.charges)}</span>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -159,7 +181,17 @@ const shade = (net: number | null, scale: number) => {
   return String(Math.min(4, Math.max(1, Math.ceil((Math.abs(net) / scale) * 4))));
 };
 
-export function DailyCalendar({ days, from, to }: { days: DayPnl[]; from: string; to: string }) {
+export function DailyCalendar({
+  days,
+  from,
+  to,
+  failed,
+}: {
+  days: DayPnl[];
+  from: string;
+  to: string;
+  failed?: Failure;
+}) {
   const calendar: CalendarDay[] = days.map((d) => ({
     date: d.trading_date,
     net: d.net_pnl ?? null,
@@ -218,7 +250,9 @@ export function DailyCalendar({ days, from, to }: { days: DayPnl[]; from: string
           </div>
         ))}
       </div>
-      {stats ? (
+      {failed ? (
+        <TableFailed what="Daily P&L" failure={failed} />
+      ) : stats ? (
         <div className="calendar-stats">
           <span className="note">
             Best day <span className="up tabular">{rupees(stats.best, { sign: true })}</span>
@@ -253,7 +287,13 @@ const CHARGE_NAMES: Record<string, string> = {
 };
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-export function ChargesTile({ summary }: { summary: Schemas["ChargesSummaryResult"] | undefined }) {
+export function ChargesTile({
+  summary,
+  failed,
+}: {
+  summary: Schemas["ChargesSummaryResult"] | undefined;
+  failed?: Failure;
+}) {
   const months = summary?.months ?? [];
   const top = Math.max(1, ...months.map((m) => m.total));
   const byType: Record<string, number> = {};
@@ -271,7 +311,9 @@ export function ChargesTile({ summary }: { summary: Schemas["ChargesSummaryResul
         <span className="flex-1" />
         <span className="note tabular">{rupees(summary?.total)}</span>
       </div>
-      {months.length === 0 ? (
+      {failed ? (
+        <TableFailed what="Charges" failure={failed} />
+      ) : summary === undefined ? null : months.length === 0 ? (
         <p className="note settings-note">No fills yet, so no charges.</p>
       ) : (
         <>
@@ -297,7 +339,13 @@ export function ChargesTile({ summary }: { summary: Schemas["ChargesSummaryResul
   );
 }
 
-export function StrategiesTile({ strategies }: { strategies: Strategy[] | undefined }) {
+export function StrategiesTile({
+  strategies,
+  failed,
+}: {
+  strategies: Strategy[] | undefined;
+  failed?: Failure;
+}) {
   const order = { killed: 0, running: 1, listening: 2, scheduled: 3, stopped: 4 } as const;
   const shown = [...(strategies ?? [])].sort((a, b) => order[a.state] - order[b.state]).slice(0, 5);
   return (
@@ -309,7 +357,9 @@ export function StrategiesTile({ strategies }: { strategies: Strategy[] | undefi
           All strategies ›
         </Link>
       </div>
-      {strategies && shown.length === 0 ? (
+      {failed ? (
+        <TableFailed what="Strategies" failure={failed} />
+      ) : strategies && shown.length === 0 ? (
         <TableEmpty>No strategies yet. Ask your agent to create one.</TableEmpty>
       ) : (
         <ul className="dash-list">
@@ -340,9 +390,11 @@ export function StrategiesTile({ strategies }: { strategies: Strategy[] | undefi
 export function RecentEventsTile({
   entries,
   names,
+  failed,
 }: {
   entries: AuditEntry[] | undefined;
   names: ReadonlyMap<string, string>;
+  failed?: Failure;
 }) {
   return (
     <section className="tile" data-flush="true" aria-labelledby="dash-events">
@@ -353,7 +405,9 @@ export function RecentEventsTile({
           Activity ›
         </Link>
       </div>
-      {entries && entries.length === 0 ? (
+      {failed ? (
+        <TableFailed what="Recent events" failure={failed} />
+      ) : entries && entries.length === 0 ? (
         <TableEmpty>Nothing yet. Orders, fills, strategies and reviews show up here.</TableEmpty>
       ) : (
         <ul className="dash-list">

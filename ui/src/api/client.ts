@@ -29,3 +29,12 @@ export async function unwrap<T>(
       : response.statusText;
   throw new ApiError(response.status, detail);
 }
+
+/**
+ * Whether a failed query asks again. The server said no (not there, not
+ * allowed): asking again won't change it, so the page says so at once. A
+ * server or network fault gets two more tries.
+ */
+export function shouldRetry(failures: number, error: unknown): boolean {
+  return !(error instanceof ApiError && error.status < 500) && failures < 2;
+}

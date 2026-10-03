@@ -4,12 +4,11 @@ import * as m from "motion/react-m";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { describe } from "../lib/events";
-import { istClock } from "../lib/format";
+import { brokerName, istClock } from "../lib/format";
 import { enter, leave } from "../lib/motion";
+import { sessionExpired } from "../stream/connection";
 import { useLive } from "../stream/StreamProvider";
 import { useEvents } from "./events";
-
-const title = (broker: string) => broker.charAt(0).toUpperCase() + broker.slice(1);
 
 /** Seconds since `on` last turned true; null while it's false. */
 function useSecondsSince(on: boolean): number | null {
@@ -37,11 +36,7 @@ export function Banners() {
   const { status, state } = useLive();
   const { urgent, dismiss, names, openOf } = useEvents();
   const lost = useSecondsSince(state === "polling");
-  const expired =
-    status !== null &&
-    !status.broker_connected &&
-    status.broker_expires_at !== null &&
-    new Date(status.broker_expires_at) <= new Date();
+  const expired = status !== null && sessionExpired(status);
   const strategies = urgent.filter((e) => e.event_type !== "BrokerSessionExpired");
 
   return (
@@ -58,11 +53,11 @@ export function Banners() {
           >
             <PlugZap size={18} aria-hidden />
             <span className="grow">
-              <b>{title(status.broker)} session expired.</b> Prices are paused and strategies are
-              holding. Log in again to resume.
+              <b>{brokerName(status.broker)} session expired.</b> Prices are paused and strategies
+              are holding. Log in again to resume.
             </span>
             <Link to="/settings" className="btn" data-variant="solid" data-size="sm">
-              Reconnect {title(status.broker)}
+              Reconnect {brokerName(status.broker)}
             </Link>
           </m.div>
         )}

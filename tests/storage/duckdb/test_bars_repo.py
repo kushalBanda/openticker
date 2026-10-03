@@ -36,6 +36,22 @@ def test_write_and_get_bars_round_trips() -> None:
     assert stored == [_bar(_SEP_17), _bar(_SEP_18)]
 
 
+def test_prices_volumes_and_times_come_back_exactly() -> None:
+    # Stored through one JSON string: nothing may be rounded on the way.
+    minute = datetime(2026, 9, 18, 4, 1, 59, 123456, tzinfo=UTC)
+    odd = replace(
+        _bar(minute, close=0.1 + 0.2),
+        interval="minute",
+        open=24812.349999999998,
+        volume=9_007_199_254_740_993,
+    )
+    bars_repo.write_bars([odd])
+
+    stored = bars_repo.get_bars(FAKE_INSTRUMENT, "minute", date(2026, 9, 18), date(2026, 9, 18))
+
+    assert stored == [odd]
+
+
 def test_get_bars_filters_on_exchange_local_trading_dates() -> None:
     bars_repo.write_bars([_bar(_SEP_17), _bar(_SEP_18)])
 

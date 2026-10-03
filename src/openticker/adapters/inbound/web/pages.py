@@ -6,9 +6,9 @@ from html import escape
 
 _STYLE = """
 :root { color-scheme: light dark; --ground: #f5f5f7; --tile: #fff; --ink: #1d1d1f;
-  --muted: #6e6e73; --code: #e8e8ed; }
+  --muted: #636366; --code: #e8e8ed; }
 @media (prefers-color-scheme: dark) { :root { --ground: #000; --tile: #161617;
-  --ink: #f5f5f7; --muted: #86868b; --code: #2a2a2d; } }
+  --ink: #f5f5f7; --muted: #98989d; --code: #2a2a2d; } }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--ground);
   color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter,
   "Segoe UI", sans-serif; letter-spacing: -0.01em; }

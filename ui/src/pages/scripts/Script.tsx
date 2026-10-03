@@ -11,6 +11,7 @@ import {
 import { type Column, DataTable } from "../../components/DataTable";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
+import { Select } from "../../components/Select";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import { MISSING, qty } from "../../lib/format";
 import {
@@ -189,20 +190,16 @@ export function Script() {
         />
         <span className="flex-1" />
         {tab === "logs" && runs.length > 1 && (
-          <label className="flex items-center gap-2 note">
-            Run
-            <select
-              className="input select"
-              value={run?.run_id ?? ""}
-              onChange={(e) => setPicked(e.target.value)}
-            >
-              {runs.map((r) => (
-                <option key={r.run_id} value={r.run_id}>
-                  {stamp(r.started_at, now)} · {r.ended_at ? endText(r) : "running"}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select<string>
+            label="Run"
+            value={run?.run_id ?? ""}
+            onChange={setPicked}
+            options={runs.map((r) => ({
+              value: r.run_id,
+              label: stamp(r.started_at, now),
+              hint: r.ended_at ? endText(r) : "running",
+            }))}
+          />
         )}
       </div>
 

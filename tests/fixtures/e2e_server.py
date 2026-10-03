@@ -6,7 +6,7 @@ the same path it does in production.
 
     uv run python -m tests.fixtures.e2e_server --port 8751 --home <dir> --links <file>
 
-Writes 120 sign-in links, one per line, to `--links` once it is serving.
+Writes 160 sign-in links, one per line, to `--links` once it is serving.
 
 The broker's login page is served on the next port, under `localhost`, so
 its redirect back reaches the app from another site, as Kite's does.
@@ -24,6 +24,7 @@ kept their realized P&L and charge breakdown. Hosted scripts run for real
 """
 
 import argparse
+import bisect
 import functools
 import math
 import os
@@ -250,15 +251,24 @@ def _minutes(symbol: str) -> tuple[tuple[datetime, float], ...]:
     return tuple(zip(stamps, closes, strict=True))
 
 
+@functools.cache
+def _stamps(symbol: str) -> tuple[datetime, ...]:
+    return tuple(stamp for stamp, _ in _minutes(symbol))
+
+
 def _bars(instrument: Instrument, interval: str, start: date, end: date) -> list[Bar]:
+    """Only the range's minutes are walked (found by bisection): the whole
+    year each time, as the Symbol page's depth polls ask every 2 s, kept the
+    server busy enough to delay live prices."""
     rng = random.Random(f"volume-{instrument.symbol}-{interval}")
     groups: dict[datetime, list[float]] = {}
     previous: dict[datetime, float] = {}
-    last = None
-    for stamp, close in _minutes(instrument.symbol):
-        if not start <= stamp.date() <= end:
-            last = close
-            continue
+    minutes = _minutes(instrument.symbol)
+    stamps = _stamps(instrument.symbol)
+    lo = bisect.bisect_left(stamps, datetime.combine(start, clock_time.min, EXCHANGE_TIMEZONE))
+    hi = bisect.bisect_right(stamps, datetime.combine(end, clock_time.max, EXCHANGE_TIMEZONE))
+    last = minutes[lo - 1][1] if lo else None
+    for stamp, close in minutes[lo:hi]:
         if interval == "day":
             key = datetime.combine(stamp.date(), clock_time(), EXCHANGE_TIMEZONE)
         else:
@@ -413,7 +423,11 @@ class Clock:
 
 
 class WalkingFeed:
-    """A MarketFeedPort whose prices take a small random step each 300 ms."""
+    """A MarketFeedPort whose prices take a small random step each 300 ms,
+    pulled back toward where they started: a free walk drifted NIFTY 50 a
+    few hundred points over a full run, moving the chain's ATM strike that
+    the Option chain spec counts on. Indices step less and are held closer
+    (a few points), stocks wander a little further."""
 
     def __init__(self, clock: Clock) -> None:
         self._clock = clock
@@ -432,7 +446,10 @@ class WalkingFeed:
         ticks = []
         for symbol, instrument in list(self._subscribed.items()):
             if symbol in PRICES:
-                step = PRICES[symbol] * self._random.uniform(-0.0004, 0.0004)
+                size, pull = (0.0001, 0.2) if symbol in INDICES else (0.0004, 0.05)
+                step = PRICES[symbol] * self._random.uniform(-size, size) - pull * (
+                    PRICES[symbol] - START_PRICES[symbol]
+                )
                 # On the tick, as an exchange's prices are; an index has none.
                 tick = instrument.tick_size or 0.01
                 PRICES[symbol] = round(round((PRICES[symbol] + step) / tick) * tick, 2)
@@ -700,7 +717,7 @@ def main() -> None:
 
     web = WebSettings(f"http://127.0.0.1:{args.port}", args.port, None, DIST)
     app = create_app(events, env, clock=clock, hub=hub, web=web)
-    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(120)]
+    links = [create_sign_in_link(web.own_origin, clock()) for _ in range(160)]
     Path(args.links).write_text("\n".join(links) + "\n")
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
