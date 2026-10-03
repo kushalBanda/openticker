@@ -16,6 +16,8 @@ from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.adapters.inbound.scopes import TOOL_ROUTES
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
+from openticker.ports.models import Exchange, Instrument, InstrumentType
+from openticker.storage.sqlite import instruments_repo
 from openticker.storage.sqlite.audit_repo import write_audit
 from openticker.use_cases.api_keys import create_api_key, revoke
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
@@ -802,3 +804,27 @@ def test_watchlist_routes_round_trip_and_refuse_mistakes(client: TestClient) -> 
         "deleted": True,
     }
     assert client.delete(path).status_code == 404
+
+
+def test_search_hides_expired_contracts_by_the_app_clock(client: TestClient) -> None:
+    # Expires on NOW's trading date: live by the app's clock, whatever the wall clock says.
+    instruments_repo.upsert_instruments(
+        [
+            Instrument(
+                symbol="NIFTY22SEP2623350CE",
+                broker_symbol="NIFTY2692223350CE",
+                exchange=Exchange.NFO,
+                broker_exchange="NFO",
+                token="10967554",
+                expiry=date(2026, 9, 22),
+                strike=23350.0,
+                lot_size=65,
+                instrument_type=InstrumentType.CE,
+                tick_size=0.05,
+            )
+        ]
+    )
+
+    found = client.get("/api/v1/instruments", params={"query": "nifty"}).json()
+
+    assert [i["symbol"] for i in found["instruments"]] == ["NIFTY22SEP2623350CE"]

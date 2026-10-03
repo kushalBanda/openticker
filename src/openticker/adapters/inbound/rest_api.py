@@ -537,7 +537,7 @@ def create_app(
             exchange,
             instrument_type,
             include_expired,
-            today=datetime.now(EXCHANGE_TIMEZONE).date(),
+            today=clock().astimezone(EXCHANGE_TIMEZONE).date(),
             limit=limit + 1,
         )
         return SearchResult.of(found, limit)

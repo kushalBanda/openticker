@@ -16,7 +16,15 @@ from mcp.types import Tool
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.mcp_scoped import as_client
-from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
+from openticker.ports.models import (
+    Exchange,
+    Instrument,
+    InstrumentType,
+    Interval,
+    Product,
+    Side,
+)
+from openticker.storage.sqlite import instruments_repo
 from openticker.use_cases import agent_clients
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
@@ -107,6 +115,30 @@ def test_search_instruments_finds_synced_symbol() -> None:
 
     assert [instrument.symbol for instrument in result.instruments] == ["RELIANCE"]
     assert result.truncated is False
+
+
+def test_search_instruments_hides_expired_contracts_by_the_tools_clock() -> None:
+    # Expires on TRADING_TIME's trading date: live by the clock, whatever the wall clock says.
+    instruments_repo.upsert_instruments(
+        [
+            Instrument(
+                symbol="NIFTY22SEP2623350CE",
+                broker_symbol="NIFTY2692223350CE",
+                exchange=Exchange.NFO,
+                broker_exchange="NFO",
+                token="10967554",
+                expiry=date(2026, 9, 22),
+                strike=23350.0,
+                lot_size=65,
+                instrument_type=InstrumentType.CE,
+                tick_size=0.05,
+            )
+        ]
+    )
+
+    result = mcp_server.search_instruments(query="nifty")
+
+    assert [instrument.symbol for instrument in result.instruments] == ["NIFTY22SEP2623350CE"]
 
 
 def test_agent_fixable_errors_reach_the_agent_with_their_message() -> None:
