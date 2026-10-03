@@ -198,3 +198,17 @@ def _aware(moment: datetime | None) -> datetime | None:
 
 def _naive(moment: datetime) -> datetime:
     return moment.astimezone(UTC).replace(tzinfo=None)
+
+
+def latest_answers() -> dict[str, AgentJob]:
+    """Each strategy's newest ended job that answered, by strategy id."""
+    statement = (
+        select(AgentJobRow)
+        .where(AgentJobRow.status == AgentJobStatus.ENDED.value, AgentJobRow.summary.is_not(None))
+        .order_by(AgentJobRow.ended_at.desc(), literal_column("rowid").desc())
+    )
+    newest: dict[str, AgentJob] = {}
+    with Session(get_engine()) as session:
+        for row in session.scalars(statement):
+            newest.setdefault(row.strategy_id, _job(row))
+    return newest

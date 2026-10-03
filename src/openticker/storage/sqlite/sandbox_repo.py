@@ -7,12 +7,13 @@ IMMEDIATE): a second writer waits for the first instead of both reading the
 same funds and one overwriting the other (ADR 11 in docs/adr).
 """
 
-from collections.abc import Iterator, Sequence
+import json
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Row, literal_column, select
+from sqlalchemy import Row, delete, func, literal_column, select
 from sqlalchemy.orm import Session
 
 from openticker.core.orders.models import Order, OrderStatus, OrderType, Trade
@@ -72,6 +73,8 @@ class StoredOrder:
     # Set when it fills and kept on its trade, not on the order row.
     charges: float | None = None
     expected_price: float | None = None
+    realized_pnl: float | None = None
+    charges_detail: Mapping[str, float] | None = None
 
     def to_order(self, instrument: Instrument) -> Order:
         return Order(
@@ -109,6 +112,8 @@ class StoredTrade:
     run_id: str | None
     charges: float | None = None  # None: filled before costs were modelled
     expected_price: float | None = None
+    realized_pnl: float | None = None  # None: filled before it was recorded
+    charges_detail: Mapping[str, float] | None = None
 
     def to_trade(self, instrument: Instrument) -> Trade:
         return Trade(
@@ -124,6 +129,8 @@ class StoredTrade:
             run_id=self.run_id,
             charges=self.charges,
             expected_price=self.expected_price,
+            realized_pnl=self.realized_pnl,
+            charges_detail=self.charges_detail,
         )
 
 
@@ -163,6 +170,30 @@ def save_funds(session: Session, funds: FundsState) -> None:
             realized_pnl=funds.realized_pnl,
             charges=funds.charges,
         )
+    )
+
+
+@dataclass(frozen=True)
+class Wiped:
+    orders: int
+    trades: int
+    positions: int  # open ones; flat rows go too
+
+
+def reset_account(session: Session, capital: float) -> Wiped:
+    """Deletes every order, trade and position and puts the funds back to
+    `capital` (ADR 37 in docs/adr). Inside `fill_transaction()`."""
+    open_positions = session.scalar(
+        select(func.count()).select_from(SandboxPositionRow).where(SandboxPositionRow.quantity != 0)
+    )
+    orders = session.execute(delete(SandboxOrderRow))
+    trades = session.execute(delete(SandboxTradeRow))
+    session.execute(delete(SandboxPositionRow))
+    save_funds(session, FundsState(capital, 0.0, 0.0, 0.0))
+    return Wiped(
+        orders=getattr(orders, "rowcount", 0),
+        trades=getattr(trades, "rowcount", 0),
+        positions=open_positions or 0,
     )
 
 
@@ -256,6 +287,10 @@ def _add_trade(session: Session, order: StoredOrder, price: float, filled_at: da
             run_id=order.run_id,
             charges=order.charges,
             expected_price=order.expected_price,
+            realized_pnl=order.realized_pnl,
+            charges_detail=(
+                json.dumps(dict(order.charges_detail)) if order.charges_detail is not None else None
+            ),
         )
     )
 
@@ -263,6 +298,11 @@ def _add_trade(session: Session, order: StoredOrder, price: float, filled_at: da
 def read_funds(starting_capital: float) -> FundsState:
     with fill_transaction() as session:  # creates the row on first read
         return load_funds(session, starting_capital)
+
+
+def read_position(exchange: str, symbol: str, product: Product) -> NetPosition:
+    with Session(get_engine()) as session:
+        return load_position(session, exchange, symbol, product)
 
 
 def list_positions() -> list[StoredPosition]:
@@ -335,6 +375,8 @@ def _trades(rows: Sequence[Row[tuple[SandboxTradeRow, str]]]) -> list[StoredTrad
             run_id=trade.run_id,
             charges=trade.charges,
             expected_price=trade.expected_price,
+            realized_pnl=trade.realized_pnl,
+            charges_detail=json.loads(trade.charges_detail) if trade.charges_detail else None,
         )
         for trade, triggered_by in rows
     ]
@@ -366,6 +408,25 @@ def list_pending_orders() -> list[StoredOrder]:
             .order_by(SandboxOrderRow.placed_at, SandboxOrderRow.order_id)
         ).all()
     return [_stored(row) for row in rows]
+
+
+def last_placer(exchange: str, symbol: str, product: Product, side: Side) -> str | None:
+    """`triggered_by` of the newest filled `side` order in the contract that no
+    strategy placed: who opened or added to what is held outside strategies."""
+    with Session(get_engine()) as session:
+        return session.scalar(
+            select(SandboxOrderRow.triggered_by)
+            .where(
+                SandboxOrderRow.exchange == exchange,
+                SandboxOrderRow.symbol == symbol,
+                SandboxOrderRow.product == product.value,
+                SandboxOrderRow.side == side.value,
+                SandboxOrderRow.status == OrderStatus.FILLED.value,
+                SandboxOrderRow.strategy_id.is_(None),
+            )
+            .order_by(SandboxOrderRow.placed_at.desc(), literal_column("rowid").desc())
+            .limit(1)
+        )
 
 
 def _stored(row: SandboxOrderRow) -> StoredOrder:

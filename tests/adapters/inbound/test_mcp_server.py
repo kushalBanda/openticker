@@ -15,7 +15,17 @@ from mcp.types import Tool
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
-from openticker.ports.models import Exchange, InstrumentType, Interval, Product, Side
+from openticker.adapters.inbound.mcp_scoped import as_client
+from openticker.ports.models import (
+    Exchange,
+    Instrument,
+    InstrumentType,
+    Interval,
+    Product,
+    Side,
+)
+from openticker.storage.sqlite import instruments_repo
+from openticker.use_cases import agent_clients
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
 TRADING_TIME = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # Tuesday 10:30 IST
@@ -105,6 +115,30 @@ def test_search_instruments_finds_synced_symbol() -> None:
 
     assert [instrument.symbol for instrument in result.instruments] == ["RELIANCE"]
     assert result.truncated is False
+
+
+def test_search_instruments_hides_expired_contracts_by_the_tools_clock() -> None:
+    # Expires on TRADING_TIME's trading date: live by the clock, whatever the wall clock says.
+    instruments_repo.upsert_instruments(
+        [
+            Instrument(
+                symbol="NIFTY22SEP2623350CE",
+                broker_symbol="NIFTY2692223350CE",
+                exchange=Exchange.NFO,
+                broker_exchange="NFO",
+                token="10967554",
+                expiry=date(2026, 9, 22),
+                strike=23350.0,
+                lot_size=65,
+                instrument_type=InstrumentType.CE,
+                tick_size=0.05,
+            )
+        ]
+    )
+
+    result = mcp_server.search_instruments(query="nifty")
+
+    assert [instrument.symbol for instrument in result.instruments] == ["NIFTY22SEP2623350CE"]
 
 
 def test_agent_fixable_errors_reach_the_agent_with_their_message() -> None:
@@ -206,6 +240,42 @@ def test_get_option_chain_reports_percent_units_and_exchange_local_expiry() -> N
 def test_get_option_chain_before_sync_is_an_agent_facing_error() -> None:
     with pytest.raises(ToolError, match="sync_instruments"):
         mcp_server.get_option_chain(broker="fake", underlying="NIFTY 50", exchange=Exchange.NSE)
+
+
+def test_preview_payoff_of_a_short_straddle_says_losses_are_unbounded() -> None:
+    from openticker.adapters.inbound.mcp_models import PayoffLegInput
+    from openticker.storage.sqlite.instruments_repo import upsert_instruments
+    from tests.fixtures.options import NIFTY_INDEX, chain_contracts
+
+    expiry = date(2099, 1, 1)
+    upsert_instruments([NIFTY_INDEX] + chain_contracts("NIFTY", expiry, [2500.0]))
+    legs = [
+        PayoffLegInput(
+            symbol=f"NIFTY01JAN992500{kind}",
+            exchange=Exchange.NFO,
+            side=Side.SELL,
+            quantity=65,
+            price=price,
+        )
+        for kind, price in (("CE", 40.0), ("PE", 35.0))
+    ]
+
+    result = mcp_server.preview_payoff(broker="fake", legs=legs)
+
+    assert (result.underlying, result.underlying_price) == ("NIFTY 50", 2500.0)
+    assert result.net_premium == 75.0 * 65
+    assert result.max_profit == 75.0 * 65 and result.max_loss is None
+    assert result.breakevens == [2425.0, 2575.0]
+    assert len(result.points) == 161
+
+
+def test_preview_payoff_of_a_stock_is_an_agent_facing_error() -> None:
+    from openticker.adapters.inbound.mcp_models import PayoffLegInput
+
+    mcp_server.sync_instruments(broker="fake")
+    leg = PayoffLegInput(symbol="RELIANCE", exchange=Exchange.NSE, side=Side.BUY, quantity=1)
+    with pytest.raises(ToolError, match="only options and futures"):
+        mcp_server.preview_payoff(broker="fake", legs=[leg])
 
 
 def test_sandbox_round_trip_through_the_tools() -> None:
@@ -492,6 +562,12 @@ def test_review_tools_queue_a_job_and_read_it_back() -> None:
         mcp_server.start_review(strategy_id=strategy_id)
     with pytest.raises(ToolError, match="get_agent_jobs lists them"):
         mcp_server.get_agent_job_log(job_id="job_nope")
+    with as_client("claude-code"):
+        stopped = mcp_server.stop_agent_job(job_id=started.job.job_id)
+    assert (stopped.status, stopped.end_reason) == ("ended", "stopped")
+    assert stopped.end_detail == "stopped by mcp:claude-code before it started"
+    with pytest.raises(ToolError, match="get_agent_jobs lists them"):
+        mcp_server.stop_agent_job(job_id="job_nope")
 
 
 def test_review_schedule_tools_set_show_and_clear_it() -> None:
@@ -619,6 +695,11 @@ def test_signal_strategy_tools_give_an_alert_url_and_show_its_alerts(
     assert [(c.result, c.commands[0].action) for c in signals.calls] == [("accepted", "long_entry")]
     summary = mcp_server.list_strategies().strategies[0]
     assert (summary.kind, summary.underlying) == ("signal", "RELIANCE, NIFTY22SEP262500CE")
+    assert (summary.state, summary.segments, summary.has_alert_url) == (
+        "listening",
+        ["EQ", "OPT"],
+        True,
+    )
     assert mcp_server.disable_strategy_webhook(strategy_id=created.strategy_id).kind == "signal"
     assert mcp_server.get_strategy_signals(strategy_id=created.strategy_id).webhook is None
 
@@ -886,8 +967,63 @@ def test_order_status_and_tradebook_through_the_tools() -> None:
         (placed.order_id, 3, "mcp")
     ]
     assert book.trades[0].filled_at == TRADING_TIME  # the server's clock, not the wall's
+    trade = book.trades[0]
+    assert trade.realized_pnl == 0.0 and trade.charges_detail is not None
+    assert round(sum(trade.charges_detail.values()), 2) == trade.charges
+    assert (trade.source, trade.placed_by, trade.instrument_type) == ("agent", None, "EQ")
+    month = mcp_server.get_tradebook(broker="fake", period="month")
+    assert len(month.trades) == 1 and month.since.day == 1
     with pytest.raises(ToolError, match="get_orderbook"):
         mcp_server.get_order_status(broker="fake", order_id="SBNOPE")
+
+
+def test_orderbook_says_who_placed_each_and_can_keep_to_today(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mcp_server.sync_instruments(broker="fake")
+    placed = mcp_server.place_order(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=3,
+        product=Product.MIS,
+    )
+
+    [order] = mcp_server.get_orderbook(broker="fake", today_only=True).orders
+    monkeypatch.setattr(mcp_server, "clock", lambda: TRADING_TIME + timedelta(days=1))
+    tomorrow = mcp_server.get_orderbook(broker="fake", today_only=True).orders
+    everything = mcp_server.get_orderbook(broker="fake").orders
+
+    assert (order.order_id, order.source, order.placed_by) == (placed.order_id, "agent", None)
+    assert (order.instrument_type, order.lot_size, order.triggered) == ("EQ", 1, False)
+    assert tomorrow == [] and len(everything) == 1
+
+
+def test_preview_paper_margin_through_the_tool() -> None:
+    mcp_server.sync_instruments(broker="fake")
+
+    margin = mcp_server.preview_paper_margin(
+        broker="fake",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=Side.BUY,
+        quantity=10,
+        product=Product.CNC,
+        price=2500.0,
+    )
+
+    assert (margin.required, margin.released, margin.fits) == (25_000.0, 0.0, True)
+    with pytest.raises(ToolError, match="NOPE"):
+        mcp_server.preview_paper_margin(
+            broker="fake",
+            symbol="NOPE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=1,
+            product=Product.CNC,
+            price=1.0,
+        )
 
 
 def test_check_charge_rates_through_the_tool() -> None:
@@ -944,3 +1080,117 @@ def test_preview_charges_through_the_tool() -> None:
             price=1.0,
             product=Product.MIS,
         )
+
+
+@pytest.fixture
+def _fresh_client_notes() -> Iterator[None]:
+    agent_clients.forget_noted()
+    yield
+    agent_clients.forget_noted()
+
+
+@pytest.mark.usefixtures("_fresh_client_notes")
+def test_orders_record_mcp_client_name() -> None:
+    from mcp.client import Client
+    from mcp.types import Implementation
+
+    mcp_server.sync_instruments(broker="fake")
+
+    async def place() -> None:
+        info = Implementation(name="Claude Code", version="2.1.0")
+        async with Client(mcp_server.mcp, client_info=info) as client:
+            arguments = {
+                "broker": "fake",
+                "symbol": "RELIANCE",
+                "exchange": "NSE",
+                "side": "BUY",
+                "quantity": 1,
+                "product": "MIS",
+            }
+            await client.call_tool("place_order", arguments)
+
+    asyncio.run(place())
+    audit = mcp_server.get_audit_log(event_type="OrderFilled")
+    clients = agent_clients.get_agent_clients()
+
+    assert audit.entries[0].triggered_by == "mcp:claude-code"
+    assert [(c.name, c.transport, c.version, c.calls) for c in clients] == [
+        ("claude-code", "stdio", "2.1.0", 1)
+    ]
+
+
+def test_unknown_client_records_plain_mcp() -> None:
+    mcp_server.sync_instruments(broker="fake")
+    with as_client(None):
+        mcp_server.place_order(
+            broker="fake",
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=Side.BUY,
+            quantity=1,
+            product=Product.MIS,
+        )
+
+    assert mcp_server.get_audit_log(event_type="OrderFilled").entries[0].triggered_by == "mcp"
+
+
+@pytest.mark.usefixtures("_fresh_client_notes")
+def test_client_noted_once_a_minute() -> None:
+    for seconds in (0, 30, 59):
+        agent_clients.note_agent_client(
+            "codex", "stdio", "1", TRADING_TIME + timedelta(seconds=seconds)
+        )
+    first = agent_clients.get_agent_clients()
+    agent_clients.note_agent_client("codex", "stdio", "1", TRADING_TIME + timedelta(seconds=61))
+    second = agent_clients.get_agent_clients()
+
+    assert [c.calls for c in first] == [1]  # the two after it wait for the next write
+    assert [(c.calls, c.last_seen_at) for c in second] == [
+        (4, TRADING_TIME + timedelta(seconds=61))
+    ]
+
+
+def test_watchlist_tools_round_trip_and_say_who_changed_it() -> None:
+    from openticker.adapters.inbound.mcp_models import InstrumentRef
+
+    mcp_server.sync_instruments(broker="fake")
+    reliance = [InstrumentRef(symbol="RELIANCE", exchange=Exchange.NSE)]
+    with as_client("claude-code"):
+        core = mcp_server.create_watchlist(name="Core")
+        added = mcp_server.add_to_watchlist(watchlist_id=core.watchlist_id, instruments=reliance)
+        mcp_server.rename_watchlist(watchlist_id=core.watchlist_id, name="Main")
+
+    [item] = added.items
+    assert (item.symbol, item.exchange, item.instrument_type) == (
+        "RELIANCE",
+        Exchange.NSE,
+        InstrumentType.EQ,
+    )
+    [listed] = mcp_server.list_watchlists().watchlists
+    assert (listed.name, [i.symbol for i in listed.items]) == ("Main", ["RELIANCE"])
+    [entry, *_] = mcp_server.get_audit_log(event_type="WatchlistChanged").entries
+    assert entry.triggered_by == "mcp:claude-code"
+
+    emptied = mcp_server.remove_from_watchlist(watchlist_id=core.watchlist_id, instruments=reliance)
+    assert emptied.items == []
+    gone = mcp_server.delete_watchlist(watchlist_id=core.watchlist_id)
+    assert (gone.name, gone.deleted) == ("Main", True)
+    assert mcp_server.list_watchlists().watchlists == []
+
+
+def test_watchlist_tools_turn_mistakes_into_agent_facing_errors() -> None:
+    from openticker.adapters.inbound.mcp_models import InstrumentRef
+
+    mcp_server.sync_instruments(broker="fake")
+    core = mcp_server.create_watchlist(name="Core")
+    with pytest.raises(ToolError, match="already exists"):
+        mcp_server.create_watchlist(name="core")
+    with pytest.raises(ToolError, match="1 to 40"):
+        mcp_server.create_watchlist(name=" ")
+    with pytest.raises(ToolError, match="sync_instruments"):
+        mcp_server.add_to_watchlist(
+            watchlist_id=core.watchlist_id,
+            instruments=[InstrumentRef(symbol="NOPE", exchange=Exchange.NSE)],
+        )
+    with pytest.raises(ToolError, match="list_watchlists"):
+        mcp_server.delete_watchlist(watchlist_id="wl_nope")

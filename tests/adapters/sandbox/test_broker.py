@@ -281,3 +281,16 @@ def test_market_depth_comes_from_the_real_broker() -> None:
     direct = market.get_market_depth(FAKE_INSTRUMENT)
 
     assert replace(passed, as_of=direct.as_of) == direct
+
+
+def test_preview_margin_matches_what_a_fill_blocks_and_writes_nothing() -> None:
+    market = PricedBroker(price=1000.0)
+    sandbox = _sandbox(market)
+    sandbox.place_order(_order(Side.BUY, 10))
+
+    more = sandbox.preview_margin(FAKE_INSTRUMENT, Side.BUY, 50, Product.CNC, 1000.0)
+    out = sandbox.preview_margin(FAKE_INSTRUMENT, Side.SELL, 10, Product.CNC, 1000.0)
+
+    assert (more.required, more.available, more.fits) == (50_000.0, 90_000.0, True)
+    assert (out.required, out.released) == (0.0, 10_000.0)
+    assert sandbox.get_funds().used_margin == 10_000.0

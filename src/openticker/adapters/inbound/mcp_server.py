@@ -37,10 +37,12 @@ from openticker.adapters.inbound.mcp_models import (
     CancelOrderResult,
     ChargeCheckResult,
     ChargesResult,
+    ChargesSummaryResult,
     CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
+    DeleteWatchlistResult,
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
@@ -49,17 +51,23 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
+    MonthChargesResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
+    PaperMarginResult,
+    PayoffLegInput,
+    PayoffResult,
     PlaceOrderResult,
+    PnlHistoryResult,
     PositionsResult,
     QuoteResult,
     QuotesResult,
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
+    ScriptLimitsResult,
     ScriptLogsResult,
     ScriptResult,
     ScriptScheduleDefinition,
@@ -79,10 +87,12 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySummary,
     SyncResult,
     TradebookResult,
+    WatchlistResult,
+    WatchlistsResult,
     WebhookResult,
     closing_result,
 )
-from openticker.adapters.inbound.mcp_scoped import ScopedMCPServer
+from openticker.adapters.inbound.mcp_scoped import ScopedMCPServer, current_client
 from openticker.composition import (
     AgentConfigError,
     SandboxConfigError,
@@ -90,28 +100,20 @@ from openticker.composition import (
     build_event_bus,
     capital_cap,
     order_broker,
+    script_limits,
 )
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewScheduleError
 from openticker.core.calendar.calendar import CalendarError
+from openticker.core.options.payoff import PayoffInputError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
+from openticker.core.pnl import Source
 from openticker.core.scripts.models import MAX_SCRIPT_BYTES, InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
 from openticker.events.bus import EventBus
-from openticker.events.types import (
-    BrokerSessionExpired,
-    InstrumentSyncCompleted,
-    OrderCancelled,
-    OrderFailed,
-    OrderFilled,
-    OrderPlaced,
-    PositionSettled,
-    RiskBreached,
-    ScriptExited,
-    ScriptStarted,
-)
+from openticker.events.types import EVENT_TYPE_NAMES
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
@@ -124,6 +126,14 @@ from openticker.ports.models import (
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.storage.sqlite.watchlists_repo import (
+    MAX_ITEMS,
+    DuplicateWatchlistNameError,
+    Watchlist,
+    WatchlistLimitError,
+)
+from openticker.use_cases import watchlists
+from openticker.use_cases.agent_clients import note_agent_client
 from openticker.use_cases.agents import manage as agent_jobs
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
@@ -168,14 +178,24 @@ from openticker.use_cases.get_positions import get_positions as get_positions_us
 from openticker.use_cases.get_quote import get_quote as get_quote_use_case
 from openticker.use_cases.get_quotes import MAX_QUOTES
 from openticker.use_cases.get_quotes import get_quotes as get_quotes_use_case
+from openticker.use_cases.get_tradebook import Period, period_start, session_start
 from openticker.use_cases.get_tradebook import get_tradebook as get_tradebook_use_case
-from openticker.use_cases.get_tradebook import session_start
 from openticker.use_cases.modify_order import modify_order as modify_order_use_case
 from openticker.use_cases.place_basket import MAX_BASKET
 from openticker.use_cases.place_basket import place_basket as place_basket_use_case
 from openticker.use_cases.place_order import place_order as place_order_use_case
+from openticker.use_cases.placers import placer_names
+from openticker.use_cases.pnl_history import HistoryRangeError
+from openticker.use_cases.pnl_history import get_charges_summary as get_charges_summary_use_case
+from openticker.use_cases.pnl_history import get_pnl_history as get_pnl_history_use_case
+from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError
 from openticker.use_cases.preview_charges import preview_charges as preview_charges_use_case
+from openticker.use_cases.preview_paper_margin import (
+    preview_paper_margin as preview_paper_margin_use_case,
+)
+from openticker.use_cases.preview_payoff import MAX_PAYOFF_LEGS, MixedUnderlyingsError
+from openticker.use_cases.preview_payoff import preview_payoff as preview_payoff_use_case
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -188,6 +208,7 @@ from openticker.use_cases.search_instruments import (
 )
 from openticker.use_cases.strategies import control
 from openticker.use_cases.strategies import define as strategies
+from openticker.use_cases.strategies.board import strategy_board
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
     StrategyStateError,
@@ -203,6 +224,7 @@ from openticker.use_cases.strategies.ledger import (
     get_strategy_ledger as get_strategy_ledger_use_case,
 )
 from openticker.use_cases.sync_instruments import sync_instruments as sync_instruments_use_case
+from openticker.use_cases.watchlists import InvalidWatchlistNameError, UnknownWatchlistError
 
 INSTRUCTIONS = """\
 OpenTicker: Indian market data through a connected broker.
@@ -215,7 +237,9 @@ Typical flow:
 3. search_instruments to find the exact symbol, then get_quote (get_quotes for up
    to 50 at once; get_market_depth for the order book) / get_historical_bars.
 4. get_option_chain on an index (NIFTY 50, NIFTY BANK, SENSEX, ...) or a stock for
-   strikes, prices, IV and Greeks around at-the-money.
+   strikes, prices, bid and ask, IV and Greeks around at-the-money, and the nearest
+   futures. preview_payoff shows what a set of its legs makes or loses (at expiry and
+   today, breakevens, max profit and loss) before place_basket places them.
 5. Trading is paper trading only (a local sandbox with virtual capital): place_order
    never sends anything to the broker, and works only while the exchange is open
    (get_market_status). MARKET orders fill at once at the ask (buy) or bid
@@ -240,7 +264,8 @@ Typical flow:
    get_strategy_ledger judges it: every run after charges, with its fills.
    start_review has openticker-serve run the user's own coding agent to
    review it unattended; schedule_review has it do so every so often, after
-   so many runs or on a drawdown; get_agent_jobs shows how that went.
+   so many runs or on a drawdown; get_agent_jobs shows how that went, and
+   stop_agent_job stops one.
 7. Signal strategies: create_signal_strategy saves one whose legs name their
    contracts (stocks, futures, options); rotate_strategy_webhook gives it an
    alert URL for TradingView or ChartInk alerts, served by openticker-serve.
@@ -251,6 +276,9 @@ Typical flow:
    and CPU limits. It trades only through the REST API, with a key made for each
    run in OPENTICKER_API_KEY and the server's address in OPENTICKER_URL; it is
    given no broker keys or other secrets. get_script_logs shows its output.
+9. Watchlists: named lists of instruments the user watches, shared with the
+   web app. list_watchlists reads them; create_watchlist, add_to_watchlist,
+   remove_from_watchlist, rename_watchlist and delete_watchlist change them.
 
 Symbols are OpenTicker's own, not the broker's: RELIANCE, NIFTY 50,
 NIFTY29SEP26FUT, NIFTY22SEP2623350CE (<name><DDMMMYY><strike><CE|PE>).
@@ -270,24 +298,22 @@ DEFAULT_AUDIT_LIMIT = 20
 DEFAULT_STRIKE_COUNT = 10
 DEFAULT_ORDERBOOK_LIMIT = 20
 DEFAULT_TRADEBOOK_LIMIT = 50
-EVENT_TYPE_NAMES = [
-    event.__name__
-    for event in (
-        OrderPlaced,
-        OrderFilled,
-        OrderFailed,
-        OrderCancelled,
-        PositionSettled,
-        RiskBreached,
-        InstrumentSyncCompleted,
-        BrokerSessionExpired,
-        ScriptStarted,
-        ScriptExited,
-    )
-]
-
 # The tools' clock; tests replace it to run at a fixed market time.
 clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+
+def _who() -> str:
+    """`triggered_by` for this call: "mcp:<client>" when the client gave its
+    name, else "mcp" (ADR 35)."""
+    client = current_client()
+    return f"mcp:{client}" if client else "mcp"
+
+
+def _note_client(name: str, transport: str, version: str | None, tool: str) -> None:
+    note_agent_client(name, transport, version, clock(), tool)
+
+
+mcp.on_client = _note_client
 
 _event_bus: EventBus | None = None
 _event_bus_lock = threading.Lock()
@@ -355,6 +381,7 @@ ExchangeParam = Annotated[
 # (ADR 7 in docs/adr).
 _AGENT_FIXABLE_ERRORS = (
     BrokerError,
+    HistoryRangeError,
     UnknownInstrumentError,
     UnknownBrokerError,
     BrokerConfigError,
@@ -366,6 +393,8 @@ _AGENT_FIXABLE_ERRORS = (
     NoOpenPositionError,
     InvalidMarginOrderError,
     BatchTooLargeError,
+    PayoffInputError,
+    MixedUnderlyingsError,
     ChargesNotModelledError,
     ChargeBookError,
     NoChargeSamplesError,
@@ -375,6 +404,10 @@ _AGENT_FIXABLE_ERRORS = (
     AgentConfigError,
     ReviewScheduleError,
     UnknownStrategyError,
+    UnknownWatchlistError,
+    DuplicateWatchlistNameError,
+    InvalidWatchlistNameError,
+    WatchlistLimitError,
     LegResolutionError,
     DuplicateStrategyNameError,
     InvalidStrategyError,
@@ -433,7 +466,7 @@ def connect_broker(
     session, stored encrypted and replacing any previous one. The session
     token itself is never returned."""
     with _agent_facing_errors():
-        connect_broker_use_case(get_adapter(broker), request_token)
+        connect_broker_use_case(get_adapter(broker), request_token, event_bus(), _who())
     return ConnectResult(
         broker=broker,
         connected=True,
@@ -486,7 +519,7 @@ def search_instruments(
         exchange,
         instrument_type,
         include_expired,
-        today=datetime.now(EXCHANGE_TIMEZONE).date(),
+        today=clock().astimezone(EXCHANGE_TIMEZONE).date(),
         limit=limit + 1,
     )
     return SearchResult.of(found, limit)
@@ -603,7 +636,7 @@ def get_option_chain(
     """Calls and puts for one expiry around at-the-money: live price, open
     interest, implied volatility and Greeks (Black-76 on the forward implied by
     the ATM pair). Needs sync_instruments to have run today."""
-    now = datetime.now(UTC)
+    now = clock()
     with _agent_facing_errors():
         chain, expiries = get_option_chain_use_case(
             get_adapter(broker),
@@ -615,6 +648,36 @@ def get_option_chain(
             now,
         )
     return OptionChainResult.of(chain, expiries, now)
+
+
+@mcp.tool(
+    title="Preview payoff",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True
+    ),
+)
+def preview_payoff(
+    broker: Broker,
+    legs: Annotated[
+        list[PayoffLegInput],
+        Field(
+            min_length=1,
+            max_length=MAX_PAYOFF_LEGS,
+            description="Options and futures on one underlying, the options of one expiry: "
+            "symbol, exchange, side, quantity in units, and the price to assume (omit for the "
+            "last price).",
+        ),
+    ],
+) -> PayoffResult:
+    """What a set of legs makes or loses across the underlying, at expiry and
+    today (Black-76 at each option's implied volatility): breakevens, the most
+    it makes and loses (None when unbounded), the net premium and net delta.
+    Nothing is placed; use it before place_basket."""
+    with _agent_facing_errors():
+        preview = preview_payoff_use_case(
+            [leg.to_request() for leg in legs], get_adapter(broker), clock()
+        )
+    return PayoffResult.of(preview)
 
 
 _NEXT_STEP = {
@@ -680,7 +743,7 @@ def place_order(
             order_type=order_type,
             price=price,
             trigger_price=trigger_price,
-            triggered_by="mcp",
+            triggered_by=_who(),
         )
         result = place_order_use_case(
             request,
@@ -738,9 +801,46 @@ def check_charge_rates(broker: Broker) -> ChargeCheckResult:
     openticker-serve runs this once a day by itself."""
     with _agent_facing_errors():
         check = check_charge_rates_use_case(
-            broker, get_adapter(broker), event_bus(), clock(), "mcp"
+            broker, get_adapter(broker), event_bus(), clock(), _who()
         )
     return ChargeCheckResult.of(check)
+
+
+@mcp.tool(
+    title="Preview paper margin",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def preview_paper_margin(
+    broker: Broker,
+    symbol: Symbol,
+    exchange: ExchangeParam,
+    side: SideParam,
+    quantity: Quantity,
+    product: Annotated[
+        Product, Field(description="MIS: intraday. NRML: F&O overnight. CNC: equity delivery.")
+    ],
+    price: Annotated[
+        float, Field(gt=0, description="The price to value it at: the limit, or the bid or ask.")
+    ],
+) -> PaperMarginResult:
+    """What the paper account would block for this order, by the sandbox's own
+    rule, and what it holds free: the figure place_order checks. Net of the
+    position held, so an order that only closes one needs nothing. The
+    broker's own figure for the real account is get_margin. Local; nothing is
+    placed."""
+    with _agent_facing_errors():
+        margin = preview_paper_margin_use_case(
+            order_broker(broker, os.environ, clock),
+            symbol,
+            exchange,
+            side,
+            quantity,
+            product,
+            price,
+        )
+    return PaperMarginResult.of(margin)
 
 
 @mcp.tool(
@@ -803,7 +903,7 @@ def place_basket(
             capital_cap(os.environ),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
     return BasketResult.of(
         placements,
@@ -842,7 +942,7 @@ def cancel_order(
     order that already filled or was cancelled is left as it is."""
     with _agent_facing_errors():
         result = cancel_order_use_case(
-            order_id, order_broker(broker, os.environ, clock), event_bus(), "mcp"
+            order_id, order_broker(broker, os.environ, clock), event_bus(), _who()
         )
     return CancelOrderResult.of(order_id, result)
 
@@ -858,7 +958,7 @@ def cancel_all_orders(broker: Broker) -> CancelAllResult:
     the margin they held. Strategies keep running."""
     with _agent_facing_errors():
         outcomes = cancel_all_orders_use_case(
-            order_broker(broker, os.environ, clock), event_bus(), "mcp"
+            order_broker(broker, os.environ, clock), event_bus(), _who()
         )
     return CancelAllResult.of(outcomes)
 
@@ -897,7 +997,7 @@ def close_position(
             event_bus(),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
     return closing_result(position, result, _close_next_step)
 
@@ -915,7 +1015,7 @@ def close_all_positions(broker: Broker) -> CloseAllResult:
     withdraws them."""
     with _agent_facing_errors():
         closed = close_all_positions_use_case(
-            order_broker(broker, os.environ, clock), event_bus(), load_calendar(), clock(), "mcp"
+            order_broker(broker, os.environ, clock), event_bus(), load_calendar(), clock(), _who()
         )
     return CloseAllResult.of(closed, _close_next_step)
 
@@ -956,7 +1056,7 @@ def modify_order(
             capital_cap(os.environ),
             load_calendar(),
             clock(),
-            "mcp",
+            _who(),
         )
         order = get_order_status_use_case(sandbox, order_id)
     return ModifyOrderResult.of(order_id, result, order)
@@ -972,10 +1072,11 @@ def get_positions(
         bool, Field(description="Also list positions closed earlier, with their realized P&L.")
     ] = False,
 ) -> PositionsResult:
-    """Sandbox net positions valued at the broker's live prices."""
+    """Sandbox net positions valued at the broker's live prices, each with
+    the running strategies holding part of it."""
     with _agent_facing_errors():
         positions = get_positions_use_case(order_broker(broker, os.environ, clock))
-    return PositionsResult.of(positions, include_closed)
+    return PositionsResult.of(positions, include_closed, holders(positions))
 
 
 @mcp.tool(
@@ -998,11 +1099,17 @@ def get_orderbook(
     limit: Annotated[int, Field(ge=1, le=200, description="Most orders to return.")] = (
         DEFAULT_ORDERBOOK_LIMIT
     ),
+    today_only: Annotated[
+        bool, Field(description="Only orders placed today (the exchange-local date).")
+    ] = False,
 ) -> OrderbookResult:
-    """Sandbox orders, filled and rejected, most recent first."""
+    """Sandbox orders, filled and rejected, most recent first, each with who
+    placed it (and the strategy's or script's name)."""
+    now = clock()
+    since = session_start(now) if today_only else None
     with _agent_facing_errors():
-        orders = get_orderbook_use_case(order_broker(broker, os.environ, clock), limit)
-    return OrderbookResult.of(orders)
+        orders = get_orderbook_use_case(order_broker(broker, os.environ, clock), limit, since)
+    return OrderbookResult.of(orders, placer_names(o.triggered_by for o in orders))
 
 
 @mcp.tool(
@@ -1029,13 +1136,171 @@ def get_tradebook(
     limit: Annotated[int, Field(ge=1, le=500, description="Most trades to return.")] = (
         DEFAULT_TRADEBOOK_LIMIT
     ),
+    period: Annotated[
+        Period,
+        Field(
+            description="today, this week (from Monday) or this month (from the 1st), "
+            "exchange-local."
+        ),
+    ] = "today",
 ) -> TradebookResult:
-    """Today's sandbox fills, newest first: what actually traded, at what
-    price and when. Includes resting orders filled later and strategy fills."""
+    """Sandbox fills, newest first: what actually traded, at what price and
+    when, what each paid in charges (itemised) and what it realized.
+    Includes resting orders filled later and strategy fills."""
     now = clock()
     with _agent_facing_errors():
-        trades = get_tradebook_use_case(order_broker(broker, os.environ, clock), limit, now)
-    return TradebookResult.of(trades, session_start(now))
+        trades = get_tradebook_use_case(order_broker(broker, os.environ, clock), limit, now, period)
+    return TradebookResult.of(
+        trades, period_start(now, period), placer_names(t.triggered_by for t in trades)
+    )
+
+
+@mcp.tool(
+    title="Get daily P&L history",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+def get_pnl_history(
+    broker: Broker,
+    from_date: Annotated[date, Field(description="First trading date, inclusive.")],
+    to_date: Annotated[
+        date, Field(description="Last trading date, inclusive; at most 400 days after from_date.")
+    ],
+) -> PnlHistoryResult:
+    """The paper account's P&L by trading day, after charges: realized, the
+    open positions' change and charges. Days are recorded after each close
+    while openticker-serve runs; today is worked out now, marked `live`."""
+    with _agent_facing_errors():
+        history = get_pnl_history_use_case(
+            from_date, to_date, order_broker(broker, os.environ, clock), load_calendar(), clock()
+        )
+    return PnlHistoryResult.of(history)
+
+
+@mcp.tool(
+    title="Get charges by month",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_charges_summary(
+    from_date: Annotated[date, Field(description="First trading date, inclusive.")],
+    to_date: Annotated[
+        date, Field(description="Last trading date, inclusive; at most 400 days after from_date.")
+    ],
+) -> ChargesSummaryResult:
+    """What paper fills paid in brokerage, taxes and fees, month by month and
+    by charge."""
+    with _agent_facing_errors():
+        months = get_charges_summary_use_case(from_date, to_date)
+    return ChargesSummaryResult(
+        months=[MonthChargesResult.of(m) for m in months],
+        total=round(sum(m.total for m in months), 2),
+    )
+
+
+WatchlistId = Annotated[str, Field(description="From list_watchlists or create_watchlist.")]
+WatchlistName = Annotated[
+    str, Field(description="1 to 40 characters, unique whatever its case, e.g. Banks.")
+]
+WatchlistInstruments = Annotated[
+    list[InstrumentRef],
+    Field(min_length=1, max_length=MAX_ITEMS, description="Use search_instruments to find them."),
+]
+
+
+def _watchlist_result(watchlist: Watchlist) -> WatchlistResult:
+    return WatchlistResult.of(watchlist, watchlists.instruments_of(watchlist))
+
+
+@mcp.tool(
+    title="List watchlists",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def list_watchlists() -> WatchlistsResult:
+    """Every watchlist with its instruments. The user sees and changes the
+    same lists in the web app."""
+    return WatchlistsResult(watchlists=[_watchlist_result(w) for w in watchlists.get_watchlists()])
+
+
+@mcp.tool(
+    title="Create watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def create_watchlist(name: WatchlistName) -> WatchlistResult:
+    """Make a new, empty watchlist; add_to_watchlist fills it. At most 20 lists."""
+    with _agent_facing_errors():
+        created = watchlists.create_watchlist(name, event_bus(), clock(), _who())
+    return _watchlist_result(created)
+
+
+@mcp.tool(
+    title="Rename watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def rename_watchlist(watchlist_id: WatchlistId, name: WatchlistName) -> WatchlistResult:
+    """Give a watchlist a new name. Its instruments stay."""
+    with _agent_facing_errors():
+        renamed = watchlists.rename_watchlist(watchlist_id, name, event_bus(), clock(), _who())
+    return _watchlist_result(renamed)
+
+
+@mcp.tool(
+    title="Delete watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def delete_watchlist(watchlist_id: WatchlistId) -> DeleteWatchlistResult:
+    """Remove a watchlist. Positions and orders in its instruments are
+    untouched."""
+    with _agent_facing_errors():
+        gone = watchlists.delete_watchlist(watchlist_id, event_bus(), clock(), _who())
+    return DeleteWatchlistResult(watchlist_id=gone.watchlist_id, name=gone.name, deleted=True)
+
+
+@mcp.tool(
+    title="Add to watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def add_to_watchlist(
+    watchlist_id: WatchlistId, instruments: WatchlistInstruments
+) -> WatchlistResult:
+    """Add instruments to the end of a watchlist; one already on it stays
+    where it is. At most 50 on a list."""
+    with _agent_facing_errors():
+        changed = watchlists.add_to_watchlist(
+            watchlist_id,
+            [(i.symbol, i.exchange.value) for i in instruments],
+            event_bus(),
+            clock(),
+            _who(),
+        )
+    return _watchlist_result(changed)
+
+
+@mcp.tool(
+    title="Remove from watchlist",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def remove_from_watchlist(
+    watchlist_id: WatchlistId, instruments: WatchlistInstruments
+) -> WatchlistResult:
+    """Take instruments off a watchlist; one not on it is ignored."""
+    with _agent_facing_errors():
+        changed = watchlists.remove_from_watchlist(
+            watchlist_id,
+            [(i.symbol, i.exchange.value) for i in instruments],
+            event_bus(),
+            clock(),
+            _who(),
+        )
+    return _watchlist_result(changed)
 
 
 @mcp.tool(
@@ -1086,10 +1351,44 @@ def get_audit_log(
     limit: Annotated[int, Field(ge=1, le=200, description="Most entries to return.")] = (
         DEFAULT_AUDIT_LIMIT
     ),
+    event_types: Annotated[
+        list[str] | None,
+        Field(description="Only these event types (with event_type, either matches)."),
+    ] = None,
+    source: Annotated[
+        Source | None,
+        Field(
+            description="Only what this one did: you (the web app), claude-code, codex, "
+            "agent (another MCP client or a review job), strategy, alert, script, schedule, "
+            "rest (an API key) or system (the server itself)."
+        ),
+    ] = None,
+    from_date: Annotated[
+        date | None,
+        Field(description="Only entries from this exchange-local day on, YYYY-MM-DD."),
+    ] = None,
+    before_id: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Only entries older than this id: the last id of the "
+            "previous page, to page back.",
+        ),
+    ] = None,
 ) -> AuditLogResult:
-    """What OpenTicker has done, most recent first: every order, risk breach
-    and instrument sync, with who triggered it. Local data only."""
-    return AuditLogResult.of(get_audit_log_use_case(limit, event_type))
+    """What OpenTicker has done, most recent first: every order, fill, risk
+    breach, strategy and script run, review job and instrument sync, with who
+    did it. Local data only."""
+    return AuditLogResult.of(
+        get_audit_log_use_case(
+            limit,
+            event_type,
+            event_types=event_types or (),
+            source=source,
+            from_date=from_date,
+            before_id=before_id,
+        )
+    )
 
 
 StrategyId = Annotated[str, Field(description="From create_strategy or list_strategies.")]
@@ -1261,9 +1560,10 @@ def get_strategy(strategy_id: StrategyId) -> StrategyResult:
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
 def list_strategies() -> StrategiesResult:
-    """Every saved strategy, by name."""
+    """Every saved strategy, by name: what it is doing now, today's and all-time net
+    after costs, and its latest review."""
     return StrategiesResult(
-        strategies=[StrategySummary.of(stored) for stored in strategies.list_strategies()]
+        strategies=[StrategySummary.of(row) for row in strategy_board(load_calendar(), clock())]
     )
 
 
@@ -1311,7 +1611,7 @@ def start_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyCommandRe
     intraday square-off close it. The market must be open. If a leg can't be
     entered, the legs already entered are closed."""
     with _agent_facing_errors():
-        command = control.request_start(strategy_id, broker, "mcp", clock())
+        command = control.request_start(strategy_id, broker, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1325,7 +1625,7 @@ def stop_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
     """Close every open leg at the market and end the run. A start not carried
     out yet is cancelled instead."""
     with _agent_facing_errors():
-        command = control.request_stop(strategy_id, "mcp", clock())
+        command = control.request_stop(strategy_id, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1339,7 +1639,7 @@ def kill_strategy(strategy_id: StrategyId) -> StrategyCommandResult:
     """Lock the strategy at once so nothing can start it, then close every open
     leg. It stays locked until release_kill_switch."""
     with _agent_facing_errors():
-        command = control.request_kill(strategy_id, "mcp", clock())
+        command = control.request_kill(strategy_id, _who(), clock())
     return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
 
 
@@ -1400,7 +1700,7 @@ def close_strategy_leg(strategy_id: StrategyId, leg_id: Leg) -> StrategyCommandR
     carries on with the others. Closing a leg by hand never moves the other
     legs' stops to entry."""
     with _agent_facing_errors():
-        command = control.request_close_leg(strategy_id, leg_id, "mcp", clock())
+        command = control.request_close_leg(strategy_id, leg_id, _who(), clock())
     return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
 
@@ -1453,7 +1753,7 @@ def start_review(strategy_id: StrategyId) -> StartReviewResult:
     The verdict goes into the strategy's note. Refused while a review of it
     is pending or running, or once the day's cap of jobs has run."""
     with _agent_facing_errors():
-        job = agent_jobs.start_review(strategy_id, agent_settings(os.environ), "mcp", clock())
+        job = agent_jobs.start_review(strategy_id, agent_settings(os.environ), _who(), clock())
     return StartReviewResult(job=AgentJobResult.of(job))
 
 
@@ -1546,6 +1846,23 @@ def get_agent_job_log(
 
 
 @mcp.tool(
+    title="Stop agent job",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def stop_agent_job(
+    job_id: Annotated[str, Field(description="From get_agent_jobs or start_review.")],
+) -> AgentJobResult:
+    """Stops an agent job: a waiting one ends at once, never started; a
+    running one is stopped by openticker-serve within seconds (killed after
+    10 s), without a verdict. An ended job is returned as it is."""
+    with _agent_facing_errors():
+        job = agent_jobs.stop_agent_job(job_id, event_bus(), _who(), clock())
+    return AgentJobResult.of(job)
+
+
+@mcp.tool(
     title="Get strategy run",
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
@@ -1627,8 +1944,11 @@ def delete_script(script_id: ScriptId) -> DeleteScriptResult:
 )
 def list_scripts() -> ScriptsResult:
     """Every uploaded script: whether it runs now, its schedule and its
-    latest run."""
-    return ScriptsResult(scripts=[ScriptResult.of(summary) for summary in scripts.list_scripts()])
+    latest run, and the memory and CPU limits every run is held to."""
+    return ScriptsResult(
+        scripts=[ScriptResult.of(summary) for summary in scripts.list_scripts()],
+        limits=ScriptLimitsResult.of(script_limits(os.environ)),
+    )
 
 
 @mcp.tool(
@@ -1657,7 +1977,7 @@ def start_script(script_id: ScriptId) -> ScriptCommandResult:
     or its schedule's stop_time. It gets a fresh API key limited to prices,
     orders and positions, revoked when the run ends."""
     with _agent_facing_errors():
-        command = scripts.request_start(script_id, "mcp", clock())
+        command = scripts.request_start(script_id, _who(), clock())
     return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
 
@@ -1672,7 +1992,7 @@ def stop_script(script_id: ScriptId) -> ScriptCommandResult:
     open positions are left as they are. A scheduled script stopped this
     way isn't started again until its next day."""
     with _agent_facing_errors():
-        command = scripts.request_stop(script_id, "mcp", clock())
+        command = scripts.request_stop(script_id, _who(), clock())
     return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
 

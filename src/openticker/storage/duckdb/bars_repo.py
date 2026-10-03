@@ -5,6 +5,7 @@ table and writes it in one transaction, so a bad batch leaves nothing behind
 rather than a partial range.
 """
 
+import json
 from datetime import UTC, date, datetime, time, timedelta
 
 from openticker.ports.models import EXCHANGE_TIMEZONE, Bar, Instrument
@@ -23,25 +24,35 @@ def write_bars(rows: list[Bar]) -> None:
             raise InvalidBarsError(f"bar at {bar.timestamp} is naive; timestamps must be tz-aware")
     if not rows:
         return
-    records = [
-        (
-            bar.instrument.exchange.value,
-            bar.instrument.symbol,
-            bar.interval,
-            bar.timestamp.astimezone(UTC).replace(tzinfo=None),
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume,
-        )
-        for bar in rows
-    ]
+    # One JSON string, parsed inside DuckDB: binding Python values costs about
+    # 60 µs each, which made a chart's 800 bars take a second to store.
+    records = json.dumps(
+        [
+            [
+                bar.instrument.exchange.value,
+                bar.instrument.symbol,
+                bar.interval,
+                bar.timestamp.astimezone(UTC).replace(tzinfo=None).isoformat(),
+                bar.open,
+                bar.high,
+                bar.low,
+                bar.close,
+                bar.volume,
+            ]
+            for bar in rows
+        ]
+    )
     with get_connection() as connection:
         connection.begin()
         try:
-            connection.executemany(
-                "INSERT OR REPLACE INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", records
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO bars
+                SELECT r[1], r[2], r[3], r[4]::TIMESTAMP, r[5]::DOUBLE, r[6]::DOUBLE,
+                       r[7]::DOUBLE, r[8]::DOUBLE, r[9]::BIGINT
+                FROM (SELECT unnest(from_json(?, '[["VARCHAR"]]')) AS r)
+                """,
+                [records],
             )
         except Exception:
             connection.rollback()

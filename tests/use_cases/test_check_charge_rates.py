@@ -8,7 +8,7 @@ import pytest
 
 from openticker.core.orders.charge_check import ChargeSample
 from openticker.core.orders.charges import Charges
-from openticker.events.types import ChargeRatesDiffer
+from openticker.events.types import ChargeRatesChecked, ChargeRatesDiffer
 from openticker.ports.models import Exchange, Product, Side
 from openticker.storage.sqlite.engine import get_data_dir
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
@@ -85,7 +85,10 @@ def test_every_segment_is_sampled_both_ways_and_agrees() -> None:
     }
     assert len(result.samples) == 16  # a buy and a sell each
     assert {s.sample.quantity for s in result.samples if s.sample.instrument.lot_size == 65} == {65}
-    assert result.differing == () and result.skipped == () and events.events == []
+    assert result.differing == () and result.skipped == ()
+    [checked] = events.events  # a check that finds nothing is still recorded, not notified
+    assert isinstance(checked, ChargeRatesChecked)
+    assert (checked.differing, checked.checked, checked.skipped) == (0, 16, 0)
     assert result.rates_as_of == date(2026, 9, 25)
 
 
@@ -115,7 +118,8 @@ def test_a_differing_figure_is_notified_with_both_amounts() -> None:
         Side.SELL,
     )
     tax = differing.ours.items["transaction_tax"]
-    [event] = events.events
+    [checked, event] = events.events
+    assert isinstance(checked, ChargeRatesChecked) and checked.differing == 1
     assert isinstance(event, ChargeRatesDiffer)
     assert (event.broker, event.differing, event.checked, event.triggered_by) == (
         "fake",

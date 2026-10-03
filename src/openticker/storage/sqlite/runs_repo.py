@@ -202,14 +202,17 @@ def find_run(run_id: str) -> Run | None:
         return _run(row) if row else None
 
 
-def active_runs() -> list[Run]:
+def active_runs(session: Session | None = None) -> list[Run]:
+    """In `session` when given: a writer holding the lock sees every run started."""
     statement = (
         select(StrategyRunRow)
         .where(StrategyRunRow.status != RunStatus.ENDED.value)
         .order_by(StrategyRunRow.started_at)
     )
-    with Session(get_engine()) as session:
+    if session is not None:
         return [_run(row) for row in session.scalars(statement).all()]
+    with Session(get_engine()) as own:
+        return [_run(row) for row in own.scalars(statement).all()]
 
 
 def list_runs(strategy_id: str, limit: int) -> list[Run]:

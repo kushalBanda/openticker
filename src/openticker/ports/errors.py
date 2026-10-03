@@ -12,3 +12,7 @@ class BrokerRateLimitError(BrokerError):
 
 class BrokerSessionError(BrokerError):
     """No session, or the broker rejected it (expired, revoked) — reconnect the broker."""
+
+
+class BrokerNotConnectedError(BrokerSessionError):
+    """No session is stored: the user never logged in, or disconnected."""

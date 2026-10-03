@@ -4,8 +4,14 @@ data dir as SQLite.
 Per call, never held open: DuckDB lets only one process hold a read-write
 handle on a file at a time, and several OpenTicker processes (one MCP server
 per agent session) can run at once. Callers use it as a context manager so
-the handle is released as soon as the read or write finishes. See ADR 3 in docs/adr.
+the handle is released as soon as the read or write finishes. One at a time
+within a process: two connections open together conflict on the schema and
+on the rows they both write, so a second caller waits. See ADR 3 in docs/adr.
 """
+
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import duckdb
 
@@ -27,9 +33,17 @@ CREATE TABLE IF NOT EXISTS bars (
 """
 
 
-def get_connection() -> duckdb.DuckDBPyConnection:
+_ONE_AT_A_TIME = threading.Lock()
+
+
+@contextmanager
+def get_connection() -> Iterator[duckdb.DuckDBPyConnection]:
     data_dir = get_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
-    connection = duckdb.connect(str(data_dir / "bars.duckdb"))
-    connection.execute(_SCHEMA)  # no migrations tool yet — cheap, idempotent
-    return connection
+    with _ONE_AT_A_TIME:
+        connection = duckdb.connect(str(data_dir / "bars.duckdb"))
+        try:
+            connection.execute(_SCHEMA)  # no migrations tool yet — cheap, idempotent
+            yield connection
+        finally:
+            connection.close()

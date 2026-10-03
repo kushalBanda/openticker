@@ -14,7 +14,7 @@ from openticker.adapters.brokers.registry import BrokerConfigError
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.events.bus import EventPublisher
 from openticker.events.types import BrokerSessionExpired
-from openticker.ports.errors import BrokerSessionError
+from openticker.ports.errors import BrokerNotConnectedError, BrokerSessionError
 from openticker.ports.market_feed_port import MarketFeedPort
 from openticker.ports.models import Instrument
 
@@ -34,13 +34,17 @@ class FeedLoop:
         prices: LatestPrices,
         events: EventPublisher,
         clock: Callable[[], float] = time.monotonic,
+        wake: threading.Event | None = None,
     ) -> None:
+        """`wake`, once set, resubscribes on the next pass instead of up to
+        5 seconds later: a browser opening a page wants its prices now (ADR 32)."""
         self._broker = broker
         self._open_feed = open_feed
         self._watched = watched
         self._prices = prices
         self._events = events
         self._clock = clock
+        self._wake = wake
         self._feed: MarketFeedPort | None = None
         self._subscribed: dict[tuple[str, str], Instrument] = {}
         self._next_open = 0.0
@@ -49,6 +53,13 @@ class FeedLoop:
         self._session_refused = False
         self._ticks_since_summary = 0
         self._seen: set[tuple[str, str]] = set()
+        self._reopen = threading.Event()
+
+    def reopen(self) -> None:
+        """The stored session changed (a login or a logout, ADR 33): close the
+        feed and open it again on the next pass, not a minute later.
+        Thread-safe."""
+        self._reopen.set()
 
     def run(self, stop: threading.Event) -> None:
         try:
@@ -61,6 +72,10 @@ class FeedLoop:
     def step(self, timeout: float) -> bool:
         """One pass. False when there is no feed to wait on."""
         now = self._clock()
+        if self._reopen.is_set():
+            self._reopen.clear()
+            self.close()
+            self._next_open = now
         if self._feed is None:
             if now < self._next_open:
                 return False
@@ -68,7 +83,9 @@ class FeedLoop:
             if self._feed is None:
                 return False
         feed = self._feed
-        if now >= self._next_resubscribe:
+        if now >= self._next_resubscribe or (self._wake is not None and self._wake.is_set()):
+            if self._wake is not None:
+                self._wake.clear()
             self._resubscribe(feed)
             self._next_resubscribe = now + RESUBSCRIBE_SECONDS
         try:
@@ -103,6 +120,11 @@ class FeedLoop:
     def _open(self, now: float) -> None:
         try:
             self._feed = self._open_feed()
+        except BrokerNotConnectedError as exc:
+            # Nobody has logged in, or the user logged out: nothing expired.
+            log.info("no live prices from %s: %s", self._broker, exc)
+            self._next_open = now + RECONNECT_SECONDS
+            return
         except BrokerSessionError as exc:
             self._refused(str(exc))
             self._next_open = now + RECONNECT_SECONDS

@@ -10,7 +10,7 @@ from openticker.adapters.brokers.zerodha.adapter import ZerodhaAdapter
 from openticker.adapters.brokers.zerodha.auth import build_login_url
 from openticker.adapters.brokers.zerodha.feed import ZerodhaFeed
 from openticker.ports.broker_port import BrokerPort
-from openticker.ports.errors import BrokerSessionError
+from openticker.ports.errors import BrokerNotConnectedError
 from openticker.ports.market_feed_port import MarketFeedPort
 from openticker.storage.sqlite.credentials_repo import get_credentials
 
@@ -47,7 +47,7 @@ def _build_zerodha_feed() -> MarketFeedPort:
     api_key, _ = _zerodha_credentials()
     session = get_credentials("zerodha")
     if session is None:
-        raise BrokerSessionError(
+        raise BrokerNotConnectedError(
             "zerodha is not connected: log in with get_broker_login_url, then connect_broker"
         )
     return ZerodhaFeed(api_key=api_key, access_token=session.access_token)

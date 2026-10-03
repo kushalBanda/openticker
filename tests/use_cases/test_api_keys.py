@@ -7,10 +7,14 @@ from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
 from openticker.storage.sqlite.engine import get_engine
 from openticker.use_cases.api_keys import (
     InvalidApiKeyNameError,
+    ManagedApiKeyError,
+    UnknownApiKeyError,
     authenticate,
     create_api_key,
+    create_script_key,
     get_api_keys,
     revoke,
+    revoke_user_key,
 )
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)
@@ -86,3 +90,16 @@ def test_review_keys_read_one_strategy_and_are_all_revoked_together() -> None:
 
     assert authenticate(review) is None
     assert authenticate(laptop) is not None
+
+
+def test_the_user_revokes_their_own_keys_only() -> None:
+    _, key = create_api_key("laptop", NOW)
+    create_script_key("scr_1", "run_1", NOW)
+
+    revoke_user_key("laptop", NOW)
+
+    assert authenticate(key) is None
+    with pytest.raises(UnknownApiKeyError):
+        revoke_user_key("laptop", NOW)
+    with pytest.raises(ManagedApiKeyError, match="stop the script"):
+        revoke_user_key("script-run_1", NOW)

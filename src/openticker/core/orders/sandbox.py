@@ -38,6 +38,16 @@ class FillOutcome:
     realized_pnl: float  # by the closed part
 
 
+@dataclass(frozen=True)
+class PaperMargin:
+    """What filling an order would do to the paper account's margin."""
+
+    required: float  # blocked for the part that opens or adds to a position
+    released: float  # freed by the part that closes one
+    available: float  # cash free before the order
+    fits: bool  # the funds cover it; closing always fits
+
+
 FLAT = NetPosition(quantity=0, average_price=0.0, margin_blocked=0.0, realized_pnl=0.0)
 
 
@@ -109,4 +119,20 @@ def apply_fill(
         margin_required=required,
         margin_released=released,
         realized_pnl=realized,
+    )
+
+
+def paper_margin(
+    held: NetPosition, side: Side, quantity: int, price: float, leverage: float, available: float
+) -> PaperMargin:
+    """The margin a fill of `quantity` at `price` blocks and frees against
+    what is `held`, by the rule a fill applies: only the part that opens
+    needs cover, from the cash free plus what the closing part releases."""
+    outcome = apply_fill(held, side, quantity, price, leverage)
+    cover = available + outcome.margin_released + outcome.realized_pnl
+    return PaperMargin(
+        required=outcome.margin_required,
+        released=outcome.margin_released,
+        available=available,
+        fits=not outcome.opened_quantity or outcome.margin_required <= cover,
     )

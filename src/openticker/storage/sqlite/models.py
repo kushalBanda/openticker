@@ -46,7 +46,7 @@ class AuditLogRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     occurred_at: Mapped[datetime]  # UTC, stored naive
     event_type: Mapped[str] = mapped_column(index=True)
-    triggered_by: Mapped[str | None]
+    triggered_by: Mapped[str | None] = mapped_column(index=True)  # the Activity page's "who"
     payload: Mapped[str]  # the event's fields as JSON
 
 
@@ -96,6 +96,9 @@ class SandboxTradeRow(Base):
     # table (ADR 18); NULL: filled before costs were modelled.
     charges: Mapped[float | None]
     expected_price: Mapped[float | None]  # what the order was placed against
+    # NULL: filled before they were recorded.
+    realized_pnl: Mapped[float | None]  # what this fill closed, before charges
+    charges_detail: Mapped[str | None]  # JSON: each charge, and "gst"; they sum to `charges`
 
 
 class SandboxPositionRow(Base):
@@ -316,6 +319,7 @@ class ScriptRunRow(Base):
     stop_requested_at: Mapped[datetime | None]  # UTC, stored naive
     exit_code: Mapped[int | None]
     ended_at: Mapped[datetime | None]  # UTC, stored naive
+    peak_memory_kb: Mapped[int | None]  # highest measured; NULL: never measured
 
 
 class AgentJobRow(Base):
@@ -339,3 +343,102 @@ class AgentJobRow(Base):
     ended_at: Mapped[datetime | None]  # UTC, stored naive
     summary: Mapped[str | None]  # the agent's final answer, capped
     cost_usd: Mapped[float | None]
+
+
+# The web app's browser sign-in (ADR 31 in docs/adr). Only hashes of the
+# link tokens and session secrets are stored.
+
+
+class SignInLinkRow(Base):
+    __tablename__ = "ui_sign_in_links"
+
+    token_hash: Mapped[str] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime]  # UTC, stored naive
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]
+
+
+class WebSessionRow(Base):
+    __tablename__ = "ui_sessions"
+
+    id_hash: Mapped[str] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime]  # UTC, stored naive
+    expires_at: Mapped[datetime]  # sliding: pushed on while the session is used
+    last_seen_at: Mapped[datetime]
+    visit_started_at: Mapped[datetime | None]
+    previous_visit_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]
+    user_agent: Mapped[str | None]
+
+
+# MCP clients that have called a tool (ADR 35 in docs/adr): Claude Code,
+# Codex, ... by the name each gives in its initialize handshake.
+
+
+class AgentClientRow(Base):
+    __tablename__ = "agent_clients"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    transport: Mapped[str] = mapped_column(primary_key=True)  # stdio, http
+    version: Mapped[str | None]
+    first_seen_at: Mapped[datetime]  # UTC, stored naive
+    last_seen_at: Mapped[datetime]
+    calls: Mapped[int]
+    last_tool: Mapped[str | None]  # NULL on rows from before it was kept
+    day: Mapped[date | None]  # exchange-local day `calls_today` counts
+    calls_today: Mapped[int | None]
+
+
+# The paper account's P&L by day and by minute (ADR 34 in docs/adr).
+
+
+class DailyPnlRow(Base):
+    """One row per trading day, written after its close."""
+
+    __tablename__ = "daily_pnl"
+
+    trading_date: Mapped[date] = mapped_column(primary_key=True)
+    realized_pnl: Mapped[float]
+    charges: Mapped[float]
+    unrealized_pnl: Mapped[float | None]  # NULL: an open position had no price
+    net_pnl: Mapped[float | None]
+    open_value: Mapped[float | None]  # open positions' unrealized P&L at the close
+    fills: Mapped[int]
+    complete: Mapped[bool]  # every fill recorded what it realized
+    estimated: Mapped[bool]  # closing marks were the last prices known
+    recorded_at: Mapped[datetime]  # UTC, stored naive
+
+
+class IntradayPnlRow(Base):
+    """A point a minute through the session; kept 30 days."""
+
+    __tablename__ = "intraday_pnl"
+
+    trading_date: Mapped[date] = mapped_column(primary_key=True)
+    minute: Mapped[str] = mapped_column(primary_key=True)  # "HH:MM", exchange-local
+    net_pnl: Mapped[float]
+    realized_pnl: Mapped[float]
+    charges: Mapped[float]
+    unrealized_pnl: Mapped[float]
+
+
+# Named lists of instruments to watch (ADR 36 in docs/adr), shared by the web
+# app and agents.
+
+
+class WatchlistRow(Base):
+    __tablename__ = "watchlists"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    position: Mapped[int]  # lists in the order they were made
+    created_at: Mapped[datetime]  # UTC, stored naive
+
+
+class WatchlistItemRow(Base):
+    __tablename__ = "watchlist_items"
+
+    watchlist_id: Mapped[str] = mapped_column(primary_key=True)
+    exchange: Mapped[str] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(primary_key=True)
+    position: Mapped[int]  # instruments in the order they were added

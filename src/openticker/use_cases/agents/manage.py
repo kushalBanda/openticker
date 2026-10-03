@@ -7,11 +7,20 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from openticker.core.agents.jobs import AgentJob, AgentJobKind, AgentSettings
+from openticker.core.agents.jobs import (
+    AgentJob,
+    AgentJobEndReason,
+    AgentJobKind,
+    AgentJobStatus,
+    AgentSettings,
+)
 from openticker.core.agents.reviews import ReviewSchedule, parse_every
+from openticker.events.bus import EventPublisher
+from openticker.events.types import AgentJobEnded
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage import agent_job_files
 from openticker.storage.sqlite import agent_jobs_repo, strategies_repo
+from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import StoredStrategy, write_transaction
 from openticker.use_cases.strategies.define import UnknownStrategyError
 
@@ -97,12 +106,59 @@ def get_agent_jobs(limit: int, strategy_id: str | None = None) -> list[AgentJob]
     return agent_jobs_repo.recent_jobs(min(limit, MAX_AGENT_JOBS), strategy_id)
 
 
+def jobs_started_today(now: datetime) -> int:
+    """Jobs started since the exchange-local midnight: what the day's cap counts."""
+    today = now.astimezone(EXCHANGE_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    with Session(get_engine()) as session:
+        return agent_jobs_repo.started_since(session, today)
+
+
 def get_agent_job_log(job_id: str) -> AgentJobLog:
     job = agent_jobs_repo.find_job(job_id)
     if job is None:
         raise UnknownAgentJobError(f"no agent job {job_id!r}; get_agent_jobs lists them")
     text, truncated = agent_job_files.log_tail(job_id)
     return AgentJobLog(job, text, truncated)
+
+
+def stop_agent_job(
+    job_id: str, events: EventPublisher, triggered_by: str, now: datetime
+) -> AgentJob:
+    """A waiting job ends at once, never started. A running one is asked to
+    stop: openticker-serve sends it SIGTERM and kills it if it's still there
+    after the grace. An ended one is left as it is."""
+    with write_transaction() as session:
+        job = agent_jobs_repo.find_job(job_id)
+        if job is None:
+            raise UnknownAgentJobError(f"no agent job {job_id!r}; get_agent_jobs lists them")
+        if job.status is AgentJobStatus.PENDING:
+            ended = agent_jobs_repo.end_job(
+                session,
+                job_id,
+                AgentJobEndReason.STOPPED,
+                f"stopped by {triggered_by} before it started",
+                now,
+            )
+        else:
+            ended = None
+            agent_jobs_repo.request_stop(
+                session, job_id, AgentJobEndReason.STOPPED, f"stopped by {triggered_by}", now
+            )
+    if ended is not None:
+        stored = strategies_repo.find_strategy(ended.strategy_id)
+        events.publish(
+            AgentJobEnded(
+                job_id=ended.id,
+                kind=ended.kind,
+                strategy_id=ended.strategy_id,
+                strategy_name=stored.name if stored else ended.strategy_id,
+                reason=AgentJobEndReason.STOPPED,
+                detail=ended.end_detail or "",
+                summary=None,
+                cost_usd=None,
+            )
+        )
+    return agent_jobs_repo.find_job(job_id) or job
 
 
 def _unknown_strategy(strategy_id: str) -> UnknownStrategyError:

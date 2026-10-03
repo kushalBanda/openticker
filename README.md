@@ -1,10 +1,12 @@
-# OpenTicker
+<h1><img src="assets/profile.png" alt="OpenTicker" width="360"></h1>
 
 **A self-hosted trading platform for Indian markets that AI agents operate directly.**
 
-OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io) tools. Claude Code, Codex, or any MCP client can connect your broker, find instruments, and pull live quotes and historical candles by calling tools, with no UI in between. It runs on your machine, with your own broker API keys, and stores everything locally.
+OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io) tools. Claude Code, Codex, or any MCP client can connect your broker, find instruments, and pull live quotes and historical candles by calling tools. A web app on the same server shows you everything they do as it happens, and lets you step in. It runs on your machine, with your own broker API keys, and stores everything locally.
 
 > **Status: early development.** Market data works end to end with Zerodha. Orders are paper trades in a local sandbox; nothing is sent to the broker. See [Roadmap](#roadmap).
+
+![The Dashboard: today's P&L after charges, the day's minute line, and what happened since your last visit](docs/images/web-dashboard.png)
 
 ## What an agent can do today
 
@@ -75,6 +77,28 @@ claude mcp add openticker -- uv --directory /absolute/path/to/openticker run ope
 
 Then ask the agent to connect Zerodha. It walks you through login and instrument sync.
 
+### The web app
+
+`openticker-serve` also serves a web app at `http://127.0.0.1:8750`. Build it once (needs [Node 22](https://nodejs.org) and [pnpm](https://pnpm.io)), then start the server:
+
+```bash
+cd ui && pnpm install && pnpm build && cd ..
+uv run openticker-serve
+```
+
+It prints a sign-in link and opens it in your browser; `uv run openticker-serve ui login` prints another. The link works once, for 10 minutes, and signs that browser in for 30 days. The server listens on this machine only.
+
+The first thing you see is today: your P&L after charges, the shape of the day so far, and what changed since you last looked. Below it everything is live: positions and P&L as they tick, every order and fill with what it cost, and each strategy and script with what it's doing and what it's made after charges. Every line says who did it: you, Claude, Codex, a strategy, a TradingView alert or one of your scripts. When something needs you, a killed strategy or an expired Zerodha session, it's at the top of the page with the button that fixes it.
+
+You can step in without asking your agent: close a position, kill a strategy, place a paper order from any page with ⌘K, or build an iron fly from the option chain and see its payoff and margin before you place it. Creating and changing strategies and scripts stays with your agent; the app gives you the prompt to ask it with.
+
+| | |
+| --- | --- |
+| ![Positions, marked live, with who holds each](docs/images/web-positions.png) | ![The option chain, live, with bids and asks to pick](docs/images/web-option-chain.png) |
+| ![A strategy: its legs, equity after costs and latest review](docs/images/web-strategy.png) | ![An instrument: candles with your fills, and market depth](docs/images/web-symbol.png) |
+
+Light and dark follow your system, or the toggle in the top bar. The app is for laptop and desktop screens, 1280 pixels wide and up.
+
 ### Research with your agent: `labs/`
 
 The repository ships a `labs/` folder set up for Claude Code and Codex: the OpenTicker server already configured, shared instructions, and skills such as `new-strategy`, which turns an idea in plain words into a paper strategy previewed against today's market.
@@ -121,10 +145,10 @@ Orders and risk breaches can be sent to Slack (Incoming Webhook) and/or email (a
 ## How it works
 
 ```
- MCP client (agent)                  HTTP client
-      │  tool calls over stdio          │  X-API-Key
+ MCP client (agent)                  HTTP client · browser (ui/)
+      │  tool calls over stdio          │  X-API-Key or session cookie; live prices over one WebSocket
       ▼                                 ▼
- adapters/inbound/mcp_server.py      adapters/inbound/rest_api.py (openticker-serve)
+ adapters/inbound/mcp_server.py      adapters/inbound/rest_api.py, web/ (openticker-serve)
       │                                 │
       └──────────────┬──────────────────┘
       ▼
@@ -144,8 +168,6 @@ Data lives in `~/.openticker` (override with `OPENTICKER_HOME`). Broker session 
 ## Roadmap
 
 - More brokers, added on demand
-
-A web UI is planned after the agent-first surface is complete.
 
 ## Contributing
 

@@ -23,3 +23,36 @@ jobs:
         run: uv run mypy src tests
       - name: Test
         run: uv run pytest
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - run: uv sync --locked
+        working-directory: .
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm check
+      - name: Type check
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: API types match the server
+        run: pnpm gen:api && git diff --exit-code src/api/schema.d.ts
+      - name: Build
+        run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: End to end
+        run: pnpm e2e

@@ -1,7 +1,7 @@
 """Domain events: facts that happened, published by use cases and consumed by
 subscribers the use cases know nothing about (ADR 10 in docs/adr)."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from datetime import UTC, datetime
 
 
@@ -82,6 +82,52 @@ class BrokerSessionExpired:
 
     broker: str
     detail: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class BrokerConnected:
+    """A broker session was stored: the user logged in to the broker (ADR 33)."""
+
+    broker: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class BrokerDisconnected:
+    """The stored broker session was deleted by the user (ADR 33)."""
+
+    broker: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class PaperAccountReset:
+    """Every paper order, trade and position was deleted and the funds put
+    back to the starting capital (ADR 37). Counts are what was deleted."""
+
+    capital: float
+    orders: int
+    trades: int
+    positions: int
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class WatchlistChanged:
+    """A watchlist was created, renamed or deleted, or instruments were added
+    to or removed from it (ADR 36). Audited, so the web app hears of an
+    agent's change as it does of any other."""
+
+    watchlist_id: str
+    name: str
+    change: str  # created, renamed, deleted, added, removed
+    triggered_by: str
+    symbols: tuple[str, ...] = ()  # added or removed, as OpenTicker names them
+    previous_name: str | None = None  # renamed only
     occurred_at: datetime = field(default_factory=_now)
 
 
@@ -169,6 +215,20 @@ class ChargeRatesDiffer:
 
 
 @dataclass(frozen=True)
+class ChargeRatesChecked:
+    """A charge-rate check ran, whatever it found: when the rates were last
+    checked against the broker (ADR 28). Audited, not notified."""
+
+    broker: str
+    rates_as_of: str  # the rates file's date
+    differing: int
+    checked: int
+    skipped: int  # segments with no sample priced
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class AgentJobStarted:
     """The daemon started the user's coding agent on a job (ADR 29). Audited."""
 
@@ -194,3 +254,11 @@ class AgentJobEnded:
     summary: str | None
     cost_usd: float | None
     occurred_at: datetime = field(default_factory=_now)
+
+
+# Every event's name, as the audit log records it.
+EVENT_TYPE_NAMES = tuple(
+    name
+    for name, value in list(globals().items())
+    if isinstance(value, type) and is_dataclass(value)
+)

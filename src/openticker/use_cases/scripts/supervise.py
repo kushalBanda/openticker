@@ -18,6 +18,7 @@ from openticker.core.calendar.models import MarketCalendar
 from openticker.core.scripts.models import (
     ENDED_BY_ABSENCE,
     LOG_LIMIT_BYTES,
+    PEAK_MEMORY_STEP_KB,
     ScriptCommand,
     ScriptCommandKind,
     ScriptCommandStatus,
@@ -123,6 +124,7 @@ def watch_scripts(context: SupervisorContext, now: datetime) -> None:
     runs = scripts_repo.active_runs()
     leaders = [run.pid for run in runs if run.pid is not None]
     memory: dict[int, int] | None = None
+    peaks: dict[str, int] = {}
     for run in runs:
         if run.pid is None:
             continue  # recovery ends it
@@ -137,10 +139,16 @@ def watch_scripts(context: SupervisorContext, now: datetime) -> None:
             continue
         if memory is None:
             memory = dict(context.processes.memory_kb(leaders))
-        why = _over_limit(context.limits, run, memory.get(run.pid, 0), now)
+        used = memory.get(run.pid, 0)
+        if used >= (run.peak_memory_kb or 0) + PEAK_MEMORY_STEP_KB:
+            peaks[run.id] = used
+        why = _over_limit(context.limits, run, used, now)
         if why is not None:
             reason, detail = why
             _ask_to_stop(context, run, reason, detail, now)
+    if peaks:
+        with write_transaction() as session:
+            scripts_repo.raise_peak_memory(session, peaks)
 
 
 def stop_all_scripts(

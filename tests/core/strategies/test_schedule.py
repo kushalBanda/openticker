@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from openticker.core.calendar.models import Holiday, MarketCalendar
 from openticker.core.risk.models import StrategyStopReason
 from openticker.core.strategies.models import Schedule
-from openticker.core.strategies.schedule import ENTRY_GRACE, entry_due, exit_due
+from openticker.core.strategies.schedule import ENTRY_GRACE, entry_due, exit_due, next_entry
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 from tests.fixtures.calendar import NO_HOLIDAYS
 
@@ -137,3 +137,33 @@ def test_a_weekend_is_not_an_exit_time() -> None:
         exit_due(ENTRY, ist(friday, 15, 5), set(), Exchange.NSE, NO_HOLIDAYS, ist(monday, 9, 15))
         is None
     )
+
+
+def test_the_next_entry_is_today_until_its_grace_has_passed() -> None:
+    at = ist(TUESDAY, 9, 20)
+
+    assert next_entry(ENTRY, Exchange.NSE, NO_HOLIDAYS, ist(TUESDAY, 8, 0)) == at
+    assert next_entry(ENTRY, Exchange.NSE, NO_HOLIDAYS, at + timedelta(seconds=30)) == at
+    wednesday = ist(TUESDAY + timedelta(days=1), 9, 20)
+    assert next_entry(ENTRY, Exchange.NSE, NO_HOLIDAYS, at + ENTRY_GRACE) == wednesday
+
+
+def test_the_next_entry_skips_weekdays_not_scheduled_and_holidays() -> None:
+    mondays = Schedule(entry_time=time(9, 20), weekdays=frozenset({0}))
+    next_monday = TUESDAY + timedelta(days=6)
+    closed = MarketCalendar(
+        years=frozenset({2026}),
+        holidays=(Holiday(next_monday, "a holiday", frozenset({Exchange.NSE})),),
+        special_sessions=(),
+    )
+
+    assert next_entry(mondays, Exchange.NSE, NO_HOLIDAYS, ist(TUESDAY, 9, 0)) == ist(
+        next_monday, 9, 20
+    )
+    assert next_entry(mondays, Exchange.NSE, closed, ist(TUESDAY, 9, 0)) == ist(
+        next_monday + timedelta(days=7), 9, 20
+    )
+
+
+def test_no_next_entry_without_an_entry_time() -> None:
+    assert next_entry(Schedule(), Exchange.NSE, NO_HOLIDAYS, ist(TUESDAY, 9, 0)) is None

@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+node_modules/
 
 # Tool caches
 .mypy_cache/
@@ -32,6 +33,10 @@ secret.key
 
 # Local tooling
 .codegraph/
+.agents/
+.mcp.json
+skills-lock.json
+.claude/skills/
 .playwright-mcp/
 DESIGN.md
 CLAUDE.local.md

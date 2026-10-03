@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import inspect
@@ -11,6 +12,13 @@ OLD_SANDBOX_ORDERS = (
     "exchange VARCHAR, symbol VARCHAR, side VARCHAR, quantity INTEGER, product VARCHAR, "
     "order_type VARCHAR, status VARCHAR, fill_price FLOAT, reason VARCHAR, "
     "triggered_by VARCHAR, strategy_id VARCHAR, run_id VARCHAR)"
+)
+# sandbox_trades as versions before each fill kept its realized P&L and charges breakdown.
+OLD_SANDBOX_TRADES = (
+    "CREATE TABLE sandbox_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id VARCHAR, "
+    "filled_at DATETIME, exchange VARCHAR, symbol VARCHAR, side VARCHAR, quantity INTEGER, "
+    "price FLOAT, product VARCHAR, strategy_id VARCHAR, run_id VARCHAR, charges FLOAT, "
+    "expected_price FLOAT)"
 )
 
 
@@ -32,6 +40,29 @@ def test_columns_a_newer_version_added_are_added_to_an_older_database(tmp_path: 
 
     [order] = list_orders(5)
     assert (order.order_id, order.reserved_margin, order.triggered) == ("SB1", 0.0, False)
+
+
+def test_old_database_gains_trade_columns_and_reads_them_as_not_recorded(tmp_path: Path) -> None:
+    with sqlite3.connect(tmp_path / "openticker.db") as connection:
+        connection.execute(OLD_SANDBOX_ORDERS)
+        connection.execute(OLD_SANDBOX_TRADES)
+        connection.execute(
+            "INSERT INTO sandbox_orders VALUES ('SB1', '2026-09-21 05:00:00', 'NSE', 'RELIANCE', "
+            "'BUY', 5, 'MIS', 'MARKET', 'FILLED', 1247.4, NULL, 'mcp', NULL, NULL)"
+        )
+        connection.execute(
+            "INSERT INTO sandbox_trades VALUES (1, 'SB1', '2026-09-21 05:00:00', 'NSE', "
+            "'RELIANCE', 'BUY', 5, 1247.4, 'MIS', NULL, NULL, 12.5, 1247.0)"
+        )
+
+    engine = get_engine()
+
+    columns = {column["name"] for column in inspect(engine).get_columns("sandbox_trades")}
+    assert {"realized_pnl", "charges_detail"} <= columns
+    from openticker.storage.sqlite.sandbox_repo import list_trades
+
+    [trade] = list_trades(datetime(2026, 9, 21, tzinfo=UTC), 5)
+    assert (trade.charges, trade.realized_pnl, trade.charges_detail) == (12.5, None, None)
 
 
 def test_processes_starting_together_on_an_old_database_all_succeed(tmp_path: Path) -> None:
@@ -63,3 +94,16 @@ def test_processes_starting_together_on_an_old_database_all_succeed(tmp_path: Pa
     errors = [process.communicate()[1].decode() for process in processes]
 
     assert [process.returncode for process in processes] == [0] * 6, errors
+
+
+def test_old_database_gains_the_audit_index(tmp_path: Path) -> None:
+    with sqlite3.connect(tmp_path / "openticker.db") as connection:
+        connection.execute(
+            "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at DATETIME, "
+            "event_type VARCHAR, triggered_by VARCHAR, payload VARCHAR)"
+        )
+
+    engine = get_engine()
+
+    indexed = {tuple(i["column_names"]) for i in inspect(engine).get_indexes("audit_log")}
+    assert {("event_type",), ("triggered_by",)} <= indexed

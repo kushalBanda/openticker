@@ -8,6 +8,7 @@ from openticker.core.orders.sandbox import (
     NetPosition,
     apply_fill,
     leverage_for,
+    paper_margin,
     quote_is_fillable,
 )
 from openticker.ports.models import InstrumentType, Product, Quote, Side
@@ -77,3 +78,16 @@ def test_fill_through_zero_closes_then_opens_the_other_way() -> None:
     assert outcome.opened_quantity == 5
     assert outcome.margin_required == pytest.approx(110.0)
     assert outcome.position == NetPosition(-5, 110.0, pytest.approx(110.0), 100.0)  # type: ignore[arg-type]
+
+
+def test_paper_margin_blocks_only_what_opens() -> None:
+    long = NetPosition(quantity=10, average_price=100.0, margin_blocked=1000.0, realized_pnl=0.0)
+
+    adding = paper_margin(long, Side.BUY, 10, 110.0, 1.0, available=500.0)
+    closing = paper_margin(long, Side.SELL, 10, 110.0, 1.0, available=0.0)
+    flipping = paper_margin(long, Side.SELL, 15, 110.0, 1.0, available=0.0)
+
+    assert (adding.required, adding.released, adding.fits) == (1100.0, 0.0, False)
+    assert (closing.required, closing.released, closing.fits) == (0.0, 1000.0, True)
+    # the 5 opened short are covered by the 1,000 released plus 100 realized
+    assert (flipping.required, flipping.fits) == (550.0, True)

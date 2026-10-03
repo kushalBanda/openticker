@@ -4,6 +4,7 @@ storage/script_files.py."""
 
 import json
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
 from typing import Any
@@ -215,6 +216,14 @@ def request_stop(
         row.stop_requested_at = _naive(now)
 
 
+def raise_peak_memory(session: Session, peaks: Mapping[str, int]) -> None:
+    """Each run's peak memory, where it is above the one stored."""
+    for run_id, kb in peaks.items():
+        row = session.get(ScriptRunRow, run_id)
+        if row is not None and kb > (row.peak_memory_kb or 0):
+            row.peak_memory_kb = kb
+
+
 def end_run(
     session: Session,
     run_id: str,
@@ -246,14 +255,17 @@ def active_run(session: Session, script_id: str) -> ScriptRun | None:
     return _run(row) if row else None
 
 
-def active_runs() -> list[ScriptRun]:
+def active_runs(session: Session | None = None) -> list[ScriptRun]:
+    """In `session` when given: a writer holding the lock sees every run started."""
     statement = (
         select(ScriptRunRow)
         .where(ScriptRunRow.status != ScriptRunStatus.ENDED.value)
         .order_by(ScriptRunRow.started_at)
     )
-    with Session(get_engine()) as session:
+    if session is not None:
         return [_run(row) for row in session.scalars(statement).all()]
+    with Session(get_engine()) as own:
+        return [_run(row) for row in own.scalars(statement).all()]
 
 
 def runs_started_since(script_id: str, since: datetime) -> list[ScriptRun]:
@@ -347,6 +359,7 @@ def _run(row: ScriptRunRow) -> ScriptRun:
         stop_requested_at=_aware(row.stop_requested_at) if row.stop_requested_at else None,
         exit_code=row.exit_code,
         ended_at=_aware(row.ended_at) if row.ended_at else None,
+        peak_memory_kb=row.peak_memory_kb,
     )
 
 

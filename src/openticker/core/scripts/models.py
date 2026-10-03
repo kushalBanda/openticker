@@ -110,6 +110,12 @@ class ScriptRun:
     stop_requested_at: datetime | None = None  # tz-aware UTC
     exit_code: int | None = None
     ended_at: datetime | None = None  # tz-aware UTC
+    peak_memory_kb: int | None = None  # highest measured while it ran
+
+
+# Memory is measured every second; its peak is written only when it grows by
+# this much, not on every measure.
+PEAK_MEMORY_STEP_KB = 1024
 
 
 # Runs that ended because openticker-serve wasn't there to keep them. They

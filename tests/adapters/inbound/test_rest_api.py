@@ -4,7 +4,7 @@ registered under its own name so nothing touches Kite."""
 import asyncio
 import logging
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -16,6 +16,9 @@ from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.adapters.inbound.scopes import TOOL_ROUTES
 from openticker.composition import build_event_bus
 from openticker.events.bus import EventBus
+from openticker.ports.models import Exchange, Instrument, InstrumentType
+from openticker.storage.sqlite import instruments_repo
+from openticker.storage.sqlite.audit_repo import write_audit
 from openticker.use_cases.api_keys import create_api_key, revoke
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 
@@ -125,6 +128,14 @@ def test_sandbox_round_trip_over_rest(client: TestClient) -> None:
     assert [entry["order_id"] for entry in book["orders"]] == [placed["order_id"]]
     assert book["orders"][0]["triggered_by"] == "rest:tests"
     assert audit["entries"][0]["triggered_by"] == "rest:tests"
+    trades = client.get("/api/v1/trades", params={"broker": "fake"}).json()["trades"]
+    assert book["orders"][0]["source"] == audit["entries"][0]["source"] == "rest"
+    assert trades[0]["source"] == "rest"
+    (position,) = positions["positions"]
+    assert position["held_by"] == [
+        {"strategy_id": None, "name": None, "source": "rest", "quantity": 4, "leg_ids": []}
+    ]
+    assert (position["instrument_type"], position["shared"]) == ("EQ", False)
 
 
 def test_a_rejected_order_is_a_normal_response_with_its_reason(client: TestClient) -> None:
@@ -333,6 +344,60 @@ def test_margin_route_matches_the_tool(client: TestClient) -> None:
     assert client.get("/api/v1/orders", params={"broker": "fake"}).json()["orders"] == []
 
 
+def test_payoff_route_matches_the_tool(client: TestClient) -> None:
+    from openticker.ports.models import InstrumentType
+    from openticker.storage.sqlite.instruments_repo import upsert_instruments
+    from tests.fixtures.options import NIFTY_INDEX, chain_contracts, option
+
+    expiry = date(2099, 1, 1)
+    upsert_instruments(
+        [NIFTY_INDEX, option("BANKNIFTY", expiry, 2500.0, InstrumentType.CE)]
+        + chain_contracts("NIFTY", expiry, [2500.0])
+    )
+    leg = {"exchange": "NFO", "side": "BUY", "quantity": 65, "price": 30.0}
+
+    bought = client.post(
+        "/api/v1/options/payoff",
+        json={"broker": "fake", "legs": [{**leg, "symbol": "NIFTY01JAN992500CE"}]},
+    )
+    mixed = client.post(
+        "/api/v1/options/payoff",
+        json={
+            "broker": "fake",
+            "legs": [
+                {**leg, "symbol": "NIFTY01JAN992500CE"},
+                {**leg, "symbol": "BANKNIFTY01JAN992500CE"},
+            ],
+        },
+    )
+
+    assert bought.status_code == 200
+    assert bought.json()["breakevens"] == [2530.0]
+    assert bought.json()["max_loss"] == -30.0 * 65 and bought.json()["max_profit"] is None
+    assert mixed.status_code == 422 and "one underlying" in mixed.json()["detail"]
+
+
+def test_paper_margin_route_matches_the_tool(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order: dict[str, str | int] = {
+        "broker": "fake",
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "quantity": 10,
+    }
+
+    margin = client.get(
+        "/api/v1/margin/paper", params={**order, "side": "BUY", "product": "CNC", "price": 2500}
+    )
+
+    assert margin.status_code == 200
+    assert {k: margin.json()[k] for k in ("required", "released", "fits")} == {
+        "required": 25_000.0,
+        "released": 0.0,
+        "fits": True,
+    }
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -437,6 +502,12 @@ def test_review_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get(f"/api/v1/agent-jobs/{job_id}/log").json()["status"] == "pending"
     assert client.get("/api/v1/agent-jobs/job_nope/log").status_code == 404
     assert client.post("/api/v1/strategies/stg_nope/review").status_code == 404
+    stopped = client.post(f"/api/v1/agent-jobs/{job_id}/stop").json()
+    assert (stopped["end_reason"], stopped["end_detail"]) == (
+        "stopped",
+        "stopped by rest:tests before it started",
+    )
+    assert client.post("/api/v1/agent-jobs/job_nope/stop").status_code == 404
 
     schedule = f"/api/v1/strategies/{strategy_id}/review-schedule"
     scheduled = client.post(schedule, json={"after_runs": 10})
@@ -515,9 +586,11 @@ SCRIPT_ROUTES = {
     ("GET", "/api/v1/depth"),
     ("GET", "/api/v1/bars"),
     ("GET", "/api/v1/option-chain"),
+    ("POST", "/api/v1/options/payoff"),
     ("GET", "/api/v1/market-status"),
     ("POST", "/api/v1/risk/evaluate"),
     ("POST", "/api/v1/margin"),
+    ("GET", "/api/v1/margin/paper"),
     ("POST", "/api/v1/orders"),
     ("POST", "/api/v1/orders/basket"),
     ("GET", "/api/v1/orders"),
@@ -614,7 +687,9 @@ def test_script_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.delete(f"/api/v1/scripts/{script_id}/schedule").json()["schedule"] is None
     detail = client.get(f"/api/v1/scripts/{script_id}", params={"include_source": True}).json()
     assert detail["source"] == "print(1)\n"
-    assert [s["name"] for s in client.get("/api/v1/scripts").json()["scripts"]] == ["pinger"]
+    listed = client.get("/api/v1/scripts").json()
+    assert [s["name"] for s in listed["scripts"]] == ["pinger"]
+    assert listed["limits"] == {"memory_mb": 1024, "cpu_seconds": 3600}
     assert client.delete(f"/api/v1/scripts/{script_id}").json() == {
         "script_id": script_id,
         "deleted": True,
@@ -682,3 +757,74 @@ def test_depth_route_matches_the_tool(client: TestClient) -> None:
     ]
     assert (depth["total_buy_quantity"], depth["total_sell_quantity"]) == (900, 700)
     assert unknown.status_code == 404
+
+
+def test_audit_filters_by_who_kinds_and_day_and_pages_back(client: TestClient) -> None:
+    at = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)
+    write_audit("OrderFilled", at.replace(day=21), "mcp:claude-code", "{}")
+    for trigger in ("mcp:claude-code", "ui", "mcp:claude-code", "strategy:s1"):
+        write_audit("OrderFilled", at, trigger, "{}")
+    write_audit("StrategyStopped", at, "strategy:s1", "{}")
+
+    def ids(**params: str | int | list[str]) -> list[int]:
+        entries = client.get("/api/v1/audit", params=params).json()["entries"]
+        return [entry["id"] for entry in entries]
+
+    claude = ids(source="claude-code", from_date="2026-09-22")
+    first_page = ids(limit=2)
+
+    assert claude == [4, 2]
+    assert ids(event_types=["StrategyStopped", "OrderPlaced"]) == [6]
+    assert ids(source="strategy", event_types=["OrderFilled"]) == [5]
+    assert first_page == [6, 5]
+    assert ids(limit=2, before_id=first_page[-1]) == [4, 3]
+
+
+def test_watchlist_routes_round_trip_and_refuse_mistakes(client: TestClient) -> None:
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    reliance = {"instruments": [{"symbol": "RELIANCE", "exchange": "NSE"}]}
+
+    core = client.post("/api/v1/watchlists", json={"name": "Core"}).json()
+    path = f"/api/v1/watchlists/{core['watchlist_id']}"
+    added = client.post(f"{path}/instruments", json=reliance).json()
+    assert [(i["symbol"], i["lot_size"]) for i in added["items"]] == [("RELIANCE", 1)]
+    assert client.patch(path, json={"name": "Main"}).json()["name"] == "Main"
+    [listed] = client.get("/api/v1/watchlists").json()["watchlists"]
+    assert listed["name"] == "Main" and len(listed["items"]) == 1
+    removed = client.request("DELETE", f"{path}/instruments", json=reliance).json()
+    assert removed["items"] == []
+
+    assert client.post("/api/v1/watchlists", json={"name": "main"}).status_code == 409
+    assert client.post("/api/v1/watchlists", json={"name": ""}).status_code == 422
+    unknown = {"instruments": [{"symbol": "NOPE", "exchange": "NSE"}]}
+    assert client.post(f"{path}/instruments", json=unknown).status_code == 404
+    assert client.delete(path).json() == {
+        "watchlist_id": core["watchlist_id"],
+        "name": "Main",
+        "deleted": True,
+    }
+    assert client.delete(path).status_code == 404
+
+
+def test_search_hides_expired_contracts_by_the_app_clock(client: TestClient) -> None:
+    # Expires on NOW's trading date: live by the app's clock, whatever the wall clock says.
+    instruments_repo.upsert_instruments(
+        [
+            Instrument(
+                symbol="NIFTY22SEP2623350CE",
+                broker_symbol="NIFTY2692223350CE",
+                exchange=Exchange.NFO,
+                broker_exchange="NFO",
+                token="10967554",
+                expiry=date(2026, 9, 22),
+                strike=23350.0,
+                lot_size=65,
+                instrument_type=InstrumentType.CE,
+                tick_size=0.05,
+            )
+        ]
+    )
+
+    found = client.get("/api/v1/instruments", params={"query": "nifty"}).json()
+
+    assert [i["symbol"] for i in found["instruments"]] == ["NIFTY22SEP2623350CE"]

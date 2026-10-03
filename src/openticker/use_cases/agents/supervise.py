@@ -170,8 +170,10 @@ def watch_jobs(context: AgentContext, now: datetime) -> None:
             _finish(context, job, exited.returncode, now)
             continue
         if job.status is AgentJobStatus.STOPPING:
-            if now - (job.stop_requested_at or now) >= STOP_GRACE:
-                context.processes.stop(job.pid, force=True)
+            # Asked from another process too (stop_agent_job), which can't
+            # signal it: SIGTERM each pass until the grace, then SIGKILL.
+            late = now - (job.stop_requested_at or now) >= STOP_GRACE
+            context.processes.stop(job.pid, force=late)
             continue
         if job.started_at is not None and now - job.started_at >= context.settings.timeout:
             minutes = int(context.settings.timeout.total_seconds() // 60)

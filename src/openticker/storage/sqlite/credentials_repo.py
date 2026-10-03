@@ -11,7 +11,7 @@ import tempfile
 from datetime import datetime
 
 from cryptography.fernet import Fernet
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from openticker.ports.models import Credentials
@@ -80,3 +80,11 @@ def get_credentials(broker: str) -> Credentials | None:
         ),
         expires_at=(datetime.fromisoformat(row.expires_at) if row.expires_at is not None else None),
     )
+
+
+def delete_credentials(broker: str) -> bool:
+    """False when none were stored."""
+    with Session(get_engine()) as session:
+        deleted = session.execute(delete(CredentialRow).where(CredentialRow.broker == broker))
+        session.commit()
+    return bool(getattr(deleted, "rowcount", 0))

@@ -4,7 +4,14 @@ newest runs in detail, and totals over every run it has had."""
 from collections import defaultdict
 from dataclasses import dataclass
 
-from openticker.core.strategies.ledger import LedgerFill, LedgerRun, LedgerTotals, ledger_totals
+from openticker.core.strategies.ledger import (
+    EquityPoint,
+    LedgerFill,
+    LedgerRun,
+    LedgerTotals,
+    equity_curve,
+    ledger_totals,
+)
 from openticker.core.strategies.runs import RunStatus
 from openticker.storage.sqlite import runs_repo, sandbox_repo, strategies_repo
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
@@ -24,6 +31,7 @@ class StrategyLedger:
     uncharged: int  # ended runs with a fill that recorded no charges
     open_runs: int  # not ended yet
     totals: LedgerTotals  # over the runs after costs
+    equity: list[EquityPoint]  # cumulative net after costs, day by day
 
 
 def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
@@ -41,6 +49,7 @@ def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
         uncharged=sum(1 for r in ended if r.fills and not r.after_costs),
         open_runs=len(runs) - len(ended),
         totals=ledger_totals(runs),
+        equity=equity_curve(runs),
     )
 
 

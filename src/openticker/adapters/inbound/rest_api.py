@@ -1,6 +1,7 @@
 """REST API: the MCP tools as HTTP routes, each a thin call into use_cases,
 returning the same result shapes. Every route under /api/v1 needs an API key
-in the `X-API-Key` header (ADR 17 in docs/adr). A hosted script's key reaches
+in the `X-API-Key` header (ADR 17 in docs/adr), or a browser signed in to
+the web app (ADR 31). A hosted script's key reaches
 only prices, orders and positions (ADR 25). Signal strategies' alert URLs,
 under /webhooks, are authenticated by the token in the URL instead (ADR 24).
 
@@ -15,9 +16,8 @@ from datetime import UTC, date, datetime
 from importlib.metadata import version
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from openticker.adapters.brokers.registry import (
@@ -41,10 +41,12 @@ from openticker.adapters.inbound.mcp_models import (
     CancelOrderResult,
     ChargeCheckResult,
     ChargesResult,
+    ChargesSummaryResult,
     CloseAllResult,
     ConnectResult,
     DeleteScriptResult,
     DeleteStrategyResult,
+    DeleteWatchlistResult,
     FundsResult,
     InstrumentRef,
     LoginUrlResult,
@@ -53,11 +55,16 @@ from openticker.adapters.inbound.mcp_models import (
     MarketStatusesResult,
     MarketStatusResult,
     ModifyOrderResult,
+    MonthChargesResult,
     OptionChainResult,
     OrderbookEntryResult,
     OrderbookResult,
     OrderInput,
+    PaperMarginResult,
+    PayoffLegInput,
+    PayoffResult,
     PlaceOrderResult,
+    PnlHistoryResult,
     PositionsResult,
     QuoteResult,
     QuotesResult,
@@ -65,6 +72,7 @@ from openticker.adapters.inbound.mcp_models import (
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
+    ScriptLimitsResult,
     ScriptLogsResult,
     ScriptResult,
     ScriptScheduleDefinition,
@@ -84,22 +92,33 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySummary,
     SyncResult,
     TradebookResult,
+    WatchlistResult,
+    WatchlistsResult,
     WebhookResult,
     closing_result,
 )
-from openticker.adapters.inbound.scopes import refusal
+from openticker.adapters.inbound.web.app import mount_web
+from openticker.adapters.inbound.web.auth import (
+    Caller,
+    WebSettings,
+    require_scope,
+)
+from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.composition import (
     AgentConfigError,
     SandboxConfigError,
     agent_settings,
     capital_cap,
     order_broker,
+    script_limits,
 )
 from openticker.core.agents.reviews import ReviewScheduleError
 from openticker.core.calendar.calendar import CalendarError
+from openticker.core.options.payoff import PayoffInputError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
 from openticker.core.orders.charges import ChargeBookError
 from openticker.core.orders.models import OrderChanges, OrderRequest, OrderStatus, OrderType
+from openticker.core.pnl import Source
 from openticker.core.scripts.models import InvalidScriptError
 from openticker.core.strategies.legs import LegResolutionError
 from openticker.core.strategies.models import InvalidStrategyError
@@ -114,10 +133,15 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import runs_repo
-from openticker.storage.sqlite.api_keys_repo import StoredApiKey
+from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
+from openticker.storage.sqlite.watchlists_repo import (
+    MAX_ITEMS,
+    DuplicateWatchlistNameError,
+    Watchlist,
+    WatchlistLimitError,
+)
 from openticker.use_cases.agents import manage as agent_jobs
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
@@ -125,7 +149,11 @@ from openticker.use_cases.agents.manage import (
     AgentJobCapError,
     UnknownAgentJobError,
 )
-from openticker.use_cases.api_keys import FULL_SCOPE, authenticate
+from openticker.use_cases.api_keys import (
+    InvalidApiKeyNameError,
+    ManagedApiKeyError,
+    UnknownApiKeyError,
+)
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.check_charge_rates import NoChargeSamplesError, check_charge_rates
@@ -146,11 +174,25 @@ from openticker.use_cases.get_orderbook import get_orderbook
 from openticker.use_cases.get_positions import get_positions
 from openticker.use_cases.get_quote import get_quote
 from openticker.use_cases.get_quotes import MAX_QUOTES, get_quotes
-from openticker.use_cases.get_tradebook import get_tradebook, session_start
+from openticker.use_cases.get_tradebook import Period, get_tradebook, period_start, session_start
 from openticker.use_cases.modify_order import modify_order
 from openticker.use_cases.place_basket import MAX_BASKET, place_basket
 from openticker.use_cases.place_order import place_order
+from openticker.use_cases.placers import placer_names
+from openticker.use_cases.pnl_history import (
+    HistoryRangeError,
+    get_charges_summary,
+    get_pnl_history,
+)
+from openticker.use_cases.position_holders import holders
 from openticker.use_cases.preview_charges import ChargesNotModelledError, preview_charges
+from openticker.use_cases.preview_paper_margin import preview_paper_margin
+from openticker.use_cases.preview_payoff import (
+    MAX_PAYOFF_LEGS,
+    MixedUnderlyingsError,
+    preview_payoff,
+)
+from openticker.use_cases.reset_paper_account import ResetConfirmationError, ResetRefusedError
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
 from openticker.use_cases.scripts import manage as scripts
 from openticker.use_cases.scripts.manage import (
@@ -160,6 +202,7 @@ from openticker.use_cases.scripts.manage import (
 )
 from openticker.use_cases.search_instruments import search_instruments
 from openticker.use_cases.strategies import control
+from openticker.use_cases.strategies.board import strategy_board
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
     StrategyStateError,
@@ -172,15 +215,23 @@ from openticker.use_cases.strategies.define import (
     create_strategy,
     delete_strategy,
     get_strategy,
-    list_strategies,
     preview_strategy,
     update_strategy,
 )
 from openticker.use_cases.strategies.ledger import MAX_LEDGER_RUNS, get_strategy_ledger
 from openticker.use_cases.strategies.signals import SignalResult, accept_signal
 from openticker.use_cases.sync_instruments import sync_instruments
-
-API_KEY_HEADER = "X-API-Key"
+from openticker.use_cases.watchlists import (
+    InvalidWatchlistNameError,
+    UnknownWatchlistError,
+    add_to_watchlist,
+    create_watchlist,
+    delete_watchlist,
+    get_watchlists,
+    instruments_of,
+    remove_from_watchlist,
+    rename_watchlist,
+)
 
 # The errors the MCP server turns into agent-facing messages (ADR 7 in docs/adr),
 # here as HTTP statuses carrying the same message.
@@ -195,7 +246,17 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (LegResolutionError, 404),
     (UnknownRunError, 404),
     (UnknownScriptError, 404),
+    (UnknownApiKeyError, 404),
+    (UnknownWatchlistError, 404),
+    (DuplicateWatchlistNameError, 409),
+    (WatchlistLimitError, 409),
+    (InvalidWatchlistNameError, 422),
     (DuplicateStrategyNameError, 409),
+    (DuplicateApiKeyNameError, 409),
+    (ManagedApiKeyError, 409),
+    (ResetRefusedError, 409),
+    (ResetConfirmationError, 422),
+    (InvalidApiKeyNameError, 422),
     (StrategyRunningError, 409),
     (StrategyLockedError, 409),
     (StrategyStateError, 409),
@@ -204,9 +265,12 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ScriptRunningError, 409),
     (ScriptStateError, 409),
     (InvalidStrategyError, 422),
+    (HistoryRangeError, 422),
     (ReviewScheduleError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
+    (PayoffInputError, 422),
+    (MixedUnderlyingsError, 422),
     (InvalidMarginOrderError, 422),
     (ChargesNotModelledError, 404),
     (NoChargeSamplesError, 404),
@@ -252,46 +316,21 @@ _PREVIEW_NEXT_STEP = (
     "Nothing was placed. Change the legs with PUT /api/v1/strategies/{strategy_id}."
 )
 
-_api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
-
-
-def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> StoredApiKey:
-    stored = authenticate(key) if key else None
-    if stored is None:
-        raise HTTPException(
-            status_code=401,
-            detail=f"missing or invalid API key: send one in the {API_KEY_HEADER} header "
-            "(create one with `openticker-serve keys create <name>`)",
-        )
-    return stored
-
-
-ApiKey = Annotated[StoredApiKey, Depends(require_api_key)]
-
-
-def require_scope(request: Request, key: ApiKey) -> StoredApiKey:
-    """Holds a script's or a review's key to its routes (adapters/inbound/scopes.py)."""
-    path = getattr(request.scope.get("route"), "path", None)
-    why = refusal(key.scope, request.method, path, request.path_params, _strategy_of_run)
-    if why is not None:
-        raise HTTPException(status_code=403, detail=why)
-    return key
-
-
-def _strategy_of_run(run_id: str) -> str | None:
-    run = runs_repo.find_run(run_id)
-    return run.strategy_id if run is not None else None
-
-
-def _caller(key: StoredApiKey) -> str:
-    """Who an order came from, as the audit log records it: the scope of a
-    job's or a script's key (script:<id>), rest:<key name> for a full key."""
-    return key.scope if key.scope != FULL_SCOPE else f"rest:{key.name}"
-
-
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
+
+
+class WatchlistNameBody(BaseModel):
+    name: str = Field(description="1 to 40 characters, unique whatever its case.")
+
+
+class WatchlistInstrumentsBody(BaseModel):
+    instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_ITEMS)
+
+
+def _watchlist_result(watchlist: Watchlist) -> WatchlistResult:
+    return WatchlistResult.of(watchlist, instruments_of(watchlist))
 
 
 class BrokerBody(BaseModel):
@@ -377,6 +416,11 @@ class QuotesBody(BaseModel):
     instruments: list[InstrumentRef] = Field(min_length=1, max_length=MAX_QUOTES)
 
 
+class PayoffBody(BaseModel):
+    broker: str
+    legs: list[PayoffLegInput] = Field(min_length=1, max_length=MAX_PAYOFF_LEGS)
+
+
 class MarginBody(BaseModel):
     broker: str
     orders: list[OrderInput] = Field(min_length=1, max_length=MAX_MARGIN_ORDERS)
@@ -423,9 +467,18 @@ def _utc_now() -> datetime:
 
 
 def create_app(
-    events: EventBus, env: Mapping[str, str], clock: Callable[[], datetime] = _utc_now
+    events: EventBus,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime] = _utc_now,
+    *,
+    hub: StreamHub | None = None,
+    web: WebSettings | None = None,
 ) -> FastAPI:
+    """With `hub` and `web`, the web app too (ADR 30 in docs/adr); without,
+    the REST API alone, for API keys only."""
     app = FastAPI(title="OpenTicker", version=version("openticker"))
+    app.state.clock = clock
+    app.state.web = web
     for error, status in _ERROR_STATUSES:
         app.add_exception_handler(error, _responder(status))
 
@@ -458,8 +511,8 @@ def create_app(
         )
 
     @api.post("/brokers/connect")
-    def connect(body: ConnectBody) -> ConnectResult:
-        connect_broker(get_adapter(body.broker), body.request_token)
+    def connect(body: ConnectBody, caller: Caller) -> ConnectResult:
+        connect_broker(get_adapter(body.broker), body.request_token, events, caller.triggered_by)
         return ConnectResult(
             broker=body.broker,
             connected=True,
@@ -484,7 +537,7 @@ def create_app(
             exchange,
             instrument_type,
             include_expired,
-            today=datetime.now(EXCHANGE_TIMEZONE).date(),
+            today=clock().astimezone(EXCHANGE_TIMEZONE).date(),
             limit=limit + 1,
         )
         return SearchResult.of(found, limit)
@@ -527,7 +580,7 @@ def create_app(
         strike_count: Annotated[int, Query(ge=1, le=50)] = 10,
         interest_rate: Annotated[float, Query(ge=0, le=20, description="Percent.")] = 0.0,
     ) -> OptionChainResult:
-        now = datetime.now(UTC)
+        now = clock()
         chain, expiries = get_option_chain(
             get_adapter(broker),
             underlying,
@@ -539,8 +592,19 @@ def create_app(
         )
         return OptionChainResult.of(chain, expiries, now)
 
+    @api.post("/options/payoff")
+    def options_payoff(body: PayoffBody) -> PayoffResult:
+        """The payoff of up to 20 option and futures legs on one underlying, at
+        expiry and today, with breakevens and the most it makes and loses.
+        Nothing is placed."""
+        return PayoffResult.of(
+            preview_payoff(
+                [leg.to_request() for leg in body.legs], get_adapter(body.broker), clock()
+            )
+        )
+
     @api.post("/orders")
-    def create_order(body: PlaceOrderBody, key: ApiKey) -> PlaceOrderResult:
+    def create_order(body: PlaceOrderBody, caller: Caller) -> PlaceOrderResult:
         """Paper trade in the local sandbox; nothing is sent to the broker. A
         rejection is still a 200, with the reason in the body."""
         request = OrderRequest(
@@ -551,7 +615,7 @@ def create_app(
             order_type=body.order_type,
             price=body.price,
             trigger_price=body.trigger_price,
-            triggered_by=_caller(key),
+            triggered_by=caller.triggered_by,
         )
         result = place_order(
             request,
@@ -581,11 +645,13 @@ def create_app(
         return ChargesResult.of(preview_charges(symbol, exchange, side, quantity, price, product))
 
     @api.post("/charges/check")
-    def charges_check(body: BrokerBody, key: ApiKey) -> ChargeCheckResult:
+    def charges_check(body: BrokerBody, caller: Caller) -> ChargeCheckResult:
         """Prices sample orders through the broker's contract note and compares
         them with the rates the sandbox charges. Nothing is placed."""
         return ChargeCheckResult.of(
-            check_charge_rates(body.broker, get_adapter(body.broker), events, clock(), _caller(key))
+            check_charge_rates(
+                body.broker, get_adapter(body.broker), events, clock(), caller.triggered_by
+            )
         )
 
     @api.post("/margin")
@@ -596,8 +662,26 @@ def create_app(
             get_margin(get_adapter(body.broker), [o.to_order() for o in body.orders], clock())
         )
 
+    @api.get("/margin/paper")
+    def paper_margin(
+        broker: Broker,
+        symbol: Symbol,
+        exchange: ExchangeQuery,
+        side: Side,
+        quantity: Annotated[int, Query(gt=0)],
+        product: Product,
+        price: Annotated[float, Query(gt=0)],
+    ) -> PaperMarginResult:
+        """What the paper account would block for this order, net of the
+        position held, and the cash it has free. Nothing is placed."""
+        return PaperMarginResult.of(
+            preview_paper_margin(
+                order_broker(broker, env, clock), symbol, exchange, side, quantity, product, price
+            )
+        )
+
     @api.post("/orders/basket")
-    def create_basket(body: BasketBody, key: ApiKey) -> BasketResult:
+    def create_basket(body: BasketBody, caller: Caller) -> BasketResult:
         """Up to 50 sandbox orders as one set, every BUY before any SELL. Not
         atomic: each order says its own status, and a refused one doesn't stop
         the rest."""
@@ -608,7 +692,7 @@ def create_app(
             capital_cap(env),
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return BasketResult.of(
             placements,
@@ -618,20 +702,22 @@ def create_app(
         )
 
     @api.delete("/orders/{order_id}")
-    def delete_order(order_id: str, broker: Broker, key: ApiKey) -> CancelOrderResult:
+    def delete_order(order_id: str, broker: Broker, caller: Caller) -> CancelOrderResult:
         """Withdraws a PENDING order; anything else is left as it is."""
-        result = cancel_order(order_id, order_broker(broker, env, clock), events, _caller(key))
+        result = cancel_order(
+            order_id, order_broker(broker, env, clock), events, caller.triggered_by
+        )
         return CancelOrderResult.of(order_id, result)
 
     @api.post("/orders/cancel-all")
-    def cancel_all(body: BrokerBody, key: ApiKey) -> CancelAllResult:
+    def cancel_all(body: BrokerBody, caller: Caller) -> CancelAllResult:
         """Withdraws every PENDING order, strategies' included. Strategies keep running."""
         return CancelAllResult.of(
-            cancel_all_orders(order_broker(body.broker, env, clock), events, _caller(key))
+            cancel_all_orders(order_broker(body.broker, env, clock), events, caller.triggered_by)
         )
 
     @api.post("/positions/close")
-    def close_one(body: ClosePositionBody, key: ApiKey) -> PlaceOrderResult:
+    def close_one(body: ClosePositionBody, caller: Caller) -> PlaceOrderResult:
         """Closes one position at the market for exactly what is held. A refusal
         (exchange closed, no fresh price) is a 200 with the reason."""
         position, result = close_position(
@@ -641,21 +727,25 @@ def create_app(
             events,
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return closing_result(position, result, _close_next_step)
 
     @api.post("/positions/close-all")
-    def close_all(body: BrokerBody, key: ApiKey) -> CloseAllResult:
+    def close_all(body: BrokerBody, caller: Caller) -> CloseAllResult:
         """Closes every open position at the market. Strategies are not stopped;
         pending orders stay (POST /orders/cancel-all withdraws them)."""
         closed = close_all_positions(
-            order_broker(body.broker, env, clock), events, load_calendar(), clock(), _caller(key)
+            order_broker(body.broker, env, clock),
+            events,
+            load_calendar(),
+            clock(),
+            caller.triggered_by,
         )
         return CloseAllResult.of(closed, _close_next_step)
 
     @api.patch("/orders/{order_id}")
-    def patch_order(order_id: str, body: ModifyOrderBody, key: ApiKey) -> ModifyOrderResult:
+    def patch_order(order_id: str, body: ModifyOrderBody, caller: Caller) -> ModifyOrderResult:
         """Changes a PENDING order's quantity, price or trigger; never fills it."""
         sandbox = order_broker(body.broker, env, clock)
         result = modify_order(
@@ -668,7 +758,7 @@ def create_app(
             capital_cap(env),
             load_calendar(),
             clock(),
-            _caller(key),
+            caller.triggered_by,
         )
         return ModifyOrderResult.of(order_id, result, get_order_status(sandbox, order_id))
 
@@ -680,9 +770,12 @@ def create_app(
 
     @api.get("/orders")
     def orderbook(
-        broker: Broker, limit: Annotated[int, Query(ge=1, le=200)] = 20
+        broker: Broker, limit: Annotated[int, Query(ge=1, le=200)] = 20, today_only: bool = False
     ) -> OrderbookResult:
-        return OrderbookResult.of(get_orderbook(order_broker(broker, env, clock), limit))
+        """Most recent first; `today_only`: placed on today's exchange-local date."""
+        since = session_start(clock()) if today_only else None
+        orders = get_orderbook(order_broker(broker, env, clock), limit, since)
+        return OrderbookResult.of(orders, placer_names(o.triggered_by for o in orders))
 
     @api.get("/orders/{order_id}")
     def order_status(order_id: str, broker: Broker) -> OrderbookEntryResult:
@@ -690,17 +783,77 @@ def create_app(
 
     @api.get("/trades")
     def tradebook(
-        broker: Broker, limit: Annotated[int, Query(ge=1, le=500)] = 50
+        broker: Broker, limit: Annotated[int, Query(ge=1, le=500)] = 50, period: Period = "today"
     ) -> TradebookResult:
-        """Today's fills, newest first."""
+        """Fills since the start of today, this week or this month, newest first."""
         now = clock()
+        trades = get_tradebook(order_broker(broker, env, clock), limit, now, period)
         return TradebookResult.of(
-            get_tradebook(order_broker(broker, env, clock), limit, now), session_start(now)
+            trades, period_start(now, period), placer_names(t.triggered_by for t in trades)
+        )
+
+    @api.get("/pnl/history")
+    def pnl_history(broker: Broker, from_date: date, to_date: date) -> PnlHistoryResult:
+        """The paper account's P&L by trading day, after charges; today live."""
+        return PnlHistoryResult.of(
+            get_pnl_history(
+                from_date, to_date, order_broker(broker, env, clock), load_calendar(), clock()
+            )
+        )
+
+    @api.get("/charges/summary")
+    def charges_summary(from_date: date, to_date: date) -> ChargesSummaryResult:
+        """Charges paid by paper fills, month by month and by charge."""
+        months = get_charges_summary(from_date, to_date)
+        return ChargesSummaryResult(
+            months=[MonthChargesResult.of(m) for m in months],
+            total=round(sum(m.total for m in months), 2),
+        )
+
+    @api.get("/watchlists")
+    def watchlists() -> WatchlistsResult:
+        """Every watchlist with its instruments, in the order they were made."""
+        return WatchlistsResult(watchlists=[_watchlist_result(w) for w in get_watchlists()])
+
+    @api.post("/watchlists")
+    def new_watchlist(body: WatchlistNameBody, caller: Caller) -> WatchlistResult:
+        """A new, empty list. At most 20."""
+        return _watchlist_result(create_watchlist(body.name, events, clock(), caller.triggered_by))
+
+    @api.patch("/watchlists/{watchlist_id}")
+    def rename(watchlist_id: str, body: WatchlistNameBody, caller: Caller) -> WatchlistResult:
+        return _watchlist_result(
+            rename_watchlist(watchlist_id, body.name, events, clock(), caller.triggered_by)
+        )
+
+    @api.delete("/watchlists/{watchlist_id}")
+    def remove_watchlist(watchlist_id: str, caller: Caller) -> DeleteWatchlistResult:
+        gone = delete_watchlist(watchlist_id, events, clock(), caller.triggered_by)
+        return DeleteWatchlistResult(watchlist_id=gone.watchlist_id, name=gone.name, deleted=True)
+
+    @api.post("/watchlists/{watchlist_id}/instruments")
+    def watch(watchlist_id: str, body: WatchlistInstrumentsBody, caller: Caller) -> WatchlistResult:
+        """Adds to the end of the list; one already on it stays where it is. At most 50."""
+        wanted = [(i.symbol, i.exchange.value) for i in body.instruments]
+        return _watchlist_result(
+            add_to_watchlist(watchlist_id, wanted, events, clock(), caller.triggered_by)
+        )
+
+    @api.delete("/watchlists/{watchlist_id}/instruments")
+    def unwatch(
+        watchlist_id: str, body: WatchlistInstrumentsBody, caller: Caller
+    ) -> WatchlistResult:
+        """Takes instruments off the list; one not on it is ignored."""
+        unwanted = [(i.symbol, i.exchange.value) for i in body.instruments]
+        return _watchlist_result(
+            remove_from_watchlist(watchlist_id, unwanted, events, clock(), caller.triggered_by)
         )
 
     @api.get("/positions")
     def positions(broker: Broker, include_closed: bool = False) -> PositionsResult:
-        return PositionsResult.of(get_positions(order_broker(broker, env, clock)), include_closed)
+        """Each with the running strategies holding part of it."""
+        held = get_positions(order_broker(broker, env, clock))
+        return PositionsResult.of(held, include_closed, holders(held))
 
     @api.get("/funds")
     def funds(broker: Broker) -> FundsResult:
@@ -725,9 +878,23 @@ def create_app(
 
     @api.get("/audit")
     def audit(
-        event_type: str | None = None, limit: Annotated[int, Query(ge=1, le=200)] = 20
+        event_type: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 20,
+        event_types: Annotated[list[str] | None, Query()] = None,
+        source: Source | None = None,
+        from_date: date | None = None,
+        before_id: Annotated[int | None, Query(ge=1)] = None,
     ) -> AuditLogResult:
-        return AuditLogResult.of(get_audit_log(limit, event_type))
+        return AuditLogResult.of(
+            get_audit_log(
+                limit,
+                event_type,
+                event_types=event_types or (),
+                source=source,
+                from_date=from_date,
+                before_id=before_id,
+            )
+        )
 
     @api.post("/strategies")
     def new_strategy(body: StrategyBody) -> StrategyResult:
@@ -737,7 +904,9 @@ def create_app(
 
     @api.get("/strategies")
     def strategies() -> StrategiesResult:
-        return StrategiesResult(strategies=[StrategySummary.of(s) for s in list_strategies()])
+        return StrategiesResult(
+            strategies=[StrategySummary.of(row) for row in strategy_board(load_calendar(), clock())]
+        )
 
     @api.get("/strategies/{strategy_id}")
     def strategy(strategy_id: str) -> StrategyResult:
@@ -762,21 +931,21 @@ def create_app(
         )
 
     @api.post("/strategies/{strategy_id}/start")
-    def start(strategy_id: str, body: BrokerBody, key: ApiKey) -> StrategyCommandResult:
+    def start(strategy_id: str, body: BrokerBody, caller: Caller) -> StrategyCommandResult:
         """Enters the strategy now in the sandbox; openticker-serve watches it from then on."""
-        command = control.request_start(strategy_id, body.broker, f"rest:{key.name}", clock())
+        command = control.request_start(strategy_id, body.broker, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/stop")
-    def stop(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+    def stop(strategy_id: str, caller: Caller) -> StrategyCommandResult:
         """Closes every open leg and ends the run."""
-        command = control.request_stop(strategy_id, f"rest:{key.name}", clock())
+        command = control.request_stop(strategy_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/kill")
-    def kill(strategy_id: str, key: ApiKey) -> StrategyCommandResult:
+    def kill(strategy_id: str, caller: Caller) -> StrategyCommandResult:
         """Locks the strategy, then closes every open leg."""
-        command = control.request_kill(strategy_id, f"rest:{key.name}", clock())
+        command = control.request_kill(strategy_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, True, _COMMAND_NEXT_STEP)
 
     @api.post("/strategies/{strategy_id}/release")
@@ -797,9 +966,9 @@ def create_app(
         return StrategyResult.of(control.unschedule_strategy(strategy_id))
 
     @api.post("/strategies/{strategy_id}/legs/{leg_id}/close")
-    def close_leg(strategy_id: str, leg_id: str, key: ApiKey) -> StrategyCommandResult:
+    def close_leg(strategy_id: str, leg_id: str, caller: Caller) -> StrategyCommandResult:
         """Closes one leg; the run carries on with the others."""
-        command = control.request_close_leg(strategy_id, leg_id, f"rest:{key.name}", clock())
+        command = control.request_close_leg(strategy_id, leg_id, caller.triggered_by, clock())
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/signal-strategies")
@@ -850,9 +1019,11 @@ def create_app(
         return StrategyLedgerResult.of(get_strategy_ledger(strategy_id, limit))
 
     @api.post("/strategies/{strategy_id}/review")
-    def review(strategy_id: str, key: ApiKey) -> StartReviewResult:
+    def review(strategy_id: str, caller: Caller) -> StartReviewResult:
         """Asks openticker-serve to review the strategy now with the user's coding agent."""
-        job = agent_jobs.start_review(strategy_id, agent_settings(env), _caller(key), clock())
+        job = agent_jobs.start_review(
+            strategy_id, agent_settings(env), caller.triggered_by, clock()
+        )
         return StartReviewResult(job=AgentJobResult.of(job))
 
     @api.post("/strategies/{strategy_id}/review-schedule")
@@ -882,6 +1053,13 @@ def create_app(
         """The end of what an agent job printed."""
         return AgentJobLogResult.of(agent_jobs.get_agent_job_log(job_id))
 
+    @api.post("/agent-jobs/{job_id}/stop")
+    def stop_job(job_id: str, caller: Caller) -> AgentJobResult:
+        """Ends a waiting job at once; asks a running one to stop."""
+        return AgentJobResult.of(
+            agent_jobs.stop_agent_job(job_id, events, caller.triggered_by, clock())
+        )
+
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:
         return StrategyRunResult.of_detail(control.get_run(run_id))
@@ -896,7 +1074,10 @@ def create_app(
 
     @api.get("/scripts")
     def all_scripts() -> ScriptsResult:
-        return ScriptsResult(scripts=[ScriptResult.of(s) for s in scripts.list_scripts()])
+        return ScriptsResult(
+            scripts=[ScriptResult.of(s) for s in scripts.list_scripts()],
+            limits=ScriptLimitsResult.of(script_limits(env)),
+        )
 
     @api.get("/scripts/{script_id}")
     def script(
@@ -919,13 +1100,13 @@ def create_app(
         return DeleteScriptResult(script_id=script_id, deleted=True)
 
     @api.post("/scripts/{script_id}/start")
-    def start_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
-        command = scripts.request_start(script_id, f"rest:{key.name}", clock())
+    def start_script(script_id: str, caller: Caller) -> ScriptCommandResult:
+        command = scripts.request_start(script_id, caller.triggered_by, clock())
         return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
     @api.post("/scripts/{script_id}/stop")
-    def stop_script(script_id: str, key: ApiKey) -> ScriptCommandResult:
-        command = scripts.request_stop(script_id, f"rest:{key.name}", clock())
+    def stop_script(script_id: str, caller: Caller) -> ScriptCommandResult:
+        command = scripts.request_stop(script_id, caller.triggered_by, clock())
         return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
     @api.post("/scripts/{script_id}/schedule")
@@ -945,6 +1126,8 @@ def create_app(
         return ScriptLogsResult.of(scripts.get_logs(script_id, run_id, lines))
 
     app.include_router(api)
+    if hub is not None and web is not None:
+        mount_web(app, events=events, env=env, hub=hub, web=web, clock=clock)
     return app
 
 

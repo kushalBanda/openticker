@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Self
 
@@ -5,6 +6,7 @@ import httpx
 import pytest
 
 from openticker.adapters.brokers.zerodha import auth
+from openticker.ports.models import EXCHANGE_TIMEZONE
 
 
 class _FakeResponse:
@@ -45,12 +47,16 @@ def test_exchange_request_token_maps_kite_response_to_credentials(
     monkeypatch.setattr(httpx, "Client", lambda base_url: fake_client)
 
     credentials = auth.exchange_request_token(
-        api_key="key123", api_secret="secret456", request_token="reqtok789"
+        api_key="key123",
+        api_secret="secret456",
+        request_token="reqtok789",
+        now=datetime(2026, 10, 3, 11, 47, tzinfo=UTC),  # Saturday 17:17 IST
     )
 
     assert credentials.broker == "zerodha"
     assert credentials.access_token == "the-access-token"
     assert credentials.refresh_token is None
+    assert credentials.expires_at == datetime(2026, 10, 4, 0, 30, tzinfo=UTC)  # Sunday 06:00 IST
     assert fake_client.posted_with is not None
     assert fake_client.posted_with["api_key"] == "key123"
     assert fake_client.posted_with["request_token"] == "reqtok789"
@@ -63,4 +69,16 @@ def test_exchange_request_token_raises_on_kite_error_response(
     monkeypatch.setattr(httpx, "Client", lambda base_url: fake_client)
 
     with pytest.raises(auth.KiteAuthError):
-        auth.exchange_request_token(api_key="k", api_secret="s", request_token="r")
+        auth.exchange_request_token(
+            api_key="k", api_secret="s", request_token="r", now=datetime(2026, 10, 3, tzinfo=UTC)
+        )
+
+
+def test_a_session_ends_at_the_next_0600_ist() -> None:
+    def ist(hour: int, minute: int) -> datetime:
+        return datetime(2026, 10, 3, hour, minute, tzinfo=EXCHANGE_TIMEZONE)
+
+    next_morning = datetime(2026, 10, 4, 6, 0, tzinfo=EXCHANGE_TIMEZONE)
+    assert auth.session_ends(ist(17, 17)) == next_morning
+    assert auth.session_ends(ist(5, 59)) == ist(6, 0)  # before the logout: that same morning
+    assert auth.session_ends(ist(6, 0)) == next_morning

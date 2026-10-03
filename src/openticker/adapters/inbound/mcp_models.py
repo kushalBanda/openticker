@@ -4,13 +4,19 @@ included), matching the trading dates the tools take as input. The REST API
 returns the same shapes (ADR 8 and ADR 17 in docs/adr)."""
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, time
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from openticker.core.agents.jobs import AgentJob, AgentJobEndReason, AgentJobStatus
+from openticker.core.agents.jobs import (
+    AgentJob,
+    AgentJobEndReason,
+    AgentJobStatus,
+    Verdict,
+    verdict_of,
+)
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
 from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
@@ -22,6 +28,8 @@ from openticker.core.orders.models import (
     OrderType,
     Trade,
 )
+from openticker.core.orders.sandbox import PaperMargin
+from openticker.core.pnl import DayPnl, Source, source_of
 from openticker.core.risk.models import (
     BreachReason,
     LockMode,
@@ -34,6 +42,7 @@ from openticker.core.scripts.models import (
     ScriptCommand,
     ScriptCommandKind,
     ScriptCommandStatus,
+    ScriptLimits,
     ScriptRun,
     ScriptRunStatus,
     ScriptSchedule,
@@ -86,13 +95,18 @@ from openticker.storage.sqlite.audit_repo import AuditEntry
 from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
+from openticker.storage.sqlite.watchlists_repo import Watchlist
 from openticker.use_cases.agents.manage import AgentJobLog
 from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
 from openticker.use_cases.place_basket import BasketOrder, BasketPlacement
+from openticker.use_cases.pnl_history import ChargeTotals, PnlHistory
+from openticker.use_cases.position_holders import Holder, Holding, PositionKey, key_of
 from openticker.use_cases.preview_charges import ChargePreview
+from openticker.use_cases.preview_payoff import PayoffLegRequest, PayoffPreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
+from openticker.use_cases.strategies.board import BoardRow, Segment, StrategyState
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 from openticker.use_cases.strategies.ledger import StrategyLedger
@@ -323,11 +337,20 @@ class BarsResult(BaseModel):
         )
 
 
+TRIGGERED_BY_DESCRIPTION = (
+    "Who caused it, as recorded: ui (the web app), mcp:<client> (an MCP client by name; "
+    "plain mcp before clients were named), rest:<key name>, strategy:<id>, webhook, "
+    "script:<id>, schedule, or the server itself (square-off, expiry-settlement)."
+)
+SOURCE_DESCRIPTION = "triggered_by read as who did it, as the web app labels it."
+
+
 class AuditEntryResult(BaseModel):
     id: int
     occurred_at: datetime = Field(description="Exchange-local.")
     event_type: str
-    triggered_by: str | None = Field(description="Which entry point caused it: mcp, rest, webhook.")
+    triggered_by: str | None = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
     details: dict[str, Any] = Field(description="The event's own fields.")
 
     @classmethod
@@ -337,6 +360,7 @@ class AuditEntryResult(BaseModel):
             occurred_at=entry.occurred_at.astimezone(EXCHANGE_TIMEZONE),
             event_type=entry.event_type,
             triggered_by=entry.triggered_by,
+            source=source_of(entry.triggered_by),
             details=json.loads(entry.payload),
         )
 
@@ -364,6 +388,8 @@ class OptionQuoteResult(BaseModel):
     theta: float | None = Field(description="Price change per calendar day.")
     vega: float | None = Field(description="Price change per 1 point of volatility.")
     rho: float | None = Field(description="Price change per 1 point of interest rate.")
+    bid: float | None = Field(description="Best bid; None when nobody is bidding.")
+    ask: float | None = Field(description="Best offer; None when nobody is offering.")
 
     @classmethod
     def of(cls, option: OptionQuote) -> "OptionQuoteResult":
@@ -384,6 +410,8 @@ class OptionQuoteResult(BaseModel):
             theta=round(greeks.theta, 4) if greeks else None,
             vega=round(greeks.vega, 4) if greeks else None,
             rho=round(greeks.rho, 4) if greeks else None,
+            bid=option.bid,
+            ask=option.ask,
         )
 
 
@@ -408,9 +436,16 @@ class OptionChainResult(BaseModel):
     interest_rate: float = Field(description="Annualized, in percent, used for the Greeks.")
     rows: list[ChainRowResult] = Field(description="Ascending strike.")
     available_expiries: list[date] = Field(description="Unexpired expiries, earliest first.")
+    lot_size: int | None = Field(description="Units in one lot of these options.")
+    futures: list["ChainFutureResult"] = Field(
+        description="The nearest two futures on the same underlying, earliest first."
+    )
 
     @classmethod
     def of(cls, chain: OptionChain, expiries: list[date], now: datetime) -> "OptionChainResult":
+        contracts = [
+            option.instrument for row in chain.rows for option in (row.call, row.put) if option
+        ]
         return cls(
             underlying=chain.underlying.symbol,
             exchange=chain.underlying.exchange,
@@ -430,6 +465,29 @@ class OptionChainResult(BaseModel):
                 for row in chain.rows
             ],
             available_expiries=expiries,
+            lot_size=contracts[0].lot_size if contracts else None,
+            futures=[ChainFutureResult.of(quote) for quote in chain.futures],
+        )
+
+
+class ChainFutureResult(BaseModel):
+    symbol: str
+    expiry: date
+    last_price: float
+    bid: float | None
+    ask: float | None
+    lot_size: int
+
+    @classmethod
+    def of(cls, quote: Quote) -> "ChainFutureResult":
+        assert quote.instrument.expiry is not None
+        return cls(
+            symbol=quote.instrument.symbol,
+            expiry=quote.instrument.expiry,
+            last_price=quote.last_price,
+            bid=quote.bid or None,
+            ask=quote.ask or None,
+            lot_size=quote.instrument.lot_size,
         )
 
 
@@ -577,6 +635,112 @@ class MarginResult(BaseModel):
             exposure=margin.exposure,
             option_premium=margin.option_premium,
             benefit=margin.benefit,
+        )
+
+
+class PaperMarginResult(BaseModel):
+    required: float = Field(
+        description="What the paper account would block for the part of the order that opens "
+        "or adds to a position. 0 when it only closes."
+    )
+    released: float = Field(description="What the part that closes a position would free.")
+    available: float = Field(description="Cash free in the paper account now.")
+    fits: bool = Field(
+        description="The funds cover it; a fill at this price wouldn't be refused for margin."
+    )
+
+    @classmethod
+    def of(cls, margin: PaperMargin) -> "PaperMarginResult":
+        return cls(
+            required=margin.required,
+            released=margin.released,
+            available=margin.available,
+            fits=margin.fits,
+        )
+
+
+class PayoffLegInput(BaseModel):
+    """One leg of a position to preview: an option or a future."""
+
+    symbol: str = Field(description="OpenTicker's symbol, e.g. NIFTY29SEP2624800CE.")
+    exchange: Exchange = Field(description="NFO or BFO.")
+    side: Side = Field(description="BUY or SELL.")
+    quantity: int = Field(ge=1, description="Units, not lots.")
+    price: float | None = Field(
+        default=None, ge=0, description="The price to assume; omit for the last price."
+    )
+
+    def to_request(self) -> PayoffLegRequest:
+        return PayoffLegRequest(self.symbol, self.exchange, self.side, self.quantity, self.price)
+
+
+class PayoffLegResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    side: Side
+    quantity: int
+    price: float = Field(description="The price the payoff assumes.")
+    implied_volatility: float | None = Field(
+        description="Percent, from the last price; None for a future or an unpriced option."
+    )
+
+
+class PayoffPointResult(BaseModel):
+    underlying: float
+    at_expiry: float
+    today: float | None
+
+
+class PayoffResult(BaseModel):
+    underlying: str
+    exchange: Exchange
+    underlying_price: float
+    legs: list[PayoffLegResult]
+    net_premium: float = Field(description="Rupees; positive is a credit.")
+    max_profit: float | None = Field(description="Rupees at expiry; None: unbounded.")
+    max_loss: float | None = Field(
+        description="The lowest P&L at expiry, rupees, negative for a loss; None: unbounded."
+    )
+    breakevens: list[float] = Field(description="Underlying prices at expiry, ascending.")
+    net_delta: float | None = Field(
+        description="Rupees per point of the underlying, today; None when an option is unpriced."
+    )
+    points: list[PayoffPointResult] = Field(
+        description="P&L at expiry and today (Black-76 at each leg's IV) across the underlying, "
+        "161 points, ±8% of it or wider to take in every strike."
+    )
+
+    @classmethod
+    def of(cls, preview: PayoffPreview) -> "PayoffResult":
+        result = preview.payoff
+        return cls(
+            underlying=preview.underlying.symbol,
+            exchange=preview.underlying.exchange,
+            underlying_price=preview.spot,
+            legs=[
+                PayoffLegResult(
+                    symbol=leg.instrument.symbol,
+                    exchange=leg.instrument.exchange,
+                    side=leg.side,
+                    quantity=leg.quantity,
+                    price=leg.price,
+                    implied_volatility=(
+                        round(leg.implied_volatility * 100, 2)
+                        if leg.implied_volatility is not None
+                        else None
+                    ),
+                )
+                for leg in preview.legs
+            ],
+            net_premium=result.net_premium,
+            max_profit=result.max_profit,
+            max_loss=result.max_loss,
+            breakevens=list(result.breakevens),
+            net_delta=result.net_delta,
+            points=[
+                PayoffPointResult(underlying=p.underlying, at_expiry=p.at_expiry, today=p.today)
+                for p in result.points
+            ],
         )
 
 
@@ -731,21 +895,59 @@ class CloseAllResult(BaseModel):
         return cls(orders=[closing_result(p, r, next_step) for p, r in closed])
 
 
+class HolderResult(BaseModel):
+    strategy_id: str | None = Field(description="None: the part no running strategy holds.")
+    name: str | None = Field(description="The strategy's name; None for the rest.")
+    source: Source = Field(
+        description="strategy, or for the rest who last added to it (you, claude-code, ...)."
+    )
+    quantity: int = Field(description="Net and signed, as the position's.")
+    leg_ids: list[str] = Field(
+        description="The strategy's open legs on this contract: close_strategy_leg takes one."
+    )
+
+    @classmethod
+    def of(cls, holder: Holder) -> "HolderResult":
+        return cls(
+            strategy_id=holder.strategy_id,
+            name=holder.name,
+            source=holder.source,
+            quantity=holder.quantity,
+            leg_ids=list(holder.leg_ids),
+        )
+
+
 class PositionResult(BaseModel):
     symbol: str
     exchange: Exchange
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
     product: Product
     quantity: int = Field(description="Net and signed: negative is short, 0 is closed.")
     average_price: float
     last_price: float | None = Field(description="None when no fresh price was available.")
     unrealized_pnl: float | None
     realized_pnl: float
+    held_by: list[HolderResult] = Field(
+        description="Running strategies holding part of it, then the rest; empty when closed."
+    )
+    shared: bool = Field(
+        description="True when the strategies' legs don't fit inside the position (opposite "
+        "sides, or more than it holds): closing it closes what they think they hold."
+    )
 
     @classmethod
-    def of(cls, position: Position) -> "PositionResult":
+    def of(cls, position: Position, holding: Holding | None = None) -> "PositionResult":
+        instrument = position.instrument
         return cls(
-            symbol=position.instrument.symbol,
-            exchange=position.instrument.exchange,
+            symbol=instrument.symbol,
+            exchange=instrument.exchange,
+            instrument_type=instrument.instrument_type,
+            expiry=instrument.expiry,
+            strike=instrument.strike,
+            lot_size=instrument.lot_size,
             product=position.product,
             quantity=position.quantity,
             average_price=round(position.average_price, 4),
@@ -754,6 +956,8 @@ class PositionResult(BaseModel):
                 round(position.unrealized_pnl, 2) if position.unrealized_pnl is not None else None
             ),
             realized_pnl=round(position.realized_pnl, 2),
+            held_by=[HolderResult.of(h) for h in holding.holders] if holding else [],
+            shared=holding.shared if holding else False,
         )
 
 
@@ -765,11 +969,17 @@ class PositionsResult(BaseModel):
     total_realized_pnl: float
 
     @classmethod
-    def of(cls, positions: Sequence[Position], include_closed: bool) -> "PositionsResult":
+    def of(
+        cls,
+        positions: Sequence[Position],
+        include_closed: bool,
+        holdings: Mapping[PositionKey, Holding] | None = None,
+    ) -> "PositionsResult":
         shown = [position for position in positions if include_closed or position.quantity]
         unrealized = [position.unrealized_pnl for position in shown]
+        held = holdings or {}
         return cls(
-            positions=[PositionResult.of(position) for position in shown],
+            positions=[PositionResult.of(p, held.get(key_of(p))) for p in shown],
             total_unrealized_pnl=(
                 None
                 if any(value is None for value in unrealized)
@@ -818,15 +1028,31 @@ class OrderbookEntryResult(BaseModel):
     )
     fill_price: float | None
     reason: str | None
-    triggered_by: str
+    triggered: bool = Field(
+        description="An SL order whose trigger has been crossed: it now rests as a limit order."
+    )
+    triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
+    placed_by: str | None = Field(
+        default=None,
+        description="The name of the strategy or hosted script that placed it; None for "
+        "anyone else, or when it has since been deleted.",
+    )
+    strategy_id: str | None
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
 
     @classmethod
-    def of(cls, order: Order) -> "OrderbookEntryResult":
+    def of(cls, order: Order, names: Mapping[str, str] | None = None) -> "OrderbookEntryResult":
+        """`names`: placer_names for the strategies and scripts among the orders."""
+        instrument = order.instrument
         return cls(
             order_id=order.order_id,
             placed_at=order.placed_at.astimezone(EXCHANGE_TIMEZONE),
-            symbol=order.instrument.symbol,
-            exchange=order.instrument.exchange,
+            symbol=instrument.symbol,
+            exchange=instrument.exchange,
             side=order.side,
             quantity=order.quantity,
             product=order.product,
@@ -836,7 +1062,15 @@ class OrderbookEntryResult(BaseModel):
             status=order.status,
             fill_price=order.fill_price,
             reason=order.reason,
+            triggered=order.triggered,
             triggered_by=order.triggered_by,
+            source=source_of(order.triggered_by),
+            placed_by=(names or {}).get(order.triggered_by),
+            strategy_id=order.strategy_id,
+            instrument_type=instrument.instrument_type,
+            expiry=instrument.expiry,
+            strike=instrument.strike,
+            lot_size=instrument.lot_size,
         )
 
 
@@ -871,8 +1105,10 @@ class OrderbookResult(BaseModel):
     orders: list[OrderbookEntryResult] = Field(description="Most recent first.")
 
     @classmethod
-    def of(cls, orders: Sequence[Order]) -> "OrderbookResult":
-        return cls(orders=[OrderbookEntryResult.of(order) for order in orders])
+    def of(
+        cls, orders: Sequence[Order], names: Mapping[str, str] | None = None
+    ) -> "OrderbookResult":
+        return cls(orders=[OrderbookEntryResult.of(order, names) for order in orders])
 
 
 class TradeResult(BaseModel):
@@ -893,12 +1129,31 @@ class TradeResult(BaseModel):
         "this instrument (MCX), or a trade from before charges were."
     )
     product: Product
-    triggered_by: str
+    charges_detail: dict[str, float] | None = Field(
+        description="The charges itemised: brokerage, transaction_tax (STT), exchange_txn, "
+        "sebi, stamp_duty and gst; they sum to charges. None: not modelled, or a trade from "
+        "before they were recorded."
+    )
+    realized_pnl: float | None = Field(
+        description="What this fill closed made or lost, before charges; 0 for one that only "
+        "opened. None: a trade from before it was recorded."
+    )
+    triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
+    placed_by: str | None = Field(
+        default=None,
+        description="The name of the strategy or hosted script that placed it; None for "
+        "anyone else, or when it has since been deleted.",
+    )
     strategy_id: str | None
     run_id: str | None
+    instrument_type: InstrumentType
+    expiry: date | None
+    strike: float | None
+    lot_size: int
 
     @classmethod
-    def of(cls, trade: Trade) -> "TradeResult":
+    def of(cls, trade: Trade, names: Mapping[str, str] | None = None) -> "TradeResult":
         return cls(
             order_id=trade.order_id,
             filled_at=trade.filled_at.astimezone(EXCHANGE_TIMEZONE),
@@ -910,21 +1165,33 @@ class TradeResult(BaseModel):
             expected_price=trade.expected_price,
             value=round(trade.price * trade.quantity, 2),
             charges=trade.charges,
+            charges_detail=dict(trade.charges_detail) if trade.charges_detail else None,
+            realized_pnl=trade.realized_pnl,
             product=trade.product,
             triggered_by=trade.triggered_by,
+            source=source_of(trade.triggered_by),
+            placed_by=(names or {}).get(trade.triggered_by),
             strategy_id=trade.strategy_id,
             run_id=trade.run_id,
+            instrument_type=trade.instrument.instrument_type,
+            expiry=trade.instrument.expiry,
+            strike=trade.instrument.strike,
+            lot_size=trade.instrument.lot_size,
         )
 
 
 class TradebookResult(BaseModel):
     trades: list[TradeResult] = Field(description="Newest first.")
-    since: datetime = Field(description="Start of today, exchange-local.")
+    since: datetime = Field(
+        description="Start of the period (today, this week or this month), exchange-local."
+    )
 
     @classmethod
-    def of(cls, trades: Sequence[Trade], since: datetime) -> "TradebookResult":
+    def of(
+        cls, trades: Sequence[Trade], since: datetime, names: Mapping[str, str] | None = None
+    ) -> "TradebookResult":
         return cls(
-            trades=[TradeResult.of(trade) for trade in trades],
+            trades=[TradeResult.of(trade, names) for trade in trades],
             since=since.astimezone(EXCHANGE_TIMEZONE),
         )
 
@@ -1381,13 +1648,39 @@ class StrategySummary(BaseModel):
     scheduled: bool = Field(description="True when it enters on its schedule.")
     review_scheduled: bool = Field(description="True when it is reviewed on a schedule.")
     updated_at: datetime
+    state: StrategyState = Field(
+        description="killed: its kill switch is on. running: a run is open, or a start is "
+        "waiting for openticker-serve. listening: a signal strategy with an alert URL and "
+        "nothing open. scheduled: enters on its schedule. stopped."
+    )
+    segments: list[Segment] = Field(description="What it trades: EQ, FUT, OPT.")
+    next_entry: datetime | None = Field(description="When a scheduled strategy enters next.")
+    exit_time: ExchangeTime | None = Field(description="Its daily square-off, exchange-local.")
+    active_run: "ActiveRunResult | None" = Field(description="The open run, with its legs.")
+    pending: CommandKind | None = Field(
+        description="A start, stop, kill or close_leg openticker-serve hasn't carried out yet."
+    )
+    today_pnl: float = Field(
+        description="Runs started today and the open run: realized P&L less charges, rupees. "
+        "Open legs' unrealized P&L is not in it."
+    )
+    net_pnl: float = Field(description="Every run after costs, less charges (as the ledger).")
+    runs: int = Field(description="Every run it has had.")
+    judged_runs: int = Field(description="Runs after costs: the ones net_pnl and wins count.")
+    wins: int
+    max_drawdown: float = Field(description="Deepest fall of net P&L from its high, run by run.")
+    last_run_at: datetime | None = Field(description="When the newest run started.")
+    has_alert_url: bool = Field(description="A signal strategy with an alert URL.")
+    last_review: "ReviewBriefResult | None" = Field(description="The newest review that answered.")
 
     @classmethod
-    def of(cls, stored: StoredStrategy) -> "StrategySummary":
+    def of(cls, row: BoardRow) -> "StrategySummary":
+        stored = row.strategy
+        signal = isinstance(stored.spec, SignalStrategySpec)
         return cls(
             strategy_id=stored.id,
             name=stored.name,
-            kind="signal" if isinstance(stored.spec, SignalStrategySpec) else "options",
+            kind="signal" if signal else "options",
             underlying=", ".join(leg.symbol for leg in stored.spec.legs)
             if isinstance(stored.spec, SignalStrategySpec)
             else stored.spec.underlying,
@@ -1397,6 +1690,21 @@ class StrategySummary(BaseModel):
             scheduled=stored.scheduled_broker is not None,
             review_scheduled=stored.review_schedule is not None,
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
+            state=row.state,
+            segments=list(row.segments),
+            next_entry=_local(row.next_entry),
+            exit_time=stored.spec.schedule.exit_time,
+            active_run=ActiveRunResult.of(row.active_run) if row.active_run else None,
+            pending=row.pending,
+            today_pnl=row.today_net,
+            net_pnl=row.net_pnl,
+            runs=row.runs,
+            judged_runs=row.judged,
+            wins=row.wins,
+            max_drawdown=row.max_drawdown,
+            last_run_at=_local(row.last_run_at),
+            has_alert_url=row.has_alert_url,
+            last_review=ReviewBriefResult.of(row.review) if row.review else None,
         )
 
 
@@ -1608,6 +1916,11 @@ class LedgerRunResult(BaseModel):
         )
 
 
+class EquityPointResult(BaseModel):
+    day: date = Field(description="Exchange-local trading date.")
+    net_pnl: float = Field(description="Cumulative, after costs, rupees.")
+
+
 class LedgerTotalsResult(BaseModel):
     runs: int = Field(description="Runs after costs: the ones these totals judge.")
     wins: int = Field(description="Runs with net P&L above zero.")
@@ -1642,6 +1955,10 @@ class StrategyLedgerResult(BaseModel):
     open_runs: int = Field(description="Not ended; left out of totals.")
     totals: LedgerTotalsResult = Field(description="Over the runs after costs, all of them.")
     runs: list[LedgerRunResult] = Field(description="The newest runs, newest first.")
+    equity: list[EquityPointResult] = Field(
+        description="Cumulative net P&L after costs at the end of each day it ran, oldest "
+        "first; the latest 750 days."
+    )
 
     @classmethod
     def of(cls, ledger: StrategyLedger) -> "StrategyLedgerResult":
@@ -1654,6 +1971,7 @@ class StrategyLedgerResult(BaseModel):
             open_runs=ledger.open_runs,
             totals=LedgerTotalsResult.of(ledger.totals),
             runs=[LedgerRunResult.of(run) for run in ledger.runs],
+            equity=[EquityPointResult(day=p.day, net_pnl=p.net_pnl) for p in ledger.equity],
         )
 
 
@@ -1675,6 +1993,9 @@ class AgentJobResult(BaseModel):
     summary: str | None = Field(
         description="The agent's final answer; a review's starts with its verdict."
     )
+    verdict: Verdict | None = Field(
+        default=None, description="The verdict the summary leads with, when it leads with one."
+    )
     cost_usd: float | None = Field(description="What the run cost, when the harness reports it.")
 
     @classmethod
@@ -1692,6 +2013,7 @@ class AgentJobResult(BaseModel):
             end_reason=job.end_reason,
             end_detail=job.end_detail,
             summary=job.summary,
+            verdict=verdict_of(job.summary),
             cost_usd=job.cost_usd,
         )
 
@@ -2024,6 +2346,11 @@ class ScriptRunResult(BaseModel):
     stop_detail: str | None
     exit_code: int | None = Field(description="Negative: killed by that signal.")
     ended_at: datetime | None
+    peak_memory_mb: float | None = Field(
+        default=None,
+        description="The most memory it was measured using, script and children; null: "
+        "never measured.",
+    )
 
     @classmethod
     def of(cls, run: ScriptRun) -> "ScriptRunResult":
@@ -2037,6 +2364,9 @@ class ScriptRunResult(BaseModel):
             stop_detail=run.stop_detail,
             exit_code=run.exit_code,
             ended_at=_local(run.ended_at),
+            peak_memory_mb=round(run.peak_memory_kb / 1024, 1)
+            if run.peak_memory_kb is not None
+            else None,
         )
 
 
@@ -2073,8 +2403,21 @@ class ScriptResult(BaseModel):
         return cls.of(ScriptSummary(stored, None, None), next_step)
 
 
+class ScriptLimitsResult(BaseModel):
+    memory_mb: int = Field(description="Resident memory of a run, script and children.")
+    cpu_seconds: int = Field(description="CPU time of one run.")
+
+    @classmethod
+    def of(cls, limits: ScriptLimits) -> "ScriptLimitsResult":
+        return cls(memory_mb=limits.memory_mb, cpu_seconds=limits.cpu_seconds)
+
+
 class ScriptsResult(BaseModel):
     scripts: list[ScriptResult]
+    limits: ScriptLimitsResult | None = Field(
+        default=None,
+        description="What every run is held to: SCRIPT_MEMORY_LIMIT_MB and SCRIPT_CPU_SECONDS.",
+    )
 
 
 class ScriptCommandInfo(BaseModel):
@@ -2151,4 +2494,161 @@ class ScriptLogsResult(BaseModel):
 
 class DeleteScriptResult(BaseModel):
     script_id: str
+    deleted: bool
+
+
+class ActiveRunResult(RunSummary):
+    legs: list[RunLegResult]
+
+    @classmethod
+    def of(cls, run: Run) -> "ActiveRunResult":
+        return cls(
+            **RunSummary.of(run).model_dump(), legs=[RunLegResult.of(leg) for leg in run.legs]
+        )
+
+
+class ReviewBriefResult(BaseModel):
+    job_id: str
+    verdict: Verdict | None = Field(
+        description="keep, change (one thing), retire, or not_yet (under 10 runs after "
+        "costs); null when the answer leads with none."
+    )
+    summary: str
+    harness: str
+    trigger: str = Field(description="Who asked for it.")
+    ended_at: datetime
+
+    @classmethod
+    def of(cls, job: AgentJob) -> "ReviewBriefResult":
+        assert job.summary is not None and job.ended_at is not None
+        return cls(
+            job_id=job.id,
+            verdict=verdict_of(job.summary),
+            summary=job.summary,
+            harness=job.harness,
+            trigger=job.trigger,
+            ended_at=job.ended_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+StrategySummary.model_rebuild()
+
+
+class DayPnlResult(BaseModel):
+    trading_date: date
+    net_pnl: float | None = Field(
+        description="After charges: realized plus the open positions' change, less charges. "
+        "None when an open position had no price."
+    )
+    realized_pnl: float = Field(description="Closed by the day's fills, before charges.")
+    charges: float
+    unrealized_pnl: float | None = Field(description="Open positions' change over the day.")
+    fills: int
+    complete: bool = Field(description="False when a fill didn't record what it realized.")
+    estimated: bool = Field(description="Closing marks were the last prices known, not live.")
+    live: bool = Field(description="Today, worked out now: not recorded until after the close.")
+
+    @classmethod
+    def of(cls, day: DayPnl, live: bool) -> "DayPnlResult":
+        return cls(
+            trading_date=day.trading_date,
+            net_pnl=day.net_pnl,
+            realized_pnl=day.realized_pnl,
+            charges=day.charges,
+            unrealized_pnl=day.unrealized_pnl,
+            fills=day.fills,
+            complete=day.complete,
+            estimated=day.estimated,
+            live=live,
+        )
+
+
+class PnlHistoryResult(BaseModel):
+    days: list[DayPnlResult] = Field(
+        description="Oldest first. Only days that were recorded (openticker-serve running after "
+        "the close) and today."
+    )
+
+    @classmethod
+    def of(cls, history: PnlHistory) -> "PnlHistoryResult":
+        return cls(
+            days=[
+                DayPnlResult.of(day, live=day.trading_date == history.live) for day in history.days
+            ]
+        )
+
+
+class MonthChargesResult(BaseModel):
+    month: str = Field(description="YYYY-MM, exchange-local.")
+    total: float
+    by_type: dict[str, float] = Field(
+        description="brokerage, transaction_tax, exchange, sebi, stamp_duty, gst. Covers fills "
+        "that recorded each charge; `unitemized` is the rest."
+    )
+    unitemized: float
+    fills: int
+
+    @classmethod
+    def of(cls, month: ChargeTotals) -> "MonthChargesResult":
+        return cls(
+            month=month.month,
+            total=month.total,
+            by_type=month.by_type,
+            unitemized=month.unitemized,
+            fills=month.fills,
+        )
+
+
+class ChargesSummaryResult(BaseModel):
+    months: list[MonthChargesResult] = Field(description="Oldest first; months with fills only.")
+    total: float
+
+
+class WatchlistItemResult(BaseModel):
+    symbol: str
+    exchange: Exchange
+    instrument_type: InstrumentType | None = Field(
+        description="None when the instrument isn't in the instrument master; "
+        "sync_instruments brings it back."
+    )
+    expiry: date | None
+    strike: float | None
+    lot_size: int | None
+
+
+class WatchlistResult(BaseModel):
+    watchlist_id: str = Field(description="Pass this to the other watchlist tools.")
+    name: str
+    items: list[WatchlistItemResult] = Field(
+        description="In the order they were added; get_quotes prices them in one call."
+    )
+
+    @classmethod
+    def of(
+        cls, watchlist: Watchlist, instruments: Sequence[Instrument | None]
+    ) -> "WatchlistResult":
+        return cls(
+            watchlist_id=watchlist.watchlist_id,
+            name=watchlist.name,
+            items=[
+                WatchlistItemResult(
+                    symbol=item.symbol,
+                    exchange=Exchange(item.exchange),
+                    instrument_type=found.instrument_type if found else None,
+                    expiry=found.expiry if found else None,
+                    strike=found.strike if found else None,
+                    lot_size=found.lot_size if found else None,
+                )
+                for item, found in zip(watchlist.items, instruments, strict=True)
+            ],
+        )
+
+
+class WatchlistsResult(BaseModel):
+    watchlists: list[WatchlistResult] = Field(description="In the order they were made.")
+
+
+class DeleteWatchlistResult(BaseModel):
+    watchlist_id: str
+    name: str
     deleted: bool

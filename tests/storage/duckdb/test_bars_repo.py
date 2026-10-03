@@ -1,6 +1,8 @@
+import threading
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
+import duckdb
 import pytest
 
 from openticker.ports.models import Bar
@@ -34,6 +36,22 @@ def test_write_and_get_bars_round_trips() -> None:
     assert stored == [_bar(_SEP_17), _bar(_SEP_18)]
 
 
+def test_prices_volumes_and_times_come_back_exactly() -> None:
+    # Stored through one JSON string: nothing may be rounded on the way.
+    minute = datetime(2026, 9, 18, 4, 1, 59, 123456, tzinfo=UTC)
+    odd = replace(
+        _bar(minute, close=0.1 + 0.2),
+        interval="minute",
+        open=24812.349999999998,
+        volume=9_007_199_254_740_993,
+    )
+    bars_repo.write_bars([odd])
+
+    stored = bars_repo.get_bars(FAKE_INSTRUMENT, "minute", date(2026, 9, 18), date(2026, 9, 18))
+
+    assert stored == [odd]
+
+
 def test_get_bars_filters_on_exchange_local_trading_dates() -> None:
     bars_repo.write_bars([_bar(_SEP_17), _bar(_SEP_18)])
 
@@ -63,3 +81,24 @@ def test_write_bars_fails_loud_on_partial_range() -> None:
         bars_repo.write_bars([_bar(_SEP_17), bad])
 
     assert bars_repo.get_bars(FAKE_INSTRUMENT, "day", date(2026, 9, 1), date(2026, 9, 30)) == []
+
+
+def test_writes_from_several_threads_at_once_all_land() -> None:
+    # Two web requests for the same bars at once used to conflict on the table.
+    batch = [_bar(_SEP_17), _bar(_SEP_18)]
+    failed: list[duckdb.Error] = []
+
+    def write() -> None:
+        try:
+            bars_repo.write_bars(batch)
+        except duckdb.Error as exc:
+            failed.append(exc)
+
+    threads = [threading.Thread(target=write) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert failed == []
+    assert bars_repo.get_bars(FAKE_INSTRUMENT, "day", date(2026, 9, 17), date(2026, 9, 18)) == batch
