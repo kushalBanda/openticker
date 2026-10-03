@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch cancels the run still going (free-plan minutes).
+# A newer push to the same branch cancels the run still going.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
