@@ -1,7 +1,7 @@
 """ZerodhaAdapter — BrokerPort over Kite Connect."""
 
-from collections.abc import Sequence
-from datetime import date, datetime
+from collections.abc import Callable, Sequence
+from datetime import UTC, date, datetime
 
 from openticker.adapters.brokers.zerodha.auth import exchange_request_token
 from openticker.adapters.brokers.zerodha.charges import fetch_charges
@@ -33,10 +33,18 @@ from openticker.ports.models import (
 
 
 class ZerodhaAdapter:
-    def __init__(self, api_key: str, api_secret: str, access_token: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        access_token: str | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         """`access_token` is None until the broker has been connected
-        (`connect_broker`); only the calls that need a session check for it."""
+        (`connect_broker`); only the calls that need a session check for it.
+        `clock` dates a login, for when Kite will log it out."""
         self._api_key = api_key
+        self._clock = clock
         self._api_secret = api_secret
         self._access_token = access_token
 
@@ -48,7 +56,7 @@ class ZerodhaAdapter:
         return self._access_token
 
     def authenticate(self, request_token: str) -> Credentials:
-        return exchange_request_token(self._api_key, self._api_secret, request_token)
+        return exchange_request_token(self._api_key, self._api_secret, request_token, self._clock())
 
     def get_instrument_master(self) -> list[Instrument]:
         return parse_instrument_csv(download_instrument_csv())
