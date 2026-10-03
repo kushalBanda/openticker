@@ -146,4 +146,4 @@ def count_by_exchange() -> dict[str, int]:
     """How many contracts each exchange lists, expired ones included."""
     statement = select(InstrumentRow.exchange, func.count()).group_by(InstrumentRow.exchange)
     with Session(get_engine()) as session:
-        return {exchange: count for exchange, count in session.execute(statement).tuples()}
+        return {exchange: count for exchange, count in session.execute(statement)}
