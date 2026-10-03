@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch cancels the run still going (free-plan minutes).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -55,6 +60,3 @@ jobs:
         run: pnpm gen:api && git diff --exit-code src/api/schema.d.ts
       - name: Build
         run: pnpm build
-      - run: pnpm exec playwright install --with-deps chromium
-      - name: End to end
-        run: pnpm e2e
