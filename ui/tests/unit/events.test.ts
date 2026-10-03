@@ -113,9 +113,10 @@ describe("settings events", () => {
     }
   });
 
-  test("a reset refetches everything; a login refetches the broker's session", () => {
+  test("a reset, a login and a logout refetch everything", () => {
     expect(queriesToInvalidate(entry("PaperAccountReset"))).toEqual([[]]);
-    expect(queriesToInvalidate(entry("BrokerConnected"))).toEqual([["broker-session"]]);
+    expect(queriesToInvalidate(entry("BrokerConnected"))).toEqual([[]]);
+    expect(queriesToInvalidate(entry("BrokerDisconnected"))).toEqual([[]]);
   });
 
   test("they read as one line", () => {

@@ -624,7 +624,7 @@ export function useConnectBroker() {
   return useMutation({
     mutationFn: (body: Schemas["ConnectBody"]) =>
       unwrap(api.POST("/api/v1/brokers/connect", { body })),
-    onSettled: () => client.invalidateQueries({ queryKey: ["broker-session"] }),
+    onSettled: () => client.invalidateQueries(), // every read of the broker
   });
 }
 
@@ -633,7 +633,7 @@ export function useDisconnectBroker() {
   return useMutation({
     mutationFn: (broker: string) =>
       unwrap(api.DELETE("/api/v1/brokers/{broker}/session", { params: { path: { broker } } })),
-    onSettled: () => client.invalidateQueries({ queryKey: ["broker-session"] }),
+    onSettled: () => client.invalidateQueries(), // every read of the broker
   });
 }
 

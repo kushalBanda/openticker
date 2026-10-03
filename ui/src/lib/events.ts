@@ -258,8 +258,10 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
     ["charges-summary"],
   ];
   if (type.startsWith("Order") || type === "PositionSettled") return orders;
-  if (type === "PaperAccountReset") return [[]]; // every page's numbers
-  if (type === "BrokerConnected" || type === "BrokerDisconnected") return [["broker-session"]];
+  // Every page's numbers: a reset changes them all, and a login or logout
+  // changes what every read of the broker can answer.
+  if (type === "PaperAccountReset" || type === "BrokerConnected" || type === "BrokerDisconnected")
+    return [[]];
   if (type === "InstrumentSyncCompleted") return [["instruments-status"]];
   if (type === "ChargeRatesChecked") return [["account"]];
   if (type === "WatchlistChanged") return [["watchlists"]];
