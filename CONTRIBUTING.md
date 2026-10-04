@@ -39,7 +39,7 @@ pre-commit install
 - **Type everything.** `mypy --strict` must pass.
 - **Test behavior, not implementation.** Every bug fix comes with a test that fails without it.
 - **Never commit secrets**, real account data, or downloaded market data.
-- **Write only original code.** Don't copy code from other projects unless its license is compatible with MIT and you credit it. In particular, no code from AGPL or GPL projects.
+- **Write only original code.** Don't copy code from other projects unless its license is compatible with Apache 2.0 and you credit it. In particular, no code from AGPL or GPL projects.
 - **Order placement stays sandbox-only** (ADR 6). Live trading will need its own design and review.
 
 ## Pull requests
@@ -49,4 +49,4 @@ pre-commit install
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 - Add a line to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 
-By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE), and to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+By contributing, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE), and to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
