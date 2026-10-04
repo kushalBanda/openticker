@@ -3,7 +3,7 @@ name = "openticker"
 version = "0.1.0"
 description = "Self-hosted trading platform for Indian markets, operated by AI agents over MCP"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Kushal Banda" }]
 requires-python = ">=3.13"

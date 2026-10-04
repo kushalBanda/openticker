@@ -30,6 +30,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Strategy-wide risk core (`core/risk/aggregate.py`, ADR 19): combined stop loss and target over a strategy's legs, profit lock and lock-and-trail, stops to entry when a leg's stop fires, and a daily loss limit.
 - Risk core: per-position stop loss, target, continuous and stepped trailing stops, capital cap, and configuration validation (`core/risk`).
 
+### Changed
+
+- The project is now licensed under the Apache License 2.0, replacing MIT.
+
 ### Fixed
 
 - `openticker-serve` stopped by SIGTERM now shuts down its loops before exiting. uvicorn raises the signal again after its own shutdown, which ended the process before they were stopped.

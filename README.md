@@ -181,4 +181,4 @@ OpenTicker is an independent project, not affiliated with or endorsed by Zerodha
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
