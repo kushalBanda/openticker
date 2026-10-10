@@ -1,13 +1,33 @@
 import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router";
+
+/** A wikilink's target: [[kind:key|label]]. */
+export interface WikiRef {
+  kind: string;
+  key: string;
+}
+
+/** Where a wikilink goes in the app, and the title it shows when it has no
+ * label of its own; null leaves it as text. */
+export type LinkTo = (ref: WikiRef) => { href: string; title?: string } | null;
 
 /**
- * The little Markdown an agent writes in a review (ADR 29): paragraphs,
- * `-` / `1.` lists, `#` headings, **bold**, *italic* and `code`. Built from
- * React elements, never HTML: a review is text a program wrote, and nothing
- * in it runs. Anything else shows as the text it is.
+ * The little Markdown an agent writes in a review (ADR 29) or a brain note:
+ * paragraphs, `-` / `1.` lists, `#` headings, **bold**, *italic*, `code` and
+ * [[kind:key|label]] wikilinks. Built from React elements, never HTML: it is
+ * text a program wrote, and nothing in it runs. Anything else shows as the
+ * text it is.
  */
-export function Markdown({ text, className }: { text: string; className?: string }) {
-  return <div className={`prose ${className ?? ""}`}>{blocks(text)}</div>;
+export function Markdown({
+  text,
+  className,
+  linkTo,
+}: {
+  text: string;
+  className?: string;
+  linkTo?: LinkTo;
+}) {
+  return <div className={`prose ${className ?? ""}`}>{blocks(text, linkTo)}</div>;
 }
 
 type Block =
@@ -49,10 +69,17 @@ export function parseBlocks(text: string): Block[] {
   return out.filter((b) => b.kind !== "p" || b.lines.length > 0);
 }
 
-// **bold**, __bold__, *italic*, _italic_, `code`: the first that starts earliest wins.
-const INLINE = /(\*\*|__)(.+?)\1|(?<![\w*])([*_])(?!\s)(.+?)(?<!\s)\3(?![\w*])|`([^`]+)`/;
+// **bold**, __bold__, *italic*, _italic_, `code`, [[kind:key|label]]: the
+// first that starts earliest wins.
+const INLINE =
+  /(\*\*|__)(.+?)\1|(?<![\w*])([*_])(?!\s)(.+?)(?<!\s)\3(?![\w*])|`([^`]+)`|\[\[(day|strategy|symbol|lesson|proposal|run|order):([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/;
 
-export function inline(text: string): ReactNode[] {
+/** A key as the server stores it: a symbol in capitals, anything trimmed. */
+function wikiKey(kind: string, key: string): string {
+  return kind === "symbol" ? key.trim().toUpperCase() : key.trim();
+}
+
+export function inline(text: string, linkTo?: LinkTo): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let key = 0;
@@ -63,21 +90,37 @@ export function inline(text: string): ReactNode[] {
       break;
     }
     if (match.index > 0) out.push(rest.slice(0, match.index));
-    const [whole, , bold, , italic, code] = match;
-    if (bold !== undefined) out.push(<strong key={key++}>{inline(bold)}</strong>);
-    else if (italic !== undefined) out.push(<em key={key++}>{inline(italic)}</em>);
-    else out.push(<code key={key++}>{code}</code>);
+    const [whole, , bold, , italic, code, kind, ref, label] = match;
+    if (bold !== undefined) out.push(<strong key={key++}>{inline(bold, linkTo)}</strong>);
+    else if (italic !== undefined) out.push(<em key={key++}>{inline(italic, linkTo)}</em>);
+    else if (code !== undefined) out.push(<code key={key++}>{code}</code>);
+    else {
+      const target = { kind: kind ?? "", key: wikiKey(kind ?? "", ref ?? "") };
+      const place = linkTo?.(target) ?? null;
+      const shown = label?.trim() || place?.title || target.key;
+      out.push(
+        place ? (
+          <Link key={key++} to={place.href} className="wikilink">
+            {shown}
+          </Link>
+        ) : (
+          <span key={key++} className="wikilink" data-unresolved>
+            {shown}
+          </span>
+        ),
+      );
+    }
     rest = rest.slice(match.index + whole.length);
   }
   return out;
 }
 
-function blocks(text: string): ReactNode {
+function blocks(text: string, linkTo?: LinkTo): ReactNode {
   return parseBlocks(text).map((block, i) => {
     switch (block.kind) {
       case "h":
         // biome-ignore lint/suspicious/noArrayIndexKey: blocks never reorder
-        return <h3 key={i}>{inline(block.text)}</h3>;
+        return <h3 key={i}>{inline(block.text, linkTo)}</h3>;
       case "ul":
       case "ol": {
         const List = block.kind;
@@ -86,7 +129,7 @@ function blocks(text: string): ReactNode {
           <List key={i}>
             {block.items.map((item, n) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: items never reorder
-              <li key={n}>{inline(item)}</li>
+              <li key={n}>{inline(item, linkTo)}</li>
             ))}
           </List>
         );
@@ -99,7 +142,7 @@ function blocks(text: string): ReactNode {
               // biome-ignore lint/suspicious/noArrayIndexKey: lines never reorder
               <Fragment key={n}>
                 {n > 0 && <br />}
-                {inline(line)}
+                {inline(line, linkTo)}
               </Fragment>
             ))}
           </p>

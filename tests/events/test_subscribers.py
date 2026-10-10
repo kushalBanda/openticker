@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -137,6 +137,8 @@ def test_an_ended_review_leads_with_its_verdict_and_a_failed_one_with_why() -> N
         job_id="job_1",
         kind="review",
         strategy_id="stg_1",
+        subject=None,
+        title="Review of nifty condor",
         strategy_name="nifty condor",
         reason="finished",
         detail="exited with code 0",
@@ -147,6 +149,8 @@ def test_an_ended_review_leads_with_its_verdict_and_a_failed_one_with_why() -> N
         job_id="job_2",
         kind="review",
         strategy_id="stg_1",
+        subject=None,
+        title="Review of nifty condor",
         strategy_name="nifty condor",
         reason="timeout",
         detail="still running after 15 minutes",
@@ -161,6 +165,26 @@ def test_an_ended_review_leads_with_its_verdict_and_a_failed_one_with_why() -> N
     subject, message = describe(timed_out) or ("", "")
     assert subject == "Review of nifty condor timeout"
     assert "still running after 15 minutes" in message and "get_agent_job_log" in message
+
+
+def test_notification_uses_job_title() -> None:
+    from openticker.events.types import AgentJobEnded
+
+    ended = AgentJobEnded(
+        job_id="job_3",
+        kind="debrief",
+        strategy_id=None,
+        subject=date(2026, 10, 5),
+        title="Debrief of Mon 5 Oct",
+        strategy_name=None,
+        reason="finished",
+        detail="exited with code 0",
+        summary="Straddle killed early; the hand trade paid.",
+        cost_usd=None,
+    )
+
+    subject, _ = describe(ended) or ("", "")
+    assert subject == "Debrief of Mon 5 Oct: Straddle killed early; the hand trade paid."
 
 
 def test_a_strategy_start_leg_exit_and_stop_are_notified() -> None:
@@ -213,3 +237,34 @@ def test_audit_names_the_strategy_or_script_behind_an_event_without_a_trigger() 
 
     assert stopped.triggered_by == "strategy:s1"
     assert breached.triggered_by is None  # the server itself
+
+
+def _ended(kind: str, strategy_id: str | None, subject: date | None) -> object:
+    from openticker.events.types import AgentJobEnded
+
+    return AgentJobEnded(
+        job_id="job_9",
+        kind=kind,
+        strategy_id=strategy_id,
+        subject=subject,
+        title="t",
+        strategy_name=None,
+        reason="finished",
+        detail="exited with code 0",
+        summary=None,
+        cost_usd=None,
+    )
+
+
+def test_actor_for_debrief_job_is_debrief_date() -> None:
+    record_event(_ended("debrief", None, date(2026, 10, 5)))
+
+    [entry] = list_audit(limit=10)
+    assert entry.triggered_by == "debrief:2026-10-05"
+
+
+def test_actor_for_review_job_unchanged() -> None:
+    record_event(_ended("review", "stg_1", None))
+
+    [entry] = list_audit(limit=10)
+    assert entry.triggered_by == "review:stg_1"

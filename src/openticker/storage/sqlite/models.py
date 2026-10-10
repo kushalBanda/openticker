@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -164,6 +165,9 @@ class StrategyRow(Base):
     # When it is reviewed without being asked, as JSON; NULL: only on
     # start_review (ADR 29 in docs/adr).
     review_schedule: Mapped[str | None]
+    # Who created it, as the audit log records who (ADR 35); NULL for one
+    # created before this was kept.
+    created_by: Mapped[str | None]
 
 
 # Strategy runs (ADR 21 in docs/adr). The MCP server and the REST API write
@@ -343,6 +347,9 @@ class AgentJobRow(Base):
     ended_at: Mapped[datetime | None]  # UTC, stored naive
     summary: Mapped[str | None]  # the agent's final answer, capped
     cost_usd: Mapped[float | None]
+    # The trading date a debrief covers; NULL for a review. Nullable, so it
+    # can be added to an existing table (ADR 18).
+    subject: Mapped[date | None]
 
 
 # The web app's browser sign-in (ADR 31 in docs/adr). Only hashes of the
@@ -442,3 +449,90 @@ class WatchlistItemRow(Base):
     exchange: Mapped[str] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(primary_key=True)
     position: Mapped[int]  # instruments in the order they were added
+
+
+# The brain: notes written by agents and people about the trading, and the
+# links between them. Facts (trades, runs, P&L) stay in their own tables.
+
+
+class BrainNoteRow(Base):
+    __tablename__ = "brain_notes"
+    __table_args__ = (UniqueConstraint("kind", "key"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    kind: Mapped[str]  # day, strategy, symbol, lesson, proposal
+    # day: its date; strategy: the strategy's id; symbol: EXCHANGE:SYMBOL;
+    # lesson and proposal: the note's own id
+    key: Mapped[str]
+    title: Mapped[str]
+    body: Mapped[str]  # markdown: the agent's part
+    user_body: Mapped[str | None]  # markdown: the user's part
+    user_updated_at: Mapped[datetime | None]  # UTC, stored naive
+    user_updated_by: Mapped[str | None]
+    state: Mapped[str | None]  # a proposal's: open, later, accepted, rejected
+    override: Mapped[str | None]  # a lesson's, set by a person: retired, reinstated
+    override_at: Mapped[datetime | None]  # UTC, stored naive
+    override_by: Mapped[str | None]
+    override_reason: Mapped[str | None]
+    reason: Mapped[str | None]  # a rejected proposal's
+    decided_at: Mapped[datetime | None]  # a proposal's latest decision; UTC, stored naive
+    decided_by: Mapped[str | None]
+    strategy_id: Mapped[str | None] = mapped_column(index=True)  # a proposal's
+    data: Mapped[str | None]  # JSON, by kind
+    written_by: Mapped[str]  # agent_job, person, server
+    created_at: Mapped[datetime]  # UTC, stored naive
+    created_by: Mapped[str]
+    updated_at: Mapped[datetime] = mapped_column(index=True)  # UTC, stored naive
+    updated_by: Mapped[str]
+    version: Mapped[int]
+
+
+class BrainLinkRow(Base):
+    """structural: from the record; body: a wikilink in the note's markdown."""
+
+    __tablename__ = "brain_links"
+
+    from_id: Mapped[str] = mapped_column(primary_key=True)
+    to_id: Mapped[str] = mapped_column(primary_key=True, index=True)
+    origin: Mapped[str] = mapped_column(primary_key=True)
+
+
+class BrainLessonCheckRow(Base):
+    """Whether a lesson held on one ended run or one order; one per subject."""
+
+    __tablename__ = "brain_lesson_checks"
+
+    lesson_id: Mapped[str] = mapped_column(primary_key=True)
+    subject: Mapped[str] = mapped_column(primary_key=True)  # run:<id> or order:<id>
+    run_id: Mapped[str | None]
+    order_id: Mapped[str | None]
+    strategy_id: Mapped[str | None]  # the run's strategy; NULL for an order
+    ended_at: Mapped[datetime | None]  # the run's end or the order's last fill; UTC, naive
+    outcome: Mapped[str]  # held, not_held, not_tested
+    observed: Mapped[str | None]
+    why: Mapped[str]
+    checked_by: Mapped[str]
+    checked_at: Mapped[datetime]  # UTC, stored naive
+    reset_at: Mapped[datetime | None]  # the paper account was reset after it; UTC, naive
+
+
+class BrainLessonUseRow(Base):
+    """A lesson an agent relied on, and for what."""
+
+    __tablename__ = "brain_lesson_uses"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    lesson_id: Mapped[str] = mapped_column(index=True)
+    purpose: Mapped[str]  # design, review, debrief, answer
+    strategy_id: Mapped[str | None]
+    job_id: Mapped[str | None]
+    how: Mapped[str]
+    used_by: Mapped[str]
+    used_at: Mapped[datetime] = mapped_column(index=True)  # UTC, stored naive
+
+
+class BrainSettingsRow(Base):
+    __tablename__ = "brain_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)  # always 1
+    debrief_at: Mapped[str | None]  # "HH:MM" exchange-local; NULL: no scheduled debrief

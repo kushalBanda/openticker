@@ -93,6 +93,7 @@ from openticker.use_cases.place_order import place_order
 from openticker.use_cases.scripts.manage import upload_script
 from openticker.use_cases.watched_instruments import watched_instruments
 from openticker.use_cases.web_sessions import create_sign_in_link
+from tests.fixtures.e2e_brain import seed_brain
 from tests.fixtures.e2e_hosted import REL_TRAIL, seed_agents, seed_scripts
 from tests.fixtures.e2e_strategies import STRADDLE_E2E, TREND, seed_strategies
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
@@ -585,6 +586,7 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
         )
     seed_scripts(trail.id, clock)
     seed_agents(strategies, clock)
+    seed_brain(straddle, clock, events)
     events.close()
 
 

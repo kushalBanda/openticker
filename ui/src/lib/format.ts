@@ -78,6 +78,11 @@ export function istClock(at: Date): string {
   return clock.format(at);
 }
 
+/** 11:42, exchange time */
+export function istMinute(at: Date): string {
+  return clock.format(at).slice(0, 5);
+}
+
 const dayParts = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kolkata",
   day: "numeric",

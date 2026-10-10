@@ -50,3 +50,31 @@ def test_schedules_are_checked_once_a_minute(
         now += timedelta(seconds=30)
 
     assert checks == [NOW, NOW + REVIEW_CHECK_EVERY, NOW + 2 * REVIEW_CHECK_EVERY]
+
+
+def test_step_queues_debrief_after_pnl_recorded(tmp_path: Path) -> None:
+    from datetime import time
+
+    from openticker.core.pnl import DayPnl
+    from openticker.storage.sqlite import brain_repo, pnl_repo
+    from openticker.storage.sqlite.strategies_repo import write_transaction
+    from tests.fixtures.brain_day import monday
+    from tests.fixtures.pnl_desk import MONDAY, at
+
+    monday()
+    with write_transaction() as session:
+        brain_repo.set_debrief_at(session, time(15, 45))
+    now = at(MONDAY, 16, 0)
+    processes = _Processes()
+    loop = AgentLoop(
+        AgentContext(processes, _Events(), AgentSettings(), tmp_path, "u"), lambda: now
+    )
+
+    loop.step()
+    assert processes.launches == []  # the day's P&L isn't recorded yet
+    pnl_repo.upsert_day(DayPnl(MONDAY, 120.0, 30.0, 0.0, 90.0, 0.0, 4, True), now)
+    now += REVIEW_CHECK_EVERY
+    loop.step()
+
+    [launch] = processes.launches
+    assert launch.agent == "debrief" and "2026-09-21" in launch.prompt

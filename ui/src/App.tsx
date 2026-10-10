@@ -35,6 +35,10 @@ const Strategies = page(() => import("./pages/strategies/Strategies"), "Strategi
 const Strategy = page(() => import("./pages/strategy/Strategy"), "Strategy");
 const Scripts = page(() => import("./pages/scripts/Scripts"), "Scripts");
 const Script = page(() => import("./pages/scripts/Script"), "Script");
+const Brain = page(() => import("./pages/brain/Brain"), "Brain");
+const BrainDay = page(() => import("./pages/brain/Day"), "Day");
+const BrainLesson = page(() => import("./pages/brain/Lesson"), "Lesson");
+const BrainProposal = page(() => import("./pages/brain/Proposal"), "Proposal");
 const Agents = page(() => import("./pages/agents/Agents"), "Agents");
 const Activity = page(() => import("./pages/activity/Activity"), "Activity");
 const Settings = page(() => import("./pages/settings/Settings"), "Settings");
@@ -75,6 +79,13 @@ const routes: { path: string; element: ReactNode }[] = [
   { path: "/strategies/:id", element: <Strategy /> },
   { path: "/scripts", element: <Scripts /> },
   { path: "/scripts/:id", element: <Script /> },
+  { path: "/brain", element: <Brain /> },
+  { path: "/brain/days", element: <Brain /> },
+  { path: "/brain/days/:date", element: <BrainDay /> },
+  { path: "/brain/lessons", element: <Brain /> },
+  { path: "/brain/lessons/:id", element: <BrainLesson /> },
+  { path: "/brain/proposals", element: <Brain /> },
+  { path: "/brain/proposals/:id", element: <BrainProposal /> },
   { path: "/agents", element: <Agents /> },
   { path: "/activity", element: <Activity /> },
   { path: "/settings", element: <Settings /> },

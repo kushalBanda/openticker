@@ -216,7 +216,12 @@ function JobDialog({ job, onClose }: { job: AgentJob | null; onClose: () => void
   const text = log.data?.log ?? "";
   const silent = log.data !== undefined && !log.data.log;
   return (
-    <Dialog open={job !== null} onClose={onClose} title="Review job" width={720}>
+    <Dialog
+      open={job !== null}
+      onClose={onClose}
+      title={job?.kind === "debrief" ? "Debrief job" : "Review job"}
+      width={720}
+    >
       {job?.summary && <Markdown text={job.summary} />}
       {job && !job.summary && job.end_detail && <p className="note">{job.end_detail}</p>}
       <div className="label job-log-label">What it printed</div>
@@ -257,13 +262,18 @@ export function Agents() {
   const columns: Column<AgentJob>[] = [
     {
       key: "strategy",
-      head: "Strategy",
+      head: "Strategy or day",
       align: "left",
-      cell: (j) => (
-        <Link to={`/strategies/${j.strategy_id}`} className="row-link">
-          {name(j.strategy_id)}
-        </Link>
-      ),
+      cell: (j) =>
+        j.kind === "debrief" && j.subject ? (
+          <Link to={`/brain/days/${j.subject}`} className="row-link">
+            {j.title}
+          </Link>
+        ) : (
+          <Link to={`/strategies/${j.strategy_id}`} className="row-link">
+            {name(j.strategy_id ?? "")}
+          </Link>
+        ),
       sub: (j) => stamp(j.started_at ?? j.created_at, now),
     },
     { key: "why", head: "Why", align: "left", cell: (j) => why(j.trigger), wrap: true },
@@ -337,8 +347,8 @@ export function Agents() {
                       const stopped = await stop.mutateAsync(j.job_id);
                       notify(
                         stopped.status === "ended"
-                          ? `Review of ${name(j.strategy_id)} stopped before it started.`
-                          : `Stopping the review of ${name(j.strategy_id)}.`,
+                          ? `${j.title} stopped before it started.`
+                          : `Stopping the ${j.title[0]?.toLowerCase()}${j.title.slice(1)}.`,
                       );
                     } catch (error) {
                       notify(error instanceof Error ? error.message : String(error));

@@ -23,8 +23,10 @@ def record_event(event: object) -> None:
 def _actor(event_type: str, fields: dict[str, Any]) -> str | None:
     """Who did it, for an event that doesn't say (ADR 35): a strategy closes
     its own legs and ends its own run, a script its own process, a review
-    job is the agent's. The rest is the server itself."""
+    job is the agent's, under its key's scope. The rest is the server itself."""
     if event_type == "AgentJobEnded":
+        if fields.get("kind") == "debrief":
+            return f"debrief:{fields['subject']}"
         return f"review:{fields['strategy_id']}"
     if event_type.startswith("Strategy") and "strategy_id" in fields:
         return f"strategy:{fields['strategy_id']}"

@@ -68,9 +68,11 @@ class StrategyPreview:
     net_premium: float | None  # received minus paid at last prices; None if a price is missing
 
 
-def create_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrategy:
+def create_strategy(
+    name: str, spec: StrategySpec, now: datetime, created_by: str | None = None
+) -> StoredStrategy:
     _check(name, spec, now)
-    return strategies_repo.insert_strategy(name, spec, now)
+    return strategies_repo.insert_strategy(name, spec, now, created_by)
 
 
 def update_strategy(

@@ -1,9 +1,13 @@
 """Agent jobs (ADR 29 in docs/adr). MCP and REST add pending jobs; only the
-daemon starts, watches and ends them."""
+daemon starts, watches and ends them.
+
+A desk job (a debrief) has no strategy: it is stored with strategy_id '',
+since that column is NOT NULL and isn't changed (ADR 18), and read back as
+None."""
 
 import secrets
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.orm import Session
@@ -19,15 +23,17 @@ from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import AgentJobRow
 
 _ACTIVE = (AgentJobStatus.RUNNING.value, AgentJobStatus.STOPPING.value)
+_DESK = ""  # a desk job's strategy_id
 
 
 def add_job(
     session: Session,
     kind: AgentJobKind,
-    strategy_id: str,
+    strategy_id: str | None,
     harness: Harness,
     trigger: str,
     now: datetime,
+    subject: date | None = None,
 ) -> AgentJob:
     job = AgentJob(
         id="job_" + secrets.token_hex(6),
@@ -37,25 +43,56 @@ def add_job(
         status=AgentJobStatus.PENDING,
         trigger=trigger,
         created_at=now,
+        subject=subject,
     )
     session.add(
         AgentJobRow(
             id=job.id,
             kind=kind.value,
-            strategy_id=strategy_id,
+            strategy_id=strategy_id or _DESK,
             harness=harness.value,
             status=job.status.value,
             trigger=trigger,
             created_at=_naive(now),
+            subject=subject,
         )
     )
     return job
+
+
+def debrief_for(session: Session, trading_date: date) -> AgentJob | None:
+    """The day's newest debrief job that wasn't refused, open or ended."""
+    row = session.scalars(
+        select(AgentJobRow)
+        .where(
+            AgentJobRow.kind == AgentJobKind.DEBRIEF.value,
+            AgentJobRow.subject == trading_date,
+            or_(
+                AgentJobRow.end_reason.is_(None),
+                AgentJobRow.end_reason != AgentJobEndReason.REFUSED.value,
+            ),
+        )
+        .order_by(AgentJobRow.created_at.desc(), literal_column("rowid").desc())
+    ).first()
+    return _job(row) if row else None
+
+
+def open_debrief(session: Session) -> AgentJob | None:
+    """A debrief job pending or running, of any day."""
+    row = session.scalars(
+        select(AgentJobRow).where(
+            AgentJobRow.kind == AgentJobKind.DEBRIEF.value,
+            AgentJobRow.status != AgentJobStatus.ENDED.value,
+        )
+    ).first()
+    return _job(row) if row else None
 
 
 def open_job_of(session: Session, strategy_id: str) -> AgentJob | None:
     """Its job that is pending or running, if any."""
     row = session.scalars(
         select(AgentJobRow).where(
+            AgentJobRow.kind == AgentJobKind.REVIEW.value,
             AgentJobRow.strategy_id == strategy_id,
             AgentJobRow.status != AgentJobStatus.ENDED.value,
         )
@@ -67,6 +104,7 @@ def last_asked_at(strategy_id: str) -> datetime | None:
     """When its newest job was asked for, however it went, leaving out one
     refused before it started: that was no review."""
     statement = select(func.max(AgentJobRow.created_at)).where(
+        AgentJobRow.kind == AgentJobKind.REVIEW.value,
         AgentJobRow.strategy_id == strategy_id,
         or_(
             AgentJobRow.end_reason.is_(None),
@@ -172,7 +210,7 @@ def _job(row: AgentJobRow) -> AgentJob:
     job = AgentJob(
         id=row.id,
         kind=AgentJobKind(row.kind),
-        strategy_id=row.strategy_id,
+        strategy_id=row.strategy_id or None,
         harness=Harness(row.harness),
         status=AgentJobStatus(row.status),
         trigger=row.trigger,
@@ -189,6 +227,7 @@ def _job(row: AgentJobRow) -> AgentJob:
         ended_at=_aware(row.ended_at),
         summary=row.summary,
         cost_usd=row.cost_usd,
+        subject=row.subject,
     )
 
 
@@ -204,7 +243,11 @@ def latest_answers() -> dict[str, AgentJob]:
     """Each strategy's newest ended job that answered, by strategy id."""
     statement = (
         select(AgentJobRow)
-        .where(AgentJobRow.status == AgentJobStatus.ENDED.value, AgentJobRow.summary.is_not(None))
+        .where(
+            AgentJobRow.kind == AgentJobKind.REVIEW.value,
+            AgentJobRow.status == AgentJobStatus.ENDED.value,
+            AgentJobRow.summary.is_not(None),
+        )
         .order_by(AgentJobRow.ended_at.desc(), literal_column("rowid").desc())
     )
     newest: dict[str, AgentJob] = {}

@@ -7,6 +7,7 @@ request that changes something, only from this server's own pages. A browser
 session has the full scope, and what it does is recorded as done by `ui`.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader
 from starlette.requests import HTTPConnection
 
-from openticker.adapters.inbound.scopes import refusal
+from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.web import COOKIE_NAME, host_allowed, origin_allowed
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.web_repo import WebSession
@@ -112,12 +113,30 @@ Caller = Annotated[Principal, Depends(require_caller)]
 
 
 def require_scope(request: Request, caller: Caller) -> Principal:
-    """Holds a script's or a review's key to its routes (adapters/inbound/scopes.py)."""
+    """Holds a scoped key to its routes (adapters/inbound/scopes.py). A
+    route whose body a scope checks calls `refuse_outside_scope` too."""
     path = getattr(request.scope.get("route"), "path", None)
-    why = refusal(caller.scope, request.method, path, request.path_params, _strategy_of_run)
+    why = refusal(
+        caller.scope,
+        request.method,
+        path,
+        request.path_params,
+        _strategy_of_run,
+        whole_call=False,
+    )
     if why is not None:
         raise HTTPException(status_code=403, detail=why)
     return caller
+
+
+def refuse_outside_scope(caller: Principal, tool: str, arguments: Mapping[str, object]) -> None:
+    """Holds a scoped key to what the body of `tool`'s route asks for, as
+    MCP does with the tool's arguments: a review's brain appends are about
+    its own strategy only."""
+    method, path = TOOL_ROUTES[tool]
+    why = refusal(caller.scope, method, path, arguments, _strategy_of_run)
+    if why is not None:
+        raise HTTPException(status_code=403, detail=why)
 
 
 def _strategy_of_run(run_id: str) -> str | None:

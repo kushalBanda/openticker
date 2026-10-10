@@ -2,7 +2,7 @@
 subscribers the use cases know nothing about (ADR 10 in docs/adr)."""
 
 from dataclasses import dataclass, field, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 
 def _now() -> datetime:
@@ -234,7 +234,9 @@ class AgentJobStarted:
 
     job_id: str
     kind: str
-    strategy_id: str
+    strategy_id: str | None  # a review's; None for a debrief
+    subject: date | None  # the trading date a debrief covers
+    title: str  # what people see it called: "Review of …", "Debrief of Mon 5 Oct"
     harness: str
     triggered_by: str
     occurred_at: datetime = field(default_factory=_now)
@@ -247,12 +249,92 @@ class AgentJobEnded:
 
     job_id: str
     kind: str
-    strategy_id: str
-    strategy_name: str
+    strategy_id: str | None  # a review's; None for a debrief
+    subject: date | None  # the trading date a debrief covers
+    title: str  # what people see it called
+    strategy_name: str | None  # kept for readers of older entries; title is what's shown
     reason: str
     detail: str
     summary: str | None
     cost_usd: float | None
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class DebriefWritten:
+    """A trading day's debrief was written, or written again: the agent's
+    part of the day's note in the brain."""
+
+    trading_date: date
+    note_id: str
+    headline: str
+    triggered_by: str
+    quiet: bool = False  # the server's one line on a day with nothing to debrief
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class BrainNoteEdited:
+    """The user's own part of a note changed. The text it replaced is kept
+    here, so an edit made over someone else's is never lost."""
+
+    note_id: str
+    kind: str
+    title: str
+    previous: str | None
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class LessonWritten:
+    """A lesson was created, or its text or scope changed."""
+
+    lesson_id: str
+    title: str
+    change: str  # created, edited
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class LessonStatusChanged:
+    """A lesson's status moved: a check changed its counts, or a person
+    retired, reinstated or cleared it (`reason`)."""
+
+    lesson_id: str
+    title: str
+    previous: str
+    status: str
+    held: int
+    checks: int
+    triggered_by: str
+    override: str | None = None  # the person's override after the change
+    reason: str | None = None
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ProposalRaised:
+    """An agent proposed one change to a strategy, for the user to decide."""
+
+    proposal_id: str
+    strategy_id: str
+    change: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ProposalDecided:
+    """The user accepted, rejected (with a reason) or put off a proposal."""
+
+    proposal_id: str
+    strategy_id: str
+    change: str
+    decision: str  # accept, reject, later
+    reason: str | None
+    triggered_by: str
     occurred_at: datetime = field(default_factory=_now)
 
 

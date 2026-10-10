@@ -11,10 +11,13 @@ import {
 } from "react";
 import { useNavigate } from "react-router";
 import { keys, useBell } from "../api/queries";
+import { coalescer } from "../lib/coalesce";
 import { notifyDesktop } from "../lib/desktop";
 import {
   BELL_KINDS,
+  brainPageOf,
   byLabel,
+  dayOf,
   describe,
   queriesToInvalidate,
   strategyOf,
@@ -30,6 +33,8 @@ const READ_KEY = "ot.events.read";
 const DISMISSED_KEY = "ot.events.dismissed";
 /** Your own order that fills this soon after it was placed was said by the window that placed it. */
 const OWN_FILL_MS = 5_000;
+/** The brain's events come in bursts: its reads refetch once per burst. */
+export const BRAIN_COALESCE_MS = 1_500;
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -107,8 +112,12 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const openOf = useCallback(
     (entry: AuditEntry) => {
+      const page = brainPageOf(entry);
+      if (page) return { label: "Open", run: () => navigate(page) };
       const strategy = strategyOf(entry);
       if (strategy) return { label: "Open", run: () => navigate(`/strategies/${strategy}`) };
+      const day = dayOf(entry);
+      if (day) return { label: "Open", run: () => navigate(`/brain/days/${day}`) };
       if (entry.event_type === "BrokerSessionExpired") {
         return { label: "Settings", run: () => navigate("/settings") };
       }
@@ -135,10 +144,15 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       lastSeen.current = hello.last_event_id;
     });
 
+    const brain = coalescer(
+      () => void client.invalidateQueries({ queryKey: ["brain"] }),
+      BRAIN_COALESCE_MS,
+    );
     const offEvent = stream.onEvent((entry) => {
       lastSeen.current = entry.id;
       for (const key of [keys.audit, ...queriesToInvalidate(entry)]) {
-        void client.invalidateQueries({ queryKey: key });
+        if (key[0] === "brain") brain.push();
+        else void client.invalidateQueries({ queryKey: key });
       }
       const orderId = entry.details.order_id;
       if (entry.event_type === "OrderPlaced" && typeof orderId === "string") {
@@ -168,6 +182,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     return () => {
       offHello();
       offEvent();
+      brain.cancel();
     };
   }, [stream, client, toast, openOf]);
 

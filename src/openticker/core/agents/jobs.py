@@ -1,13 +1,16 @@
 """Agent jobs (ADR 29 in docs/adr): the user's own coding agent, run headless
 by the daemon in `labs/`, with a key that reaches only what the job's kind
 may. A review reads one strategy and writes its verdict into that
-strategy's note. Pure."""
+strategy's note. A debrief is a desk job, about no one strategy: it reads a
+trading day and writes the brain's notes on it. Pure."""
 
 import re
 import signal
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
+
+from openticker.core.brain.notes import day_title
 
 # The part of a job's answer kept with the job: a verdict, not a transcript.
 MAX_SUMMARY_CHARS = 2_000
@@ -23,7 +26,8 @@ class Harness(StrEnum):
 
 
 class AgentJobKind(StrEnum):
-    REVIEW = "review"
+    REVIEW = "review"  # one strategy
+    DEBRIEF = "debrief"  # one trading day, the whole desk
 
 
 class AgentJobStatus(StrEnum):
@@ -73,7 +77,7 @@ class AgentSettings:
 class AgentJob:
     id: str
     kind: AgentJobKind
-    strategy_id: str
+    strategy_id: str | None  # a review's; None for a debrief
     harness: Harness
     status: AgentJobStatus
     trigger: str  # who asked: mcp, rest:<key>, schedule
@@ -87,6 +91,15 @@ class AgentJob:
     ended_at: datetime | None = None
     summary: str | None = None  # the agent's final answer, capped
     cost_usd: float | None = None  # when the harness reports it
+    subject: date | None = None  # the trading date a debrief covers
+
+
+def job_title(kind: AgentJobKind, strategy_name: str | None, subject: date | None) -> str:
+    """What people see a job called: "Review of NIFTY short straddle",
+    "Debrief of Mon 5 Oct"."""
+    if kind is AgentJobKind.DEBRIEF:
+        return f"Debrief of {day_title(subject)}" if subject else "Debrief"
+    return f"Review of {strategy_name or 'a deleted strategy'}"
 
 
 def exit_reason(returncode: int | None) -> tuple[AgentJobEndReason, str]:
@@ -120,6 +133,20 @@ def review_prompt(strategy_name: str, strategy_id: str, job_id: str, trigger: st
         "This is an unattended job: nobody will answer questions, so decide from the "
         "evidence and the skill. Finish with the skill's short summary, starting with "
         f"the verdict. (OpenTicker agent job {job_id})"
+    )
+
+
+def debrief_prompt(trading_date: date, job_id: str, trigger: str) -> str:
+    """What a debrief job is asked. The job's id is in it, so its process can
+    be recognised after a restart."""
+    due = "It is due after the close. " if trigger.startswith(SCHEDULE_TRIGGER) else ""
+    return (
+        f"Debrief the OpenTicker trading day {trading_date.isoformat()} "
+        f"({trading_date:%A %d %B %Y}) with the debrief-day skill. {due}"
+        "This is an unattended job: nobody will answer questions, so decide from the "
+        "record and the skill. Write only through OpenTicker's brain tools. Finish with "
+        f"the skill's short summary, starting with the day's headline. (OpenTicker agent "
+        f"job {job_id})"
     )
 
 

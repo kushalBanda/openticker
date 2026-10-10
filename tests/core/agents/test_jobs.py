@@ -65,3 +65,27 @@ def test_a_summary_without_a_verdict_has_none() -> None:
     assert verdict_of(None) is None
     assert verdict_of("The ledger could not be read.") is None
     assert verdict_of("Keeping an eye on it") is None
+
+
+def test_job_title_review_and_debrief() -> None:
+    from datetime import date
+
+    from openticker.core.agents.jobs import AgentJobKind, job_title
+
+    assert job_title(AgentJobKind.REVIEW, "NIFTY short straddle", None) == (
+        "Review of NIFTY short straddle"
+    )
+    assert job_title(AgentJobKind.REVIEW, None, None) == "Review of a deleted strategy"
+    assert job_title(AgentJobKind.DEBRIEF, None, date(2026, 10, 5)) == "Debrief of Mon 5 Oct"
+
+
+def test_debrief_prompt_names_the_day_the_skill_and_the_job() -> None:
+    from datetime import date
+
+    from openticker.core.agents.jobs import debrief_prompt
+
+    prompt = debrief_prompt(date(2026, 10, 5), "job_1", "schedule: after the close")
+    assert "2026-10-05 (Monday 05 October 2026)" in prompt
+    assert "debrief-day skill" in prompt and "due after the close" in prompt
+    assert prompt.endswith("(OpenTicker agent job job_1)")
+    assert "due after" not in debrief_prompt(date(2026, 10, 5), "job_1", "ui")

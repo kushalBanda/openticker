@@ -53,7 +53,8 @@ export function AccountSection() {
         <b>Reset paper account</b>
         <p className="note">
           Deletes every paper order, trade and position and restores the starting capital.
-          Strategies and scripts must be stopped first. The activity log stays. Can't be undone.
+          Strategies and scripts must be stopped first. The activity log stays, and so does the
+          brain: debriefed days keep their figures and lessons keep their checks. Can't be undone.
         </p>
         <div className="settings-row">
           <input

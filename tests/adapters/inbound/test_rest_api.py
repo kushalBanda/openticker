@@ -4,23 +4,28 @@ registered under its own name so nothing touches Kite."""
 import asyncio
 import logging
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from mcp.server.mcpserver.exceptions import ToolError
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
-from openticker.adapters.inbound.scopes import TOOL_ROUTES
+from openticker.adapters.inbound.scopes import REST_ONLY_ROUTES, TOOL_ROUTES
 from openticker.composition import build_event_bus
+from openticker.core.brain.notes import NOTICE, NoteKind
+from openticker.core.brain.proposals import Decision
 from openticker.events.bus import EventBus
 from openticker.ports.models import Exchange, Instrument, InstrumentType
 from openticker.storage.sqlite import instruments_repo
 from openticker.storage.sqlite.audit_repo import write_audit
-from openticker.use_cases.api_keys import create_api_key, revoke
+from openticker.storage.sqlite.strategies_repo import insert_strategy
+from openticker.use_cases.api_keys import create_api_key, create_review_key, revoke
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
+from tests.fixtures.strategies import STRADDLE
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 
@@ -83,7 +88,7 @@ def test_every_route_but_health_and_alerts_needs_a_key(events: EventBus) -> None
     anonymous = TestClient(app)
     routes = _routes(app) - {("GET", "/health"), ("POST", "/webhooks/strategies/{token}")}
 
-    assert len(routes) == len(ROUTE_FOR_TOOL)
+    assert routes == set(ROUTE_FOR_TOOL.values()) | REST_ONLY_ROUTES
     for method, path in routes:
         response = anonymous.request(
             method,
@@ -398,6 +403,18 @@ def test_paper_margin_route_matches_the_tool(client: TestClient) -> None:
     }
 
 
+def _created_by(strategy_id: str) -> str | None:
+    from sqlalchemy.orm import Session
+
+    from openticker.storage.sqlite.engine import get_engine
+    from openticker.storage.sqlite.models import StrategyRow
+
+    with Session(get_engine()) as session:
+        row = session.get(StrategyRow, strategy_id)
+        assert row is not None
+        return row.created_by
+
+
 def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
     from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
     from tests.fixtures.strategies import list_nifty_market
@@ -417,6 +434,7 @@ def test_strategy_routes_mirror_the_tools(client: TestClient) -> None:
 
     assert created.status_code == 200
     assert created.json()["definition"]["exit_time"] == "15:15:00"
+    assert _created_by(strategy_id) == "rest:tests"  # read by the brain's learning count
     assert duplicate.status_code == 409 and "already exists" in duplicate.json()["detail"]
     assert [leg["label"] for leg in preview.json()["legs"]] == ["ATM", "ATM"]
     assert late.status_code == 422 and "15:15" in late.json()["detail"]
@@ -778,6 +796,186 @@ def test_audit_filters_by_who_kinds_and_day_and_pages_back(client: TestClient) -
     assert ids(source="strategy", event_types=["OrderFilled"]) == [5]
     assert first_page == [6, 5]
     assert ids(limit=2, before_id=first_page[-1]) == [4, 3]
+
+
+def test_brain_routes_match_the_tools_and_carry_the_notice(client: TestClient) -> None:
+    insert_strategy("Straddle", STRADDLE, NOW)
+    graph = client.get("/api/v1/brain/graph", params={"window": "7"})
+    assert graph.status_code == 200
+    assert graph.json() == mcp_server.get_brain_graph(window="7").model_dump(mode="json")
+    assert {n["title"] for n in graph.json()["notes"]} == {"Straddle", "NIFTY 50"}
+    assert client.get("/api/v1/brain/graph", params={"window": "8"}).status_code == 422
+
+    notes = client.get("/api/v1/brain/notes", params={"kind": "strategy"})
+    assert notes.json() == mcp_server.search_brain(kind=NoteKind.STRATEGY).model_dump(mode="json")
+    [straddle] = notes.json()["notes"]
+
+    note = client.get(f"/api/v1/brain/notes/{straddle['note_id']}")
+    assert note.json() == mcp_server.get_brain_note(straddle["note_id"]).model_dump(mode="json")
+    assert [n["title"] for n in note.json()["links_out"]] == ["NIFTY 50"]
+    assert {b["notice"] for b in (graph.json(), notes.json(), note.json())} == {NOTICE}
+    assert client.get("/api/v1/brain/notes/les_nope").status_code == 404
+    with pytest.raises(ToolError, match="search_brain"):
+        mcp_server.get_brain_note("les_nope")
+
+
+def test_day_record_debrief_and_your_note_over_rest(
+    client: TestClient, events: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW)
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order = {"broker": "fake", "symbol": "RELIANCE", "exchange": "NSE", "side": "BUY"}
+    placed = client.post("/api/v1/orders", json={**order, "quantity": 4, "product": "MIS"}).json()
+    day = "/api/v1/brain/days/2026-09-22"
+
+    record = client.get(f"{day}/record", params={"broker": "fake"})
+    assert record.json() == mcp_server.get_day_record(
+        broker="fake", trading_date=date(2026, 9, 22)
+    ).model_dump(mode="json")
+    [trade] = record.json()["trades"]
+    assert (trade["order_id"], trade["source"], trade["why"]) == (placed["order_id"], "rest", None)
+    assert record.json()["live"] and record.json()["notice"] == NOTICE
+
+    note = {"headline": "One buy", "happened": "Bought [[symbol:NSE:RELIANCE]]."}
+    stray = {"trade_notes": [{"order_id": "SB_NONE", "why": "x", "trade_off": "y"}]}
+    assert client.put(day, json={**note, **stray}).status_code == 422
+    assert client.put("/api/v1/brain/days/2026-09-26", json=note).status_code == 422  # Saturday
+    written = client.put(
+        day,
+        json={
+            **note,
+            "trade_notes": [{"order_id": placed["order_id"], "why": "w", "trade_off": "t"}],
+        },
+    ).json()
+    assert written["debrief"]["headline"] == "One buy" and written["updated_by"].startswith("rest:")
+    after = client.get(f"{day}/record", params={"broker": "fake"}).json()
+    assert (after["note_id"], after["trades"][0]["why"]) == (written["note_id"], "w")
+
+    path = f"/api/v1/brain/notes/{written['note_id']}"
+    mine = client.patch(path, json={"text": "Mine", "version": written["version"]})
+    assert mine.json()["your_note"] == "Mine" and mine.json()["version"] == written["version"] + 1
+    stale = client.patch(path, json={"text": "Old tab", "version": written["version"]})
+    assert stale.status_code == 409 and "changed since" in stale.json()["detail"]
+    assert (
+        client.patch("/api/v1/brain/notes/bn_none", json={"text": "x", "version": 1}).status_code
+        == 404
+    )
+
+    review = create_review_key("stg_1", "job_1", NOW)
+    as_review = TestClient(create_app(events, {}, clock=lambda: NOW), headers={"X-API-Key": review})
+    assert as_review.patch(path, json={"text": "x", "version": 2}).status_code == 403
+
+
+def test_lessons_over_rest_and_mcp(
+    client: TestClient, events: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW - timedelta(hours=1))
+    created = mcp_server.create_lesson(title="Gaps under 0.4% don't pay", body="Costs ate them.")
+    lesson = f"/api/v1/brain/lessons/{created.note_id}"
+    assert created.status == "hunch" and created.lesson is not None
+    assert client.post("/api/v1/brain/lessons", json={"title": "", "body": "b"}).status_code == 422
+    client.post("/api/v1/instruments/sync", json={"broker": "fake"})
+    order = {"broker": "fake", "symbol": "RELIANCE", "exchange": "NSE", "side": "BUY"}
+    placed = client.post("/api/v1/orders", json={**order, "quantity": 4, "product": "MIS"}).json()
+
+    record = client.get("/api/v1/brain/days/2026-09-22/record", params={"broker": "fake"}).json()
+    assert [(o["lesson_id"], o["order_id"]) for o in record["owed_checks"]] == [
+        (created.note_id, placed["order_id"])
+    ]
+    check = {"order_id": placed["order_id"], "outcome": "held", "why": "too small"}
+    assert client.post(f"{lesson}/checks", json=check).status_code == 422  # no observed figure
+    checked = client.post(f"{lesson}/checks", json={**check, "observed": "+12 net"}).json()
+    assert checked["lesson"]["checks"] == 1 and checked["replaced"] is None
+    assert checked["check"]["checked_source"] == "rest"
+    again = client.post(f"{lesson}/checks", json={**check, "observed": "+11 net"}).json()
+    assert again["replaced"]["observed"] == "+12 net"
+
+    used = client.post(f"{lesson}/uses", json={"purpose": "answer", "how": "cited"}).json()
+    assert used["purpose"] == "answer" and used["used_by"].startswith("rest:")
+    changed = client.patch(lesson, json={"title": "Gaps under 0.4% never pay"}).json()
+    assert changed["title"] == "Gaps under 0.4% never pay" and changed["body"] == "Costs ate them."
+
+    assert client.post(f"{lesson}/override", json={"override": "retired"}).status_code == 422
+    retired = client.post(f"{lesson}/override", json={"override": "retired", "reason": "vague"})
+    assert retired.json()["status"] == "retired"
+    assert retired.json()["lesson"]["override_reason"] == "vague"
+    note = client.get(f"/api/v1/brain/notes/{created.note_id}").json()
+    assert note == mcp_server.get_brain_note(note_id=created.note_id).model_dump(mode="json")
+    assert [c["observed"] for c in note["lesson"]["checks"]] == ["+11 net"]
+    assert note["lesson"]["used"] == 1 and note["lesson"]["owed"] == []
+    missing = client.post("/api/v1/brain/lessons/les_none/checks", json={**check, "observed": "1"})
+    assert missing.status_code == 404
+
+    review = create_review_key("stg_1", "job_1", NOW)
+    as_review = TestClient(create_app(events, {}, clock=lambda: NOW), headers={"X-API-Key": review})
+    assert as_review.post(f"{lesson}/override", json={"override": "none"}).status_code == 403
+
+
+def test_proposals_over_rest_and_mcp(
+    client: TestClient, events: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW)
+    strategy = insert_strategy("Straddle", STRADDLE, NOW)
+    body = {
+        "strategy_id": strategy.id,
+        "change": "Exit at 11:00 on expiry",
+        "why": "Losses cluster after 11:00.",
+        "wrong_if": "Small sample",
+    }
+    assert client.post("/api/v1/brain/proposals", json={**body, "wrong_if": ""}).status_code == 422
+    raised = client.post("/api/v1/brain/proposals", json=body).json()
+    path = f"/api/v1/brain/proposals/{raised['note_id']}/decision"
+    assert raised["status"] == "open" and raised["proposal"]["strategy_name"] == "Straddle"
+
+    assert client.post(path, json={"decision": "reject"}).status_code == 422
+    rejected = client.post(path, json={"decision": "reject", "reason": "keep full-day theta"})
+    assert (rejected.json()["status"], rejected.json()["reason"]) == (
+        "rejected",
+        "keep full-day theta",
+    )
+    assert client.post(path, json={"decision": "accept"}).status_code == 422  # final
+    found = client.get("/api/v1/brain/notes", params={"kind": "proposal"}).json()["notes"]
+    assert [(n["status"], n["reason"]) for n in found] == [("rejected", "keep full-day theta")]
+
+    other = mcp_server.raise_proposal(
+        strategy_id=strategy.id, change="Wider stop", why="w", wrong_if="r"
+    )
+    accepted = mcp_server.decide_proposal(proposal_id=other.note_id, decision=Decision.ACCEPT)
+    assert accepted.status == "accepted" and accepted.proposal is not None
+    assert accepted.proposal.request.startswith(f"Change strategy Straddle ({strategy.id})")
+    note = client.get(f"/api/v1/brain/notes/{other.note_id}").json()
+    assert note == mcp_server.get_brain_note(note_id=other.note_id).model_dump(mode="json")
+    missing = "/api/v1/brain/proposals/prp_none/decision"
+    assert client.post(missing, json={"decision": "later"}).status_code == 404
+
+    review = create_review_key(strategy.id, "job_1", NOW)
+    as_review = TestClient(create_app(events, {}, clock=lambda: NOW), headers={"X-API-Key": review})
+    assert as_review.post(path, json={"decision": "later"}).status_code == 403
+
+
+def test_debrief_schedule_and_start_over_rest_and_mcp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW)
+    schedule = "/api/v1/brain/debrief-schedule"
+    assert client.get(schedule).json() == {"at": None, "next_due": None, "earliest": "15:40"}
+    assert client.put(schedule, json={"at": "15:00"}).status_code == 422
+    assert client.put(schedule, json={"at": "4pm"}).status_code == 422
+    on = client.put(schedule, json={"at": "16:00"}).json()
+    assert on["at"] == "16:00" and on["next_due"].startswith("2026-09-22T16:00:00+05:30")
+    assert client.get(schedule).json() == mcp_server.get_debrief_schedule().model_dump(mode="json")
+    assert client.put(schedule, json={"at": None}).json()["at"] is None
+
+    started = client.post("/api/v1/brain/debrief", json={"trading_date": "2026-09-21"}).json()
+    assert started["job"]["title"] == "Debrief of Mon 21 Sep"
+    assert (started["job"]["kind"], started["job"]["strategy_id"]) == ("debrief", None)
+    again = client.post("/api/v1/brain/debrief", json={"trading_date": "2026-09-21"})
+    assert again.status_code == 409
+    assert (
+        client.post("/api/v1/brain/debrief", json={"trading_date": "2026-09-26"}).status_code == 422
+    )
+    jobs = client.get("/api/v1/agent-jobs").json()["jobs"]
+    assert [(j["title"], j["subject"]) for j in jobs] == [("Debrief of Mon 21 Sep", "2026-09-21")]
 
 
 def test_watchlist_routes_round_trip_and_refuse_mistakes(client: TestClient) -> None:

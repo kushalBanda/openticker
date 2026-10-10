@@ -15,9 +15,19 @@ from openticker.core.agents.jobs import (
     AgentJobEndReason,
     AgentJobStatus,
     Verdict,
+    job_title,
     verdict_of,
 )
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
+from openticker.core.brain.lessons import CheckOutcome, Override, UsePurpose
+from openticker.core.brain.notes import (
+    NOTICE,
+    FactKind,
+    Hindsight,
+    NoteKind,
+    TradeNote,
+    WrittenBy,
+)
 from openticker.core.calendar.models import MarketStatus
 from openticker.core.options.models import GreeksModel, OptionChain, OptionQuote
 from openticker.core.orders.models import (
@@ -92,11 +102,23 @@ from openticker.ports.models import (
     Side,
 )
 from openticker.storage.sqlite.audit_repo import AuditEntry
+from openticker.storage.sqlite.brain_repo import LessonCheck, LessonUse, OwedCheck
+from openticker.storage.sqlite.sandbox_repo import StoredTrade
 from openticker.storage.sqlite.scripts_repo import StoredScript
 from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.storage.sqlite.watchlists_repo import Watchlist
 from openticker.use_cases.agents.manage import AgentJobLog
+from openticker.use_cases.brain.read import (
+    DayRecord,
+    DayTrade,
+    Found,
+    GraphView,
+    LearningView,
+    LessonFacts,
+    NoteView,
+    ProposalFacts,
+)
 from openticker.use_cases.check_charge_rates import ChargeRateCheck, SampleCheck
 from openticker.use_cases.evaluate_risk import RiskCheck
 from openticker.use_cases.get_quotes import QuotesLookup
@@ -1977,8 +1999,13 @@ class StrategyLedgerResult(BaseModel):
 
 class AgentJobResult(BaseModel):
     job_id: str
-    kind: str = Field(description="review: reads one strategy and writes its verdict in the note.")
-    strategy_id: str
+    kind: str = Field(
+        description="review: reads one strategy and writes its verdict in the note. "
+        "debrief: reads one trading day and writes the brain's notes on it."
+    )
+    title: str = Field(description='What it is called: "Review of …", "Debrief of Mon 5 Oct".')
+    strategy_id: str | None = Field(description="A review's strategy; None for a debrief.")
+    subject: date | None = Field(description="The trading date a debrief covers.")
     harness: str = Field(description="The coding agent that runs it: claude or codex.")
     status: AgentJobStatus = Field(
         description="pending: waiting for openticker-serve, which runs one job at a time. "
@@ -1999,11 +2026,14 @@ class AgentJobResult(BaseModel):
     cost_usd: float | None = Field(description="What the run cost, when the harness reports it.")
 
     @classmethod
-    def of(cls, job: AgentJob) -> "AgentJobResult":
+    def of(cls, job: AgentJob, names: Mapping[str, str]) -> "AgentJobResult":
+        """`names`: strategies' names by id, for the title."""
         return cls(
             job_id=job.id,
             kind=job.kind,
+            title=job_title(job.kind, names.get(job.strategy_id or ""), job.subject),
             strategy_id=job.strategy_id,
+            subject=job.subject,
             harness=job.harness,
             status=job.status,
             trigger=job.trigger,
@@ -2015,6 +2045,82 @@ class AgentJobResult(BaseModel):
             summary=job.summary,
             verdict=verdict_of(job.summary),
             cost_usd=job.cost_usd,
+        )
+
+
+class StartDebriefResult(BaseModel):
+    job: AgentJobResult
+    next_step: str = Field(
+        default="openticker-serve starts it within a few seconds if no other job is running; "
+        "it writes the day's debrief, answers the lessons owed a check and may add lessons "
+        "and raise proposals. get_agent_jobs shows when it ends, get_brain_note the day."
+    )
+
+
+class DebriefScheduleResult(BaseModel):
+    at: str | None = Field(
+        description="When the debrief runs each trading day, HH:MM exchange time; None: off."
+    )
+    next_due: datetime | None = Field(description="When it next runs.")
+    earliest: str = Field(
+        default="15:40", description="The earliest time: after the day's P&L is recorded."
+    )
+
+    @classmethod
+    def of(cls, at: time | None, next_due: datetime | None) -> "DebriefScheduleResult":
+        return cls(
+            at=at.strftime("%H:%M") if at else None,
+            next_due=next_due.astimezone(EXCHANGE_TIMEZONE) if next_due else None,
+        )
+
+
+class LearningResult(BaseModel):
+    since: datetime = Field(description="The window's start; it ends now.")
+    cite_share: float | None = Field(
+        description="Of the designs and reviews that could have cited a lesson, the share that "
+        "recorded relying on one (0 to 1); None when none could."
+    )
+    designs: int = Field(
+        description="Strategies created while a desk-wide lesson was live, or that cited one."
+    )
+    designs_citing: int = Field(
+        description="Of those, with a use (purpose design) recorded by the same client within "
+        "30 minutes of the strategy's creation."
+    )
+    reviews: int = Field(
+        description="Review jobs finished while a lesson about the strategy or the desk was "
+        "live, or that cited one."
+    )
+    reviews_citing: int = Field(
+        description="Of those, with a use (purpose review) for the strategy while the job ran."
+    )
+    checks_answered: int = Field(description="Lesson checks given, not_tested included.")
+    checks_owed: int = Field(
+        description="Runs and orders that ended in the window, still owed a check by a live lesson."
+    )
+    lessons_checked: int = Field(description="Lessons held or not held at least once.")
+    lessons_held: int = Field(description="Of those, held more often than not.")
+    held_share: float | None = Field(
+        description="lessons_held / lessons_checked; None when none was checked."
+    )
+    lessons_ruled: int = Field(description="Lessons that are rules now.")
+
+    @classmethod
+    def of(cls, view: LearningView) -> "LearningResult":
+        c = view.learning.counts
+        return cls(
+            since=view.since.astimezone(EXCHANGE_TIMEZONE),
+            cite_share=view.learning.cite_share,
+            designs=c.designs,
+            designs_citing=c.designs_citing,
+            reviews=c.reviews,
+            reviews_citing=c.reviews_citing,
+            checks_answered=c.checks_answered,
+            checks_owed=c.checks_owed,
+            lessons_checked=c.lessons_checked,
+            lessons_held=c.lessons_held,
+            held_share=view.learning.held_share,
+            lessons_ruled=c.lessons_ruled,
         )
 
 
@@ -2652,3 +2758,572 @@ class DeleteWatchlistResult(BaseModel):
     watchlist_id: str
     name: str
     deleted: bool
+
+
+_NOTE_KEY = (
+    "A day's date, a strategy's id, a symbol's EXCHANGE:SYMBOL, a lesson's or "
+    "proposal's own id. [[kind:key]] in a note's markdown links to it."
+)
+_NOTE_STATUS = (
+    "A lesson's status (hunch, tested, rule, retired), derived from its checks, or a "
+    "proposal's state (open, later, accepted, rejected); None for other notes."
+)
+
+
+class BrainNoteHeadResult(BaseModel):
+    note_id: str = Field(description="Pass this to get_brain_note.")
+    kind: NoteKind
+    key: str = Field(description=_NOTE_KEY)
+    title: str
+    status: str | None = Field(description=_NOTE_STATUS)
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, found: Found) -> "BrainNoteHeadResult":
+        return cls(**_head_fields(found))
+
+
+def _head_fields(found: Found) -> dict[str, Any]:
+    head = found.head
+    return {
+        "note_id": head.note_id,
+        "kind": head.kind,
+        "key": head.key,
+        "title": head.title,
+        "status": found.status,
+        "updated_at": head.updated_at.astimezone(EXCHANGE_TIMEZONE),
+    }
+
+
+class BrainFoundResult(BrainNoteHeadResult):
+    strategy_id: str | None = Field(description="A proposal's strategy.")
+    written_by: WrittenBy = Field(
+        description="agent_job: an unattended review or debrief; person: the user or an "
+        "agent in their own session; server: made by OpenTicker."
+    )
+    checks: int | None = Field(
+        description="A lesson's checks that counted (held or not); None for other notes."
+    )
+    held: int | None = Field(description="Of a lesson's checks, how many held.")
+    applies_to: list[str] | None = Field(
+        description="The strategy ids a lesson applies to; empty: the whole desk."
+    )
+    reason: str | None = Field(description="Why the user rejected a proposal.")
+
+    @classmethod
+    def of(cls, found: Found) -> "BrainFoundResult":
+        return cls(**_found_fields(found))
+
+
+def _found_fields(found: Found) -> dict[str, Any]:
+    return {
+        **_head_fields(found),
+        "strategy_id": found.head.strategy_id,
+        "written_by": found.head.written_by,
+        "checks": found.held.checks if found.held else None,
+        "held": found.held.held if found.held else None,
+        "applies_to": sorted(found.applies_to) if found.applies_to is not None else None,
+        "reason": found.reason,
+    }
+
+
+class BrainNotesResult(BaseModel):
+    notes: list[BrainFoundResult] = Field(description="Newest first.")
+    notice: str = Field(default=NOTICE)
+
+
+class BrainFactResult(BaseModel):
+    kind: FactKind
+    key: str = Field(description="The run's or order's id: get_strategy_run or get_order_status.")
+
+
+class TradeNoteInput(BaseModel):
+    run_id: str | None = Field(
+        default=None, description="A run from get_day_record's trades; or order_id."
+    )
+    order_id: str | None = Field(
+        default=None, description="An order placed outside a strategy, from get_day_record."
+    )
+    why: str = Field(description="Why it was traded: the reason as it stood then.")
+    trade_off: str = Field(description="What was given up or risked for it.")
+
+    def to_core(self) -> TradeNote:
+        return TradeNote(self.run_id, self.order_id, self.why, self.trade_off)
+
+
+class HindsightInput(BaseModel):
+    text: str = Field(description="What could have been done better.")
+    knowable_before: bool = Field(
+        description="True only if it could have been known before the trade; hindsight "
+        "otherwise, which never becomes a lesson."
+    )
+
+    def to_core(self) -> Hindsight:
+        return Hindsight(self.text, self.knowable_before)
+
+
+class BrainTradeNoteResult(BaseModel):
+    run_id: str | None = Field(description="The run it explains; or order_id.")
+    order_id: str | None = Field(description="The order placed outside a strategy it explains.")
+    why: str
+    trade_off: str = Field(description="What was given up or risked for it.")
+
+
+class BrainHindsightResult(BaseModel):
+    text: str
+    knowable_before: bool = Field(
+        description="True: it could have been known before the trade, so it can become a "
+        "lesson. False: hindsight only."
+    )
+
+
+class BrainDebriefResult(BaseModel):
+    headline: str = Field(description="The day in one line.")
+    trade_notes: list[BrainTradeNoteResult] = Field(
+        description="get_day_record joins them to the day's trades and their figures."
+    )
+    hindsight: list[BrainHindsightResult]
+
+    @classmethod
+    def of_data(cls, data: Mapping[str, object]) -> "BrainDebriefResult | None":
+        """None for a day note no debrief was written into yet."""
+        headline = data.get("headline")
+        if not isinstance(headline, str):
+            return None
+        notes = data.get("trade_notes")
+        hindsight = data.get("hindsight")
+        return cls(
+            headline=headline,
+            trade_notes=[
+                BrainTradeNoteResult(
+                    run_id=n.get("run_id"),
+                    order_id=n.get("order_id"),
+                    why=n.get("why", ""),
+                    trade_off=n.get("trade_off", ""),
+                )
+                for n in (notes if isinstance(notes, list) else [])
+                if isinstance(n, dict)
+            ],
+            hindsight=[
+                BrainHindsightResult(
+                    text=h.get("text", ""), knowable_before=bool(h.get("knowable_before"))
+                )
+                for h in (hindsight if isinstance(hindsight, list) else [])
+                if isinstance(h, dict)
+            ],
+        )
+
+
+class OwedCheckResult(BaseModel):
+    lesson_id: str
+    lesson_title: str
+    run_id: str | None = Field(description="An ended run to check it against; or order_id.")
+    order_id: str | None = Field(description="An order placed outside a strategy.")
+    strategy_id: str | None
+    ended_at: datetime = Field(description="The run's end, or the order's last fill.")
+
+    @classmethod
+    def of(cls, owed: OwedCheck) -> "OwedCheckResult":
+        return cls(
+            lesson_id=owed.lesson_id,
+            lesson_title=owed.lesson_title,
+            run_id=owed.run_id,
+            order_id=owed.order_id,
+            strategy_id=owed.strategy_id,
+            ended_at=owed.ended_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+class LessonCheckResult(BaseModel):
+    lesson_id: str
+    lesson_title: str | None = Field(description="Given on a day's record; None otherwise.")
+    run_id: str | None = Field(description="The run it was checked against; or order_id.")
+    order_id: str | None = Field(description="The order placed outside a strategy.")
+    strategy_id: str | None
+    ended_at: datetime | None = Field(description="The run's end, or the order's last fill.")
+    outcome: CheckOutcome = Field(
+        description="held, not_held, or not_tested (didn't test it; doesn't count)."
+    )
+    observed: str | None = Field(description="The figure the judgement rests on.")
+    why: str
+    checked_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    checked_source: Source = Field(description="checked_by read as who did it.")
+    checked_at: datetime
+    before_reset: bool = Field(
+        description="Given before a paper account reset deleted its trades; it still counts."
+    )
+
+    @classmethod
+    def of(cls, check: LessonCheck, lesson_title: str | None = None) -> "LessonCheckResult":
+        return cls(
+            lesson_id=check.lesson_id,
+            lesson_title=lesson_title,
+            run_id=check.run_id,
+            order_id=check.order_id,
+            strategy_id=check.strategy_id,
+            ended_at=check.ended_at.astimezone(EXCHANGE_TIMEZONE) if check.ended_at else None,
+            outcome=check.outcome,
+            observed=check.observed,
+            why=check.why,
+            checked_by=check.checked_by,
+            checked_source=source_of(check.checked_by),
+            checked_at=check.checked_at.astimezone(EXCHANGE_TIMEZONE),
+            before_reset=check.reset_at is not None,
+        )
+
+
+class LessonUseResult(BaseModel):
+    lesson_id: str
+    purpose: UsePurpose
+    strategy_id: str | None
+    job_id: str | None
+    how: str
+    used_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    used_source: Source = Field(description="used_by read as who did it.")
+    used_at: datetime
+
+    @classmethod
+    def of(cls, use: LessonUse) -> "LessonUseResult":
+        return cls(
+            lesson_id=use.lesson_id,
+            purpose=use.purpose,
+            strategy_id=use.strategy_id,
+            job_id=use.job_id,
+            how=use.how,
+            used_by=use.used_by,
+            used_source=source_of(use.used_by),
+            used_at=use.used_at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+class BrainLessonResult(BaseModel):
+    checks: list[LessonCheckResult] = Field(
+        description="Latest run or order first; not_tested answers included but not counted."
+    )
+    uses: list[LessonUseResult] = Field(description="Newest first.")
+    used: int = Field(description="Uses in all.")
+    owed: list[OwedCheckResult] = Field(
+        description="Ended runs and orders it applies to that haven't been checked against it."
+    )
+    evidence: list[str] = Field(description="What it came from: day:…, run:… and order:….")
+    override: Override | None = Field(
+        description="A person's: retired (whatever its checks say) or reinstated."
+    )
+    override_at: datetime | None
+    override_by: str | None
+    override_source: Source | None
+    override_reason: str | None
+
+    @classmethod
+    def of(cls, facts: LessonFacts, note: "NoteView") -> "BrainLessonResult":
+        lesson = note.note
+        return cls(
+            checks=[LessonCheckResult.of(c) for c in facts.checks],
+            uses=[LessonUseResult.of(u) for u in facts.uses],
+            used=facts.used,
+            owed=[OwedCheckResult.of(o) for o in facts.owed],
+            evidence=[f"{r.kind.value}:{r.key}" for r in facts.evidence],
+            override=lesson.override,
+            override_at=(
+                lesson.override_at.astimezone(EXCHANGE_TIMEZONE) if lesson.override_at else None
+            ),
+            override_by=lesson.override_by,
+            override_source=source_of(lesson.override_by) if lesson.override_by else None,
+            override_reason=lesson.override_reason,
+        )
+
+
+class BrainProposalResult(BaseModel):
+    change: str = Field(description="The one change to the strategy.")
+    wrong_if: str = Field(description="What could make it wrong.")
+    strategy_name: str | None = Field(description="None once the strategy is deleted.")
+    based_on: list[BrainFoundResult] = Field(
+        description="The lessons it rests on, with their status and checks now."
+    )
+    request: str = Field(
+        description="What the user pastes into their agent once it's accepted. Accepting "
+        "changes nothing by itself."
+    )
+    earlier: list[BrainFoundResult] = Field(
+        description="The strategy's other proposals, newest first; rejected ones carry the "
+        "user's reason."
+    )
+    decided_at: datetime | None
+    decided_by: str | None
+    decided_source: Source | None
+
+    @classmethod
+    def of(cls, facts: ProposalFacts, view: "NoteView") -> "BrainProposalResult":
+        note = view.note
+        return cls(
+            change=facts.change,
+            wrong_if=facts.wrong_if,
+            strategy_name=facts.strategy_name,
+            based_on=[BrainFoundResult.of(f) for f in facts.based_on],
+            request=facts.request,
+            earlier=[BrainFoundResult.of(f) for f in facts.earlier],
+            decided_at=note.decided_at.astimezone(EXCHANGE_TIMEZONE) if note.decided_at else None,
+            decided_by=note.decided_by,
+            decided_source=source_of(note.decided_by) if note.decided_by else None,
+        )
+
+
+class BrainGraphLinkResult(BaseModel):
+    from_id: str
+    to_id: str
+
+
+class BrainNoteResult(BrainFoundResult):
+    body: str = Field(description="Markdown: what the agent wrote (a day's: what happened).")
+    debrief: BrainDebriefResult | None = Field(
+        description="A day's debrief, when one was written; None for other notes."
+    )
+    your_note: str | None = Field(description="Markdown: what the user wrote on it.")
+    your_note_at: datetime | None = Field(description="When the user's note last changed.")
+    your_note_by: str | None = Field(description="Who changed it last: " + TRIGGERED_BY_DESCRIPTION)
+    your_note_source: Source | None = Field(description="your_note_by read as who did it.")
+    next_step: str | None = Field(description="What would move a lesson's status next.")
+    lesson: BrainLessonResult | None = Field(
+        description="A lesson's checks, uses, owed checks, evidence and override; None for "
+        "other notes."
+    )
+    proposal: BrainProposalResult | None = Field(
+        description="A proposal's change, lessons, request and decision; None for other notes."
+    )
+    links_out: list[BrainNoteHeadResult]
+    backlinks: list[BrainNoteHeadResult] = Field(description="Notes that link to this one.")
+    local_links: list[BrainGraphLinkResult] = Field(
+        description="The links among this note and the notes in links_out and backlinks: "
+        "its neighbourhood as a small graph."
+    )
+    facts: list[BrainFactResult] = Field(description="Runs and orders its text cites.")
+    created_at: datetime
+    created_by: str
+    updated_by: str = Field(description="Who wrote the agent's part last.")
+    updated_source: Source = Field(description="updated_by read as who did it.")
+    version: int = Field(description="Changes with every write; an edit of your_note sends it.")
+    notice: str = Field(default=NOTICE)
+
+    @classmethod
+    def of_view(cls, view: NoteView) -> "BrainNoteResult":
+        note = view.note
+        found = Found(note, view.status, view.held, view.applies_to, note.reason)
+        return cls(
+            **_found_fields(found),
+            body=note.body,
+            debrief=BrainDebriefResult.of_data(note.data) if note.kind is NoteKind.DAY else None,
+            your_note=note.user_body,
+            your_note_at=(
+                note.user_updated_at.astimezone(EXCHANGE_TIMEZONE) if note.user_updated_at else None
+            ),
+            your_note_by=note.user_updated_by,
+            your_note_source=source_of(note.user_updated_by) if note.user_updated_by else None,
+            next_step=view.next_step,
+            lesson=BrainLessonResult.of(view.lesson, view) if view.lesson else None,
+            proposal=BrainProposalResult.of(view.proposal, view) if view.proposal else None,
+            links_out=[BrainNoteHeadResult.of(f) for f in view.links_out],
+            backlinks=[BrainNoteHeadResult.of(f) for f in view.backlinks],
+            local_links=[
+                BrainGraphLinkResult(from_id=link.from_id, to_id=link.to_id)
+                for link in view.local_links
+            ],
+            facts=[BrainFactResult(kind=FactKind(r.kind), key=r.key) for r in view.facts],
+            created_at=note.created_at.astimezone(EXCHANGE_TIMEZONE),
+            created_by=note.created_by,
+            updated_by=note.updated_by,
+            updated_source=source_of(note.updated_by),
+            version=note.version,
+        )
+
+
+class BrainGraphNoteResult(BaseModel):
+    note_id: str = Field(description="Pass this to get_brain_note.")
+    kind: NoteKind
+    key: str = Field(description=_NOTE_KEY)
+    title: str
+    status: str | None = Field(description=_NOTE_STATUS)
+    net: float | None = Field(
+        description="A day's net P&L after charges, in rupees; None for other notes or a "
+        "day whose P&L wasn't recorded."
+    )
+
+
+class BrainGraphResult(BaseModel):
+    notes: list[BrainGraphNoteResult]
+    links: list[BrainGraphLinkResult] = Field(description="Only between notes in `notes`.")
+    truncated: bool = Field(description="True when only the newest notes in the window fit.")
+    notice: str = Field(default=NOTICE)
+
+    @classmethod
+    def of(cls, view: GraphView) -> "BrainGraphResult":
+        return cls(
+            notes=[
+                BrainGraphNoteResult(
+                    note_id=n.note_id,
+                    kind=n.kind,
+                    key=n.key,
+                    title=n.title,
+                    status=view.status.get(n.note_id),
+                    net=view.day_net.get(n.note_id),
+                )
+                for n in view.notes
+            ],
+            links=[
+                BrainGraphLinkResult(from_id=link.from_id, to_id=link.to_id) for link in view.links
+            ],
+            truncated=view.truncated,
+        )
+
+
+class DayFillResult(BaseModel):
+    order_id: str
+    filled_at: datetime = Field(description="Exchange-local.")
+    exchange: Exchange
+    symbol: str
+    side: Side
+    quantity: int
+    price: float
+    charges: float | None = Field(description="None: not modelled for this instrument.")
+    realized_pnl: float | None = Field(
+        description="What it closed, before charges; 0 for one that only opened."
+    )
+
+    @classmethod
+    def of(cls, fill: StoredTrade) -> "DayFillResult":
+        return cls(
+            order_id=fill.order_id,
+            filled_at=fill.filled_at.astimezone(EXCHANGE_TIMEZONE),
+            exchange=Exchange(fill.exchange),
+            symbol=fill.symbol,
+            side=fill.side,
+            quantity=fill.quantity,
+            price=fill.price,
+            charges=fill.charges,
+            realized_pnl=fill.realized_pnl,
+        )
+
+
+class DayTradeResult(BaseModel):
+    run_id: str | None = Field(description="A strategy's run (get_strategy_run); or order_id.")
+    order_id: str | None = Field(description="An order placed outside a strategy.")
+    strategy_id: str | None
+    strategy_name: str | None = Field(description="None once the strategy is deleted.")
+    triggered_by: str = Field(description=TRIGGERED_BY_DESCRIPTION)
+    source: Source = Field(description=SOURCE_DESCRIPTION)
+    placed_by: str | None = Field(
+        description="The name of the strategy or hosted script that placed it; None for anyone "
+        "else."
+    )
+    run_status: str | None = Field(description="A run's: open, stopping or ended.")
+    stop_reason: str | None = Field(description="Why an ended run stopped, e.g. kill.")
+    ended_at: datetime | None = Field(description="A run's end, or the order's last fill.")
+    realized_pnl: float | None = Field(
+        description="What the day's fills closed, before charges; None when one didn't record it."
+    )
+    charges: float
+    net: float | None = Field(description="realized_pnl less charges.")
+    fills: list[DayFillResult] = Field(description="That day's, oldest first.")
+    why: str | None = Field(description="The debrief's words on it; None until written.")
+    trade_off: str | None
+
+    @classmethod
+    def of(cls, trade: DayTrade, names: Mapping[str, str]) -> "DayTradeResult":
+        return cls(
+            run_id=trade.run_id,
+            order_id=trade.order_id,
+            strategy_id=trade.strategy_id,
+            strategy_name=trade.strategy_name,
+            triggered_by=trade.triggered_by,
+            source=source_of(trade.triggered_by),
+            placed_by=names.get(trade.triggered_by),
+            run_status=trade.run_status,
+            stop_reason=trade.stop_reason,
+            ended_at=trade.ended_at.astimezone(EXCHANGE_TIMEZONE) if trade.ended_at else None,
+            realized_pnl=trade.realized_pnl,
+            charges=trade.charges,
+            net=trade.net,
+            fills=[DayFillResult.of(f) for f in trade.fills],
+            why=trade.why,
+            trade_off=trade.trade_off,
+        )
+
+
+class DayRecordResult(BaseModel):
+    trading_date: date
+    net_pnl: float | None = Field(
+        description="After charges; None when an open position had no price."
+    )
+    realized_pnl: float = Field(description="Closed by the day's fills, before charges.")
+    unrealized_pnl: float | None = Field(description="Open positions' change over the day.")
+    charges: float
+    fills: int
+    complete: bool = Field(description="False: a fill didn't record what it realized.")
+    estimated: bool = Field(description="Closing marks were the last prices known, not live.")
+    live: bool = Field(description="Worked out now; recorded after the close.")
+    trades: list[DayTradeResult] = Field(
+        description="Strategy runs first, then orders placed outside a strategy."
+    )
+    truncated: bool = Field(description="True: more fills than fit; the latest are left out.")
+    owed_checks: list[OwedCheckResult] = Field(
+        description="Lessons that apply to the day's ended runs and orders and haven't been "
+        "checked against them yet."
+    )
+    checks: list[LessonCheckResult] = Field(
+        description="Lesson checks already given on the day's runs and orders."
+    )
+    note_id: str | None = Field(description="The day's note in the brain, when it has one.")
+    headline: str | None = Field(description="The debrief's headline; None until written.")
+    frozen_at: datetime | None = Field(
+        description="When a paper account reset deleted the day's trades; the figures were "
+        "kept in its note then. None: read from the record."
+    )
+    notice: str = Field(default=NOTICE)
+
+    @classmethod
+    def of(cls, record: DayRecord, names: Mapping[str, str]) -> "DayRecordResult":
+        figures = record.figures
+        debrief = BrainDebriefResult.of_data(record.note.data) if record.note else None
+        return cls(
+            trading_date=record.trading_date,
+            net_pnl=figures.net_pnl,
+            realized_pnl=figures.realized_pnl,
+            unrealized_pnl=figures.unrealized_pnl,
+            charges=figures.charges,
+            fills=figures.fills,
+            complete=figures.complete,
+            estimated=figures.estimated,
+            live=record.live,
+            trades=[DayTradeResult.of(t, names) for t in record.trades],
+            truncated=record.truncated,
+            owed_checks=[OwedCheckResult.of(o) for o in record.owed],
+            checks=[LessonCheckResult.of(c, title) for c, title in record.checks],
+            note_id=record.note.note_id if record.note else None,
+            headline=debrief.headline if debrief else None,
+            frozen_at=(
+                record.frozen_at.astimezone(EXCHANGE_TIMEZONE) if record.frozen_at else None
+            ),
+        )
+
+
+class LessonCheckedResult(BaseModel):
+    lesson: BrainFoundResult = Field(description="The lesson with its status after the check.")
+    next_step: str | None = Field(description="What would move its status next.")
+    check: LessonCheckResult
+    replaced: LessonCheckResult | None = Field(
+        description="The earlier answer on the same run or order, now replaced."
+    )
+    notice: str = Field(default=NOTICE)
+
+    @classmethod
+    def of(
+        cls, view: NoteView, check: LessonCheck, replaced: LessonCheck | None
+    ) -> "LessonCheckedResult":
+        note = view.note
+        return cls(
+            lesson=BrainFoundResult.of(
+                Found(note, view.status, view.held, view.applies_to, note.reason)
+            ),
+            next_step=view.next_step,
+            check=LessonCheckResult.of(check),
+            replaced=LessonCheckResult.of(replaced) if replaced else None,
+        )

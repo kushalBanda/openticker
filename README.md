@@ -37,6 +37,12 @@ OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io
 | `start_script`, `stop_script`, `schedule_script`, `unschedule_script`, `get_script_logs` | Run a script under `openticker-serve` now or once a trading day between a start and a stop time, with memory and CPU limits, and read its output. Linux and macOS. |
 | `get_strategy_runs`, `get_strategy_run` | A strategy's runs: legs, fills, stop reason, P&L (with its peak and trough) and a timeline of what happened. If the live feed goes quiet on a leg, `openticker-serve` prices it from quotes; with no price from either for a minute, the run stops and closes its legs. After a restart it picks up every open run where it left off. |
 
+| `search_brain`, `get_brain_note`, `get_brain_graph` | Read the brain: what the desk learned from its own trades, as linked notes of days, lessons and proposals, each lesson with its status and how often it held. |
+| `get_day_record`, `write_debrief` | One trading day's trades from the record, with the lessons owed a check; write the day's debrief: why each trade, what was given up, what could have been done better. |
+| `create_lesson`, `update_lesson`, `check_lesson`, `record_lesson_use` | A lesson starts as a hunch; checks on later runs and orders decide whether it becomes tested, a rule, or is retired. |
+| `raise_proposal`, `decide_proposal` | Propose one change to a strategy for you to accept or reject; accepting gives you the request to paste into your agent. |
+| `start_debrief`, `schedule_debrief`, `get_learning` | Have `openticker-serve` debrief each day after the close with your own agent, and see how often designs and reviews read a lesson first. |
+
 Example session, in plain language to your agent:
 
 > "Connect Zerodha, then show me the last month of daily candles for RELIANCE and this week's NIFTY option chain with IV and delta."
@@ -96,6 +102,9 @@ You can step in without asking your agent: close a position, kill a strategy, pl
 | --- | --- |
 | ![Positions, marked live, with who holds each](docs/images/web-positions.png) | ![The option chain, live, with bids and asks to pick](docs/images/web-option-chain.png) |
 | ![A strategy: its legs, equity after costs and latest review](docs/images/web-strategy.png) | ![An instrument: candles with your fills, and market depth](docs/images/web-symbol.png) |
+| ![The Brain: what the desk learned, as a graph of linked notes](docs/images/web-brain.png) | ![A day's debrief: each trade with why and what was given up, and the lessons it checked](docs/images/web-brain-day.png) |
+
+The Brain page is what the desk has learned, kept on your machine and readable by any agent. After each close your own Claude Code or Codex can write the day up: why each trade was made, what was given up for it, and what could have been done better, with hindsight marked as hindsight. Lessons start as hunches and earn their status from later trades, so one bad day stays a hunch. Agents read them before designing or reviewing a strategy, and propose changes that wait for you to decide.
 
 Light and dark follow your system, or the toggle in the top bar. The app is for laptop and desktop screens, 1280 pixels wide and up.
 

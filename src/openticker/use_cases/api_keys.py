@@ -6,13 +6,14 @@ hash would add nothing but latency to every request.
 
 Each run of a hosted script gets its own key, scoped to trading routes and
 revoked when the run ends (ADR 25 in docs/adr). Each agent job gets one too,
-scoped to what its kind may read: a review, its own strategy (ADR 29).
+scoped to what its kind may reach: a review, its own strategy (ADR 29); a
+debrief, the desk's reads and the brain's writes for its own trading day.
 """
 
 import hashlib
 import re
 import secrets
-from datetime import datetime
+from datetime import date, datetime
 
 from openticker.storage.sqlite.api_keys_repo import (
     StoredApiKey,
@@ -26,6 +27,7 @@ KEY_PREFIX = "otk_"
 FULL_SCOPE = "full"
 SCRIPT_SCOPE_PREFIX = "script:"  # then the script's id
 REVIEW_SCOPE_PREFIX = "review:"  # then the strategy's id
+DEBRIEF_SCOPE_PREFIX = "debrief:"  # then the trading date
 _SCRIPT_KEY_NAME_PREFIX = "script-"  # then the run's id
 _AGENT_KEY_NAME_PREFIX = "agent-"  # then the job's id
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
@@ -92,6 +94,19 @@ def create_review_key(strategy_id: str, job_id: str, now: datetime) -> str:
         _hash(key),
         key[:_SHOWN_PREFIX_LENGTH],
         REVIEW_SCOPE_PREFIX + strategy_id,
+        now,
+    )
+    return key
+
+
+def create_debrief_key(trading_date: date, job_id: str, now: datetime) -> str:
+    """A key for one debrief job: reads the desk, writes the brain for that day."""
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    insert_api_key(
+        agent_key_name(job_id),
+        _hash(key),
+        key[:_SHOWN_PREFIX_LENGTH],
+        DEBRIEF_SCOPE_PREFIX + trading_date.isoformat(),
         now,
     )
     return key

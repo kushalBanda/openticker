@@ -134,6 +134,16 @@ test("proof: reset refused while a strategy runs, then succeeds", async ({ page 
   await expect(refusal).toHaveCount(0);
   await page.getByRole("link", { name: "Positions" }).first().click();
   await expect(page.getByRole("table", { name: "Positions" })).toHaveCount(0);
+
+  // The brain is kept: today's debriefed page keeps its trades and figures.
+  const days = await (await page.request.get("/api/v1/brain/notes?kind=day&limit=1")).json();
+  await page.goto(`/brain/days/${days.notes[0].key}`);
+  await expect(page.getByText(/Kept from before the paper account was reset/)).toBeVisible();
+  await expect(page.getByTestId("day-fills")).not.toContainText(/^Fills0$/);
+  const trades = page.getByRole("table", { name: "Trades and trade-offs" });
+  await expect(trades.getByRole("row").filter({ hasText: "NIFTY short straddle" })).toContainText(
+    "Scheduled entry",
+  );
 });
 
 test("theme: Settings and the status bar agree", async ({ page }) => {

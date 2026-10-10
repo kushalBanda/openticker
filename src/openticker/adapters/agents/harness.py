@@ -34,9 +34,11 @@ HARNESS_VARIABLES = (
 )
 KEY_VARIABLE = "OPENTICKER_API_KEY"
 
-# Claude Code: its tools are the reviewer agent's; these rules let them run
-# unattended. Writes are allowed under notes/ only.
+# Claude Code: its tools are the job's agent's; these rules let them run
+# unattended. A reviewer writes under notes/ only; a debrief writes no file
+# at all, only through OpenTicker's brain tools; it reads only its skill.
 _CLAUDE_ALLOWED = "mcp__openticker,Read,Glob,Grep,Edit(notes/**),Write(notes/**)"
+_CLAUDE_NO_FILES = "mcp__openticker,Read(.claude/skills/**)"
 
 
 def job_env(api_key: str, parent: Mapping[str, str]) -> dict[str, str]:
@@ -63,12 +65,12 @@ def command(launch: AgentLaunch, executable: str) -> list[str]:
             "-p",
             launch.prompt,
             "--agent",
-            "reviewer",
+            launch.agent,
             "--mcp-config",
             json.dumps(servers),
             "--strict-mcp-config",
             "--allowedTools",
-            _CLAUDE_ALLOWED,
+            _CLAUDE_ALLOWED if launch.writes_notes else _CLAUDE_NO_FILES,
             "--output-format",
             "json",
         ]
@@ -81,7 +83,7 @@ def command(launch: AgentLaunch, executable: str) -> list[str]:
         "exec",
         "--ignore-user-config",
         "--sandbox",
-        "workspace-write",
+        "workspace-write" if launch.writes_notes else "read-only",
         "--skip-git-repo-check",
         "--cd",
         str(launch.labs_dir),

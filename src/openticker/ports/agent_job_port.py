@@ -21,6 +21,8 @@ class AgentLaunch:
     api_key: str = field(repr=False)  # the job's own key, scoped to its kind
     mcp_url: str  # openticker-serve's MCP endpoint
     max_budget_usd: float | None = None
+    agent: str = "reviewer"  # the labs agent that runs it
+    writes_notes: bool = True  # False: no file tools at all, a read-only sandbox
 
 
 @dataclass(frozen=True)

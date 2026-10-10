@@ -17,6 +17,10 @@ const STATIC = [
   "/trades",
   "/strategies",
   "/scripts",
+  "/brain",
+  "/brain/days",
+  "/brain/lessons",
+  "/brain/proposals",
   "/agents",
   "/activity",
   "/settings",
@@ -29,7 +33,14 @@ const STATIC = [
 async function routes(page: Page): Promise<string[]> {
   const strategies = await (await page.request.get("/api/v1/strategies")).json();
   const scripts = await (await page.request.get("/api/v1/scripts")).json();
+  const lessons = await (await page.request.get("/api/v1/brain/notes?kind=lesson")).json();
+  const days = await (await page.request.get("/api/v1/brain/notes?kind=day&limit=1")).json();
+  const proposals = await (await page.request.get("/api/v1/brain/notes?kind=proposal")).json();
   const details = [
+    ...proposals.notes.slice(0, 1).map((n: { note_id: string }) => `/brain/proposals/${n.note_id}`),
+    ...lessons.notes.slice(0, 1).map((n: { note_id: string }) => `/brain#${n.note_id}`),
+    ...lessons.notes.slice(0, 1).map((n: { note_id: string }) => `/brain/lessons/${n.note_id}`),
+    ...days.notes.map((n: { key: string }) => `/brain/days/${n.key}`),
     ...strategies.strategies.map((s: { strategy_id: string }) => `/strategies/${s.strategy_id}`),
     ...scripts.scripts.map((s: { script_id: string }) => `/scripts/${s.script_id}`),
   ];

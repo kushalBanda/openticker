@@ -58,6 +58,13 @@ export const keys = {
   agents: ["agents"] as const,
   agentJobs: ["agent-jobs"] as const,
   agentJobLog: (id: string) => ["agent-job-log", id] as const,
+  // The brain: every key starts with "brain", so one invalidation reaches them all.
+  brainGraph: (window: BrainWindow) => ["brain", "graph", window] as const,
+  brainNote: (id: string) => ["brain", "note", id] as const,
+  brainSearch: (params: BrainSearch) => ["brain", "search", params] as const,
+  brainDay: (broker: string, date: string) => ["brain", "day", broker, date] as const,
+  debriefSchedule: ["brain", "debrief-schedule"] as const,
+  brainLearning: (days: number) => ["brain", "learning", days] as const,
 };
 
 // Positions and funds refetch every 30 s; the page marks them to market
@@ -1173,5 +1180,184 @@ export function useStopAgentJob() {
         client.invalidateQueries({ queryKey: keys.agents }),
         client.invalidateQueries({ queryKey: ["reviews"] }),
       ]),
+  });
+}
+
+export type BrainWindow = "7" | "30" | "90" | "all";
+export type BrainGraph = Schemas["BrainGraphResult"];
+
+/** The brain's notes in a window of trading days and the links among them. */
+export function useBrainGraph(window: BrainWindow) {
+  return useQuery({
+    queryKey: keys.brainGraph(window),
+    queryFn: () => unwrap(api.GET("/api/v1/brain/graph", { params: { query: { window } } })),
+  });
+}
+
+export type BrainNote = Schemas["BrainNoteResult"];
+export type BrainFound = Schemas["BrainFoundResult"];
+export interface BrainSearch {
+  kind?: Schemas["NoteKind"];
+  status?: string;
+  query?: string;
+  limit?: number;
+}
+
+const fetchBrainNote = (id: string) =>
+  unwrap(api.GET("/api/v1/brain/notes/{note_id}", { params: { path: { note_id: id } } }));
+
+/** One note, with its links and backlinks. */
+export function useBrainNote(id: string | null) {
+  return useQuery({
+    queryKey: keys.brainNote(id ?? ""),
+    queryFn: () => fetchBrainNote(id ?? ""),
+    enabled: id !== null,
+  });
+}
+
+/** The note as the server has it now, cached for whoever shows it. */
+export function useFreshBrainNote() {
+  const client = useQueryClient();
+  return (id: string) =>
+    client.fetchQuery({
+      queryKey: keys.brainNote(id),
+      queryFn: () => fetchBrainNote(id),
+      staleTime: 0,
+    });
+}
+
+/** Notes by kind, status or text, newest first. */
+export function useBrainSearch(params: BrainSearch) {
+  return useQuery({
+    queryKey: keys.brainSearch(params),
+    queryFn: () => unwrap(api.GET("/api/v1/brain/notes", { params: { query: params } })),
+  });
+}
+
+export type DayRecord = Schemas["DayRecordResult"];
+export type DayTrade = Schemas["DayTradeResult"];
+
+/** One trading day: P&L after charges, trades by run or order, the debrief's words. */
+export function useDayRecord(broker: string | undefined, date: string) {
+  return useQuery({
+    queryKey: keys.brainDay(broker ?? "", date),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/brain/days/{trading_date}/record", {
+          params: { path: { trading_date: date }, query: { broker: broker ?? "" } },
+        }),
+      ),
+    enabled: broker !== undefined,
+  });
+}
+
+/**
+ * The user's own part of a note, from the version they started editing.
+ * A 409 means it changed since: the caller shows both texts.
+ */
+export function useEditUserNote() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, text, version }: { id: string; text: string; version: number }) =>
+      unwrap(
+        api.PATCH("/api/v1/brain/notes/{note_id}", {
+          params: { path: { note_id: id } },
+          body: { text, version },
+        }),
+      ),
+    onSuccess: (note) => client.setQueryData(keys.brainNote(note.note_id), note),
+    onSettled: () => client.invalidateQueries({ queryKey: ["brain"] }),
+  });
+}
+
+export type LessonCheck = Schemas["LessonCheckResult"];
+export type OwedCheck = Schemas["OwedCheckResult"];
+export type LessonOverride = "retired" | "reinstated" | "none";
+
+/** A person's say over a lesson's status: retire (with a reason), reinstate, or clear. */
+export function useLessonOverride() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      override,
+      reason,
+    }: {
+      id: string;
+      override: LessonOverride;
+      reason?: string;
+    }) =>
+      unwrap(
+        api.POST("/api/v1/brain/lessons/{lesson_id}/override", {
+          params: { path: { lesson_id: id } },
+          body: { override, reason: reason ?? null },
+        }),
+      ),
+    onSuccess: (note) => client.setQueryData(keys.brainNote(note.note_id), note),
+    onSettled: () => client.invalidateQueries({ queryKey: ["brain"] }),
+  });
+}
+
+export type ProposalDecision = "accept" | "reject" | "later";
+
+/** The user's decision on a proposal. Accepting changes nothing by itself. */
+export function useDecideProposal() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      decision,
+      reason,
+    }: {
+      id: string;
+      decision: ProposalDecision;
+      reason?: string;
+    }) =>
+      unwrap(
+        api.POST("/api/v1/brain/proposals/{proposal_id}/decision", {
+          params: { path: { proposal_id: id } },
+          body: { decision, reason: reason ?? null },
+        }),
+      ),
+    onSuccess: (note) => client.setQueryData(keys.brainNote(note.note_id), note),
+    onSettled: () => client.invalidateQueries({ queryKey: ["brain"] }),
+  });
+}
+
+export type DebriefSchedule = Schemas["DebriefScheduleResult"];
+
+/** When the daily debrief runs on its own, and when it's next due. */
+export function useDebriefSchedule() {
+  return useQuery({
+    queryKey: keys.debriefSchedule,
+    queryFn: () => unwrap(api.GET("/api/v1/brain/debrief-schedule")),
+  });
+}
+
+/** Whether the brain is being read over the last `days` days, counted from the record. */
+export function useLearning(days = 30) {
+  return useQuery({
+    queryKey: keys.brainLearning(days),
+    queryFn: () => unwrap(api.GET("/api/v1/brain/learning", { params: { query: { days } } })),
+  });
+}
+
+/** Turns the daily debrief on at `at` (HH:MM, 15:40 or later), or off with null. */
+export function useScheduleDebrief() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (at: string | null) =>
+      unwrap(api.PUT("/api/v1/brain/debrief-schedule", { body: { at } })),
+    onSuccess: (schedule) => client.setQueryData(keys.debriefSchedule, schedule),
+  });
+}
+
+/** Has openticker-serve debrief a day now; by default the latest one closed. */
+export function useStartDebrief() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (date: string | null) =>
+      unwrap(api.POST("/api/v1/brain/debrief", { body: { trading_date: date } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.agentJobs }),
   });
 }

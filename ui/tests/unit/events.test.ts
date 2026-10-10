@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+  BELL_KINDS,
+  brainPageOf,
   byLabel,
+  dayOf,
   describe as describeEvent,
   fromDate,
   queriesToInvalidate,
+  strategyOf,
   tierOf,
 } from "../../src/lib/events";
 import type { AuditEntry } from "../../src/stream/connection";
@@ -130,5 +134,134 @@ describe("settings events", () => {
       describeEvent(entry("ChargeRatesChecked", { broker: "zerodha", differing: 0, checked: 16 }))
         .text,
     ).toBe("Charges checked: 16 orders match Zerodha's contract note");
+  });
+});
+
+describe("agent jobs by their title", () => {
+  const debrief = {
+    kind: "debrief",
+    strategy_id: null,
+    subject: "2026-10-05",
+    title: "Debrief of Mon 5 Oct",
+    reason: "finished",
+  };
+
+  test("a debrief job is named by its title, opens its day, and refreshes the brain", () => {
+    expect(describeEvent(entry("AgentJobEnded", debrief)).text).toBe("Debrief of Mon 5 Oct is in");
+    expect(describeEvent(entry("AgentJobEnded", debrief)).kind).toBe("Debrief");
+    expect(describeEvent(entry("AgentJobStarted", { ...debrief, harness: "codex" })).text).toBe(
+      "Debrief of Mon 5 Oct started (Codex)",
+    );
+    expect(byLabel(entry("AgentJobEnded", debrief))).toBe("Debrief job");
+    expect(dayOf(entry("AgentJobEnded", debrief))).toBe("2026-10-05");
+    expect(strategyOf(entry("AgentJobEnded", debrief))).toBeNull();
+    expect(queriesToInvalidate(entry("AgentJobEnded", debrief))).toEqual([
+      ["agent-jobs"],
+      ["brain"],
+    ]);
+  });
+
+  test("a review job reads as before, older entries without a title too", () => {
+    const review = {
+      kind: "review",
+      strategy_id: "s1",
+      strategy_name: "condor",
+      reason: "timeout",
+    };
+    expect(describeEvent(entry("AgentJobEnded", { ...review, detail: "too slow" })).text).toBe(
+      "Review of condor ended: too slow",
+    );
+    expect(
+      describeEvent(
+        entry("AgentJobEnded", { ...review, title: "Review of condor", reason: "finished" }),
+      ).text,
+    ).toBe("Review of condor answered");
+    expect(byLabel(entry("AgentJobStarted", review))).toBe("Review job");
+    expect(dayOf(entry("AgentJobEnded", review))).toBeNull();
+  });
+});
+
+describe("the brain's events", () => {
+  const names = new Map([["stg_1", "NIFTY short straddle"]]);
+
+  test("a debrief: worth knowing when written in a session, a record from its own job", () => {
+    const written = entry("DebriefWritten", {
+      trading_date: "2026-10-05",
+      note_id: "bn_1",
+      headline: "Straddle sold into rich IV",
+    });
+    expect(describeEvent(written).text).toBe("Debrief of Mon 5 Oct: Straddle sold into rich IV");
+    expect(tierOf({ ...written, triggered_by: "mcp:claude-code" })).toBe("worth-knowing");
+    expect(tierOf({ ...written, triggered_by: "debrief:2026-10-05" })).toBe("record");
+    const quiet = entry("DebriefWritten", {
+      trading_date: "2026-10-05",
+      headline: "No trades",
+      quiet: true,
+    });
+    expect(tierOf(quiet)).toBe("record");
+    expect(describeEvent(quiet).text).toBe("Mon 5 Oct was quiet: No trades");
+    expect(brainPageOf(written)).toBe("/brain/days/2026-10-05");
+  });
+
+  test("a lesson's status moving says from and to, with its checks", () => {
+    const moved = entry("LessonStatusChanged", {
+      lesson_id: "les_1",
+      title: "Exit by 11:00",
+      previous: "tested",
+      status: "rule",
+      held: 8,
+      checks: 10,
+    });
+    expect(describeEvent(moved)).toEqual({
+      kind: "Lesson",
+      tone: "up",
+      text: "Exit by 11:00: tested → rule, held 8 of 10",
+    });
+    const retired = entry("LessonStatusChanged", {
+      title: "Exit by 11:00",
+      previous: "hunch",
+      status: "retired",
+      override: "retired",
+      reason: "one day only",
+      held: 0,
+      checks: 0,
+    });
+    expect(describeEvent(retired).text).toBe("Exit by 11:00 retired by hand: one day only");
+    expect(tierOf(moved)).toBe("worth-knowing");
+    expect(brainPageOf(moved)).toBe("/brain/lessons/les_1");
+  });
+
+  test("proposals name their strategy; deciding one is a record", () => {
+    const raised = entry("ProposalRaised", {
+      proposal_id: "prp_1",
+      strategy_id: "stg_1",
+      change: "Exit by 11:00 on expiry",
+    });
+    const rejected = entry("ProposalDecided", {
+      proposal_id: "prp_1",
+      strategy_id: "stg_1",
+      change: "Exit by 11:00 on expiry",
+      decision: "reject",
+      reason: "Keep the theta",
+    });
+    expect(describeEvent(raised, names).text).toBe(
+      "Proposed for NIFTY short straddle: Exit by 11:00 on expiry",
+    );
+    expect(describeEvent(rejected, names).text).toBe(
+      "NIFTY short straddle: Exit by 11:00 on expiry rejected (“Keep the theta”)",
+    );
+    expect([tierOf(raised), tierOf(rejected)]).toEqual(["worth-knowing", "record"]);
+    // Its Open goes to the proposal, not the strategy it names.
+    expect(brainPageOf(raised)).toBe("/brain/proposals/prp_1");
+  });
+
+  test("every brain event refetches the brain and nothing else; the bell has the worth-knowing ones", () => {
+    for (const type of ["DebriefWritten", "LessonWritten", "ProposalRaised", "BrainNoteEdited"]) {
+      expect(queriesToInvalidate(entry(type))).toEqual([["brain"]]);
+    }
+    expect(BELL_KINDS).toEqual(
+      expect.arrayContaining(["DebriefWritten", "LessonStatusChanged", "ProposalRaised"]),
+    );
+    expect(BELL_KINDS).not.toContain("LessonWritten");
   });
 });

@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   Bot,
+  Brain,
   FileCode2,
   Layers,
   LayoutDashboard,
@@ -30,6 +31,7 @@ export const PAGES: NavPage[] = [
   { path: "/trades", label: "Trades", icon: ArrowLeftRight, key: "t" },
   { path: "/strategies", label: "Strategies", icon: Workflow, key: "s" },
   { path: "/scripts", label: "Scripts", icon: FileCode2, key: "c" },
+  { path: "/brain", label: "Brain", icon: Brain, key: "b" },
   { path: "/agents", label: "Agents", icon: Bot, key: "a" },
   { path: "/activity", label: "Activity", icon: ScrollText, key: "l" },
 ];
