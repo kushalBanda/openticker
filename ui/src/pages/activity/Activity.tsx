@@ -125,6 +125,7 @@ export function Activity() {
             { value: "risk", label: "Risk" },
             { value: "broker", label: "Broker" },
             { value: "agents", label: "Agents" },
+            { value: "brain", label: "Brain" },
           ]}
         />
         <span className="flex-1" />

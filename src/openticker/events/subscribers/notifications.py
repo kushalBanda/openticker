@@ -86,11 +86,11 @@ def describe(event: object) -> tuple[str, str] | None:
             if event.reason == "finished" and event.summary:
                 headline = event.summary.strip().splitlines()[0][:120]
                 return (
-                    f"{event.kind.capitalize()} of {event.strategy_name}: {headline}",
+                    f"{event.title}: {headline}",
                     f"{event.summary}\n\nJob {event.job_id}.{cost}",
                 )
             return (
-                f"{event.kind.capitalize()} of {event.strategy_name} {event.reason}",
+                f"{event.title} {event.reason}",
                 f"{event.detail}. Job {event.job_id}; get_agent_job_log shows its output.{cost}",
             )
         case ChargeRatesDiffer():

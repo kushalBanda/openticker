@@ -33,7 +33,7 @@ secret.key
 
 # Local tooling
 .codegraph/
-.agents/
+/.agents/
 .mcp.json
 skills-lock.json
 .claude/skills/

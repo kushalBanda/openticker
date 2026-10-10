@@ -404,6 +404,7 @@ STRADDLE_JSON = {
 
 def test_strategy_tools_round_trip_and_preview() -> None:
     from openticker.adapters.inbound.mcp_models import StrategyDefinition
+    from tests.adapters.inbound.test_rest_api import _created_by
     from tests.fixtures.strategies import list_nifty_market
 
     list_nifty_market()
@@ -414,6 +415,7 @@ def test_strategy_tools_round_trip_and_preview() -> None:
     preview = mcp_server.preview_strategy(broker="fake", strategy_id=created.strategy_id)
 
     assert fetched.definition == definition
+    assert _created_by(created.strategy_id) == mcp_server._who()
     assert fetched.definition.lock_profit is not None
     assert fetched.definition.lock_profit.mode == "lock"
     assert "preview_strategy" in (created.next_step or "")

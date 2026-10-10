@@ -3,7 +3,7 @@ import { nextLink } from "./links";
 
 // Agents (ADR 29, ADR 35): the MCP clients e2e_hosted.py seeded (Claude Code,
 // Codex) and two review jobs — RELIANCE breakout waiting, BANKNIFTY iron
-// condor already timed out. The proof stops the waiting one; starting a real
+// condor already timed out — and e2e_brain.py's debrief of today, finished. The proof stops the waiting one; starting a real
 // review would need an actual coding agent binary, which this suite doesn't have.
 
 async function signIn(page: Page) {
@@ -52,8 +52,15 @@ test("shows the connected clients, the review settings, and both seeded jobs", a
   await expect(kvValue(page, "Harness")).toHaveText("Claude Code");
   await expect(kvValue(page, "Running now")).toHaveText("0");
   await expect(kvValue(page, "Waiting")).toHaveText("1");
-  await expect(page.getByTestId("jobs-today")).toHaveText("0 of 20");
+  await expect(page.getByTestId("jobs-today")).toHaveText("1 of 20"); // today's debrief
   await expect(kvValue(page, "Time limit")).toHaveText("15 min a job");
+
+  // Brain's proof asked for another and stopped it before this ran.
+  const debrief = jobRow(page, "Debrief of").filter({ hasText: "Finished" });
+  await expect(debrief).toHaveCount(1);
+  await debrief.getByRole("link", { name: /^Debrief of / }).click();
+  await expect(page).toHaveURL(/\/brain\/days\/\d{4}-\d{2}-\d{2}$/);
+  await page.goBack();
 
   const reliance = jobRow(page, "RELIANCE breakout").first();
   await expect(reliance).toContainText("Waiting");

@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from importlib.metadata import version
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -37,6 +37,10 @@ from openticker.adapters.inbound.mcp_models import (
     AuditLogResult,
     BarsResult,
     BasketResult,
+    BrainFoundResult,
+    BrainGraphResult,
+    BrainNoteResult,
+    BrainNotesResult,
     CancelAllResult,
     CancelOrderResult,
     ChargeCheckResult,
@@ -44,11 +48,17 @@ from openticker.adapters.inbound.mcp_models import (
     ChargesSummaryResult,
     CloseAllResult,
     ConnectResult,
+    DayRecordResult,
+    DebriefScheduleResult,
     DeleteScriptResult,
     DeleteStrategyResult,
     DeleteWatchlistResult,
     FundsResult,
+    HindsightInput,
     InstrumentRef,
+    LearningResult,
+    LessonCheckedResult,
+    LessonUseResult,
     LoginUrlResult,
     MarginResult,
     MarketDepthResult,
@@ -79,6 +89,7 @@ from openticker.adapters.inbound.mcp_models import (
     ScriptsResult,
     SearchResult,
     SignalStrategyDefinition,
+    StartDebriefResult,
     StartReviewResult,
     StrategiesResult,
     StrategyCommandResult,
@@ -92,6 +103,7 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySummary,
     SyncResult,
     TradebookResult,
+    TradeNoteInput,
     WatchlistResult,
     WatchlistsResult,
     WebhookResult,
@@ -101,6 +113,7 @@ from openticker.adapters.inbound.web.app import mount_web
 from openticker.adapters.inbound.web.auth import (
     Caller,
     WebSettings,
+    refuse_outside_scope,
     require_scope,
 )
 from openticker.adapters.inbound.web.stream import StreamHub
@@ -112,7 +125,26 @@ from openticker.composition import (
     order_broker,
     script_limits,
 )
+from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
 from openticker.core.agents.reviews import ReviewScheduleError
+from openticker.core.brain.lessons import (
+    MAX_APPLIES_TO,
+    MAX_EVIDENCE,
+    CheckOutcome,
+    Override,
+    UsePurpose,
+)
+from openticker.core.brain.notes import (
+    MAX_BODY,
+    MAX_HINDSIGHT,
+    MAX_LINE,
+    MAX_TITLE,
+    MAX_TRADE_NOTES,
+    BrainNoteError,
+    Debrief,
+    NoteKind,
+)
+from openticker.core.brain.proposals import MAX_BASED_ON, Decision, Proposal
 from openticker.core.calendar.calendar import CalendarError
 from openticker.core.options.payoff import PayoffInputError
 from openticker.core.options.underlyings import UnsupportedUnderlyingError
@@ -134,6 +166,7 @@ from openticker.ports.models import (
 )
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError
+from openticker.storage.sqlite.brain_repo import StaleVersionError
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
 from openticker.storage.sqlite.strategies_repo import DuplicateStrategyNameError
 from openticker.storage.sqlite.watchlists_repo import (
@@ -154,6 +187,20 @@ from openticker.use_cases.api_keys import (
     ManagedApiKeyError,
     UnknownApiKeyError,
 )
+from openticker.use_cases.brain import debrief as brain_debrief
+from openticker.use_cases.brain import write as brain_write
+from openticker.use_cases.brain.read import (
+    MAX_LEARNING_DAYS,
+    MAX_SEARCH,
+    UnknownNoteError,
+    Window,
+    get_day_record,
+    get_graph,
+    get_learning,
+    get_note,
+    search_brain,
+)
+from openticker.use_cases.brain.write import edit_user_note, write_debrief
 from openticker.use_cases.cancel_all_orders import cancel_all_orders
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.check_charge_rates import NoChargeSamplesError, check_charge_rates
@@ -248,6 +295,10 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownScriptError, 404),
     (UnknownApiKeyError, 404),
     (UnknownWatchlistError, 404),
+    (UnknownNoteError, 404),
+    (StaleVersionError, 409),
+    (BrainNoteError, 422),
+    (DebriefScheduleError, 422),
     (DuplicateWatchlistNameError, 409),
     (WatchlistLimitError, 409),
     (InvalidWatchlistNameError, 422),
@@ -319,6 +370,71 @@ _PREVIEW_NEXT_STEP = (
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
+
+
+class DebriefBody(BaseModel):
+    headline: str = Field(max_length=MAX_LINE)
+    happened: str = Field(max_length=MAX_BODY)
+    trade_notes: list[TradeNoteInput] = Field(default=[], max_length=MAX_TRADE_NOTES)
+    hindsight: list[HindsightInput] = Field(default=[], max_length=MAX_HINDSIGHT)
+
+
+class UserNoteBody(BaseModel):
+    text: str = Field(max_length=MAX_BODY, description="Markdown; blank clears it.")
+    version: int = Field(description="The note's version the edit started from.")
+
+
+class LessonBody(BaseModel):
+    title: str = Field(max_length=MAX_TITLE)
+    body: str = Field(max_length=MAX_BODY)
+    applies_to: list[str] = Field(default=[], max_length=MAX_APPLIES_TO)
+    evidence: list[str] = Field(default=[], max_length=MAX_EVIDENCE)
+
+
+class LessonChangeBody(BaseModel):
+    title: str | None = Field(default=None, max_length=MAX_TITLE)
+    body: str | None = Field(default=None, max_length=MAX_BODY)
+    applies_to: list[str] | None = Field(default=None, max_length=MAX_APPLIES_TO)
+
+
+class LessonCheckBody(BaseModel):
+    run_id: str | None = None
+    order_id: str | None = None
+    outcome: CheckOutcome
+    observed: str | None = Field(default=None, max_length=MAX_LINE)
+    why: str = Field(max_length=MAX_LINE)
+
+
+class LessonUseBody(BaseModel):
+    purpose: UsePurpose
+    strategy_id: str | None = None
+    how: str = Field(max_length=MAX_LINE)
+
+
+class LessonOverrideBody(BaseModel):
+    override: Literal["retired", "reinstated", "none"]
+    reason: str | None = Field(default=None, max_length=MAX_LINE)
+
+
+class ProposalBody(BaseModel):
+    strategy_id: str
+    change: str = Field(max_length=MAX_TITLE)
+    why: str = Field(max_length=MAX_BODY)
+    wrong_if: str = Field(max_length=MAX_LINE)
+    based_on: list[str] = Field(default=[], max_length=MAX_BASED_ON)
+
+
+class DecisionBody(BaseModel):
+    decision: Decision
+    reason: str | None = Field(default=None, max_length=MAX_LINE)
+
+
+class StartDebriefBody(BaseModel):
+    trading_date: date | None = Field(default=None, description="Omit: the latest closed day.")
+
+
+class DebriefScheduleBody(BaseModel):
+    at: str | None = Field(default=None, description="HH:MM, 15:40 or later; null: off.")
 
 
 class WatchlistNameBody(BaseModel):
@@ -810,6 +926,197 @@ def create_app(
             total=round(sum(m.total for m in months), 2),
         )
 
+    @api.get("/brain/graph")
+    def brain_graph(window: Window = "30") -> BrainGraphResult:
+        """The brain's notes in a window of trading days and the links among them."""
+        return BrainGraphResult.of(get_graph(window, clock(), load_calendar()))
+
+    @api.get("/brain/notes")
+    def brain_notes(
+        query: Annotated[str | None, Query(max_length=200)] = None,
+        kind: NoteKind | None = None,
+        status: str | None = None,
+        strategy_id: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_SEARCH)] = 20,
+    ) -> BrainNotesResult:
+        """Notes by text, kind, status or strategy, newest first."""
+        found = search_brain(query, kind, status, strategy_id, limit, clock())
+        return BrainNotesResult(notes=[BrainFoundResult.of(f) for f in found])
+
+    @api.get("/brain/notes/{note_id}")
+    def brain_note(note_id: str) -> BrainNoteResult:
+        """One note with its links, backlinks and the facts it cites."""
+        return BrainNoteResult.of_view(get_note(note_id))
+
+    @api.get("/brain/days/{trading_date}/record")
+    def day_record(trading_date: date, broker: Broker) -> DayRecordResult:
+        """One trading day: P&L, trades by run or order, owed checks, the debrief's words."""
+        record = get_day_record(
+            trading_date, order_broker(broker, env, clock), clock(), load_calendar()
+        )
+        return DayRecordResult.of(record, placer_names(t.triggered_by for t in record.trades))
+
+    @api.put("/brain/days/{trading_date}")
+    def debrief(trading_date: date, body: DebriefBody, caller: Caller) -> BrainNoteResult:
+        """Writes the day's debrief; again replaces it. The user's note is kept."""
+        written = write_debrief(
+            Debrief(
+                trading_date,
+                body.headline,
+                body.happened,
+                tuple(n.to_core() for n in body.trade_notes),
+                tuple(h.to_core() for h in body.hindsight),
+            ),
+            events,
+            clock(),
+            load_calendar(),
+            caller.triggered_by,
+        )
+        return BrainNoteResult.of_view(written)
+
+    @api.patch("/brain/notes/{note_id}")
+    def edit_note(note_id: str, body: UserNoteBody, caller: Caller) -> BrainNoteResult:
+        """The user's own part of a note. 409 when the note changed since `version`."""
+        return BrainNoteResult.of_view(
+            edit_user_note(note_id, body.text, body.version, events, clock(), caller.triggered_by)
+        )
+
+    @api.post("/brain/lessons")
+    def new_lesson(body: LessonBody, caller: Caller) -> BrainNoteResult:
+        """A new lesson; a hunch until its checks say more."""
+        return BrainNoteResult.of_view(
+            brain_write.create_lesson(
+                body.title,
+                body.body,
+                body.applies_to,
+                body.evidence,
+                events,
+                clock(),
+                caller.triggered_by,
+            )
+        )
+
+    @api.patch("/brain/lessons/{lesson_id}")
+    def change_lesson(lesson_id: str, body: LessonChangeBody, caller: Caller) -> BrainNoteResult:
+        """A lesson's title, text or strategies; omitted ones stay."""
+        return BrainNoteResult.of_view(
+            brain_write.update_lesson(
+                lesson_id,
+                body.title,
+                body.body,
+                body.applies_to,
+                events,
+                clock(),
+                caller.triggered_by,
+            )
+        )
+
+    @api.post("/brain/lessons/{lesson_id}/checks")
+    def lesson_check(lesson_id: str, body: LessonCheckBody, caller: Caller) -> LessonCheckedResult:
+        """Whether the lesson held on an ended run or an order outside a strategy."""
+        refuse_outside_scope(
+            caller, "check_lesson", {"run_id": body.run_id, "order_id": body.order_id}
+        )
+        view, check, replaced = brain_write.check_lesson(
+            lesson_id,
+            body.run_id,
+            body.order_id,
+            body.outcome,
+            body.observed,
+            body.why,
+            events,
+            clock(),
+            caller.triggered_by,
+        )
+        return LessonCheckedResult.of(view, check, replaced)
+
+    @api.post("/brain/lessons/{lesson_id}/uses")
+    def lesson_use(lesson_id: str, body: LessonUseBody, caller: Caller) -> LessonUseResult:
+        """That a lesson was relied on, and for what."""
+        refuse_outside_scope(caller, "record_lesson_use", {"strategy_id": body.strategy_id})
+        return LessonUseResult.of(
+            brain_write.record_lesson_use(
+                lesson_id,
+                body.purpose,
+                body.strategy_id,
+                body.how,
+                None,
+                clock(),
+                caller.triggered_by,
+            )
+        )
+
+    @api.post("/brain/lessons/{lesson_id}/override")
+    def lesson_override(
+        lesson_id: str, body: LessonOverrideBody, caller: Caller
+    ) -> BrainNoteResult:
+        """Retire a lesson (with a reason), reinstate it, or clear either."""
+        return BrainNoteResult.of_view(
+            brain_write.set_lesson_override(
+                lesson_id,
+                None if body.override == "none" else Override(body.override),
+                body.reason,
+                events,
+                clock(),
+                caller.triggered_by,
+            )
+        )
+
+    @api.post("/brain/proposals")
+    def new_proposal(body: ProposalBody, caller: Caller) -> BrainNoteResult:
+        """One change to one strategy, for the user to decide."""
+        refuse_outside_scope(caller, "raise_proposal", {"strategy_id": body.strategy_id})
+        return BrainNoteResult.of_view(
+            brain_write.raise_proposal(
+                Proposal(
+                    body.strategy_id, body.change, body.why, body.wrong_if, tuple(body.based_on)
+                ),
+                events,
+                clock(),
+                caller.triggered_by,
+            )
+        )
+
+    @api.post("/brain/proposals/{proposal_id}/decision")
+    def proposal_decision(proposal_id: str, body: DecisionBody, caller: Caller) -> BrainNoteResult:
+        """Accept, reject with a reason, or later. Accept and reject are final."""
+        return BrainNoteResult.of_view(
+            brain_write.decide_proposal(
+                proposal_id, body.decision, body.reason, events, clock(), caller.triggered_by
+            )
+        )
+
+    @api.post("/brain/debrief")
+    def debrief_now(body: StartDebriefBody, caller: Caller) -> StartDebriefResult:
+        """Asks openticker-serve to debrief a day now with the user's coding agent."""
+        job = brain_debrief.start_debrief(
+            body.trading_date, agent_settings(env), caller.triggered_by, clock(), load_calendar()
+        )
+        return StartDebriefResult(job=AgentJobResult.of(job, {}))
+
+    @api.put("/brain/debrief-schedule")
+    def set_debrief_schedule(body: DebriefScheduleBody) -> DebriefScheduleResult:
+        """The daily debrief's time after the close, or off."""
+        schedule = parse_at(body.at) if body.at else None
+        return DebriefScheduleResult.of(
+            *brain_debrief.schedule_debrief(schedule, clock(), load_calendar())
+        )
+
+    @api.get("/brain/learning")
+    def learning(
+        days: Annotated[int, Query(ge=1, le=MAX_LEARNING_DAYS)] = 30,
+    ) -> LearningResult:
+        """Whether the brain is being read: designs and reviews citing a
+        lesson, checks given and owed, lessons that held."""
+        return LearningResult.of(get_learning(days, clock()))
+
+    @api.get("/brain/debrief-schedule")
+    def debrief_schedule() -> DebriefScheduleResult:
+        """When the daily debrief runs, and when it's next due."""
+        return DebriefScheduleResult.of(
+            *brain_debrief.get_debrief_schedule(clock(), load_calendar())
+        )
+
     @api.get("/watchlists")
     def watchlists() -> WatchlistsResult:
         """Every watchlist with its instruments, in the order they were made."""
@@ -897,9 +1204,9 @@ def create_app(
         )
 
     @api.post("/strategies")
-    def new_strategy(body: StrategyBody) -> StrategyResult:
+    def new_strategy(body: StrategyBody, caller: Caller) -> StrategyResult:
         """Saves a definition. Places nothing."""
-        stored = create_strategy(body.name, body.definition.to_spec(), clock())
+        stored = create_strategy(body.name, body.definition.to_spec(), clock(), caller.triggered_by)
         return StrategyResult.of(stored, _STRATEGY_NEXT_STEP)
 
     @api.get("/strategies")
@@ -972,9 +1279,9 @@ def create_app(
         return StrategyCommandResult.of(command, False, _COMMAND_NEXT_STEP)
 
     @api.post("/signal-strategies")
-    def new_signal_strategy(body: SignalStrategyBody) -> StrategyResult:
+    def new_signal_strategy(body: SignalStrategyBody, caller: Caller) -> StrategyResult:
         """Saves a strategy alerts drive; places nothing."""
-        stored = create_strategy(body.name, body.definition.to_spec(), clock())
+        stored = create_strategy(body.name, body.definition.to_spec(), clock(), caller.triggered_by)
         return StrategyResult.of(
             stored, "POST /api/v1/strategies/{strategy_id}/webhook gives it an alert URL."
         )
@@ -1024,7 +1331,7 @@ def create_app(
         job = agent_jobs.start_review(
             strategy_id, agent_settings(env), caller.triggered_by, clock()
         )
-        return StartReviewResult(job=AgentJobResult.of(job))
+        return StartReviewResult(job=AgentJobResult.of(job, agent_jobs.strategy_names()))
 
     @api.post("/strategies/{strategy_id}/review-schedule")
     def schedule_review(strategy_id: str, body: ReviewScheduleDefinition) -> StrategyResult:
@@ -1046,7 +1353,8 @@ def create_app(
     ) -> AgentJobsResult:
         """Agent jobs, newest first."""
         found = agent_jobs.get_agent_jobs(limit, strategy_id)
-        return AgentJobsResult(jobs=[AgentJobResult.of(job) for job in found])
+        names = agent_jobs.strategy_names()
+        return AgentJobsResult(jobs=[AgentJobResult.of(job, names) for job in found])
 
     @api.get("/agent-jobs/{job_id}/log")
     def job_log(job_id: str) -> AgentJobLogResult:
@@ -1057,7 +1365,8 @@ def create_app(
     def stop_job(job_id: str, caller: Caller) -> AgentJobResult:
         """Ends a waiting job at once; asks a running one to stop."""
         return AgentJobResult.of(
-            agent_jobs.stop_agent_job(job_id, events, caller.triggered_by, clock())
+            agent_jobs.stop_agent_job(job_id, events, caller.triggered_by, clock()),
+            agent_jobs.strategy_names(),
         )
 
     @api.get("/runs/{run_id}")

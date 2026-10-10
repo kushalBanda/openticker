@@ -4,6 +4,7 @@
 // the bell and the Activity page read an event the same way.
 
 import type { AuditEntry } from "../stream/connection";
+import { dayTitle, statusLabel } from "./brain";
 import { instrumentName, price, qty, rupees, type Source, signed, sourceLabel } from "./format";
 import { contractOf } from "./strategies";
 
@@ -31,6 +32,9 @@ const RECORDS = new Set([
   "ChargeRatesChecked",
   "PaperAccountReset",
   "WatchlistChanged",
+  "LessonWritten",
+  "ProposalDecided",
+  "BrainNoteEdited",
 ]);
 
 type Details = Record<string, unknown>;
@@ -47,6 +51,12 @@ export function tierOf(entry: AuditEntry): Tier {
   if (entry.event_type === "BrokerSessionExpired") return "must-act";
   if (entry.event_type === "StrategyStopped" && MUST_ACT_STOPS.has(text(d, "reason"))) {
     return "must-act";
+  }
+  // A debrief job's own end already says its debrief is in; a quiet day is a record.
+  if (entry.event_type === "DebriefWritten") {
+    return d.quiet === true || (entry.triggered_by ?? "").startsWith("debrief:")
+      ? "record"
+      : "worth-knowing";
   }
   return RECORDS.has(entry.event_type) ? "record" : "worth-knowing";
 }
@@ -185,25 +195,96 @@ export function describe(
         text: `${text(d, "name")} ${fine ? "ended" : "failed"}: ${text(d, "detail") || words(reason)}`,
       };
     }
-    case "AgentJobStarted":
+    case "AgentJobStarted": {
+      // Older entries have no title: they were all reviews.
+      const title = text(d, "title") || `Review of ${strategy}`;
       return {
-        kind: "Review",
+        kind: jobKind(d),
         tone: undefined,
-        text: `Review of ${strategy} started (${text(d, "harness") === "codex" ? "Codex" : "Claude"})`,
-      };
-    case "AgentJobEnded": {
-      const done = text(d, "reason") === "finished";
-      return {
-        kind: "Review",
-        tone: done ? undefined : "down",
-        text: done
-          ? `Review of ${text(d, "strategy_name")} answered`
-          : `Review of ${text(d, "strategy_name")} ended: ${text(d, "detail") || words(text(d, "reason"))}`,
+        text: `${title} started (${text(d, "harness") === "codex" ? "Codex" : "Claude"})`,
       };
     }
+    case "AgentJobEnded": {
+      const done = text(d, "reason") === "finished";
+      const title = text(d, "title") || `Review of ${text(d, "strategy_name")}`;
+      return {
+        kind: jobKind(d),
+        tone: done ? undefined : "down",
+        text: done
+          ? `${title} ${text(d, "kind") === "debrief" ? "is in" : "answered"}`
+          : `${title} ended: ${text(d, "detail") || words(text(d, "reason"))}`,
+      };
+    }
+    case "DebriefWritten": {
+      const day = dayTitle(text(d, "trading_date"));
+      return d.quiet === true
+        ? { kind: "Debrief", tone: undefined, text: `${day} was quiet: ${text(d, "headline")}` }
+        : { kind: "Debrief", tone: undefined, text: `Debrief of ${day}: ${text(d, "headline")}` };
+    }
+    case "LessonWritten":
+      return {
+        kind: "Lesson",
+        tone: undefined,
+        text: `${text(d, "change") === "created" ? "New lesson" : "Lesson changed"}: ${text(d, "title")}`,
+      };
+    case "LessonStatusChanged":
+      return { kind: "Lesson", tone: lessonTone(text(d, "status")), text: lessonText(d) };
+    case "ProposalRaised":
+      return {
+        kind: "Proposal",
+        tone: "accent",
+        text: `Proposed for ${proposalStrategy(d, names)}: ${text(d, "change")}`,
+      };
+    case "ProposalDecided": {
+      const decision = text(d, "decision");
+      const reason = text(d, "reason");
+      const what = `${proposalStrategy(d, names)}: ${text(d, "change")}`;
+      return {
+        kind: "Proposal",
+        tone: undefined,
+        text:
+          decision === "accept"
+            ? `${what} accepted`
+            : decision === "reject"
+              ? `${what} rejected${reason ? ` (“${reason}”)` : ""}`
+              : `${what} put off`,
+      };
+    }
+    case "BrainNoteEdited":
+      return { kind: "Note", tone: undefined, text: `Your note on ${text(d, "title")} changed` };
     default:
       return { kind: entry.event_type, tone: undefined, text: "" };
   }
+}
+
+function lessonTone(status: string): Tone {
+  return status === "rule"
+    ? "up"
+    : status === "retired"
+      ? "down"
+      : status === "hunch"
+        ? "warn"
+        : undefined;
+}
+
+function lessonText(d: Details): string {
+  const title = text(d, "title");
+  const status = statusLabel(text(d, "status")).toLowerCase();
+  const reason = text(d, "reason");
+  if (text(d, "override") === "retired" && text(d, "status") === "retired") {
+    return `${title} retired by hand${reason ? `: ${reason}` : ""}`;
+  }
+  const checks = num(d, "checks") ?? 0;
+  const counted = checks ? `, held ${num(d, "held") ?? 0} of ${checks}` : "";
+  return `${title}: ${statusLabel(text(d, "previous")).toLowerCase()} → ${status}${counted}`;
+}
+
+function proposalStrategy(d: Details, names: ReadonlyMap<string, string>): string {
+  return names.get(text(d, "strategy_id")) ?? "a strategy";
+}
+
+function jobKind(d: Details): string {
+  return text(d, "kind") === "debrief" ? "Debrief" : "Review";
 }
 
 function watchlistText(d: Details): string {
@@ -232,14 +313,40 @@ export function byLabel(entry: AuditEntry, names: ReadonlyMap<string, string> = 
     const name = names.get(id);
     return name ? `Alert → ${name}` : "An alert";
   }
-  if (entry.event_type.startsWith("AgentJob")) return "Review job";
+  if (entry.event_type.startsWith("AgentJob")) return `${jobKind(entry.details)} job`;
   return sourceLabel(source);
 }
 
 /** The strategy an entry is about, for its Open link. */
 export function strategyOf(entry: AuditEntry): string | null {
   const id = entry.details.strategy_id;
-  return typeof id === "string" ? id : null;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** The brain page an entry is about, for its Open link: a day, a lesson or a proposal. */
+export function brainPageOf(entry: AuditEntry): string | null {
+  const d = entry.details;
+  switch (entry.event_type) {
+    case "DebriefWritten":
+      return text(d, "trading_date") ? `/brain/days/${text(d, "trading_date")}` : null;
+    case "LessonWritten":
+    case "LessonStatusChanged":
+      return text(d, "lesson_id") ? `/brain/lessons/${text(d, "lesson_id")}` : null;
+    case "ProposalRaised":
+    case "ProposalDecided":
+      return text(d, "proposal_id") ? `/brain/proposals/${text(d, "proposal_id")}` : null;
+    case "BrainNoteEdited":
+      return text(d, "note_id") ? `/brain#${text(d, "note_id")}` : null;
+    default:
+      return null;
+  }
+}
+
+/** The trading day a debrief job's entry is about, for its Open link. */
+export function dayOf(entry: AuditEntry): string | null {
+  if (!entry.event_type.startsWith("AgentJob") || entry.details.kind !== "debrief") return null;
+  const day = entry.details.subject;
+  return typeof day === "string" && day ? day : null;
 }
 
 type Key = readonly unknown[];
@@ -279,8 +386,10 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
         : []),
     ];
   }
+  if (BRAIN_EVENTS.has(type)) return [["brain"]];
   if (type.startsWith("AgentJob")) {
     const id = strategyOf(entry);
+    if (dayOf(entry)) return [["agent-jobs"], ["brain"]];
     return [
       ["strategies"],
       ...(id
@@ -295,7 +404,15 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
 }
 
 // The Activity page's filters: kinds of event, and who did it.
-export type KindFilter = "all" | "orders" | "strategies" | "scripts" | "risk" | "broker" | "agents";
+export type KindFilter =
+  | "all"
+  | "orders"
+  | "strategies"
+  | "scripts"
+  | "risk"
+  | "broker"
+  | "agents"
+  | "brain";
 
 export const KINDS: Record<Exclude<KindFilter, "all">, string[]> = {
   orders: [
@@ -319,7 +436,17 @@ export const KINDS: Record<Exclude<KindFilter, "all">, string[]> = {
     "PaperAccountReset",
   ],
   agents: ["AgentJobStarted", "AgentJobEnded"],
+  brain: [
+    "DebriefWritten",
+    "LessonWritten",
+    "LessonStatusChanged",
+    "ProposalRaised",
+    "ProposalDecided",
+    "BrainNoteEdited",
+  ],
 };
+
+const BRAIN_EVENTS = new Set(KINDS.brain);
 
 /** What the bell lists: everything but records. */
 export const BELL_KINDS = Object.values(KINDS)

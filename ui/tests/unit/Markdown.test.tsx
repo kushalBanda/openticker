@@ -1,4 +1,5 @@
 import { render } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test } from "vitest";
 import { Markdown, parseBlocks } from "../../src/components/Markdown";
 
@@ -39,5 +40,50 @@ describe("a review's Markdown", () => {
     const { container } = render(<Markdown text={"<b>x</b> 2 * 3 = 6, max_loss_limit"} />);
     expect(container.querySelector("b")).toBeNull();
     expect(container.textContent).toBe("<b>x</b> 2 * 3 = 6, max_loss_limit");
+  });
+});
+
+describe("a brain note's wikilinks", () => {
+  const NOTE =
+    "Held on [[day:2026-10-05|Monday]]; see [[lesson:les_1a2b3c]], [[symbol: nse:reliance ]] " +
+    "and [[run:run_9]]. [[note:x]] stays text.";
+
+  test("a link the page can place becomes an in-app link, labelled", () => {
+    const seen: string[] = [];
+    const { container } = render(
+      <MemoryRouter>
+        <Markdown
+          text={NOTE}
+          linkTo={(ref) => {
+            seen.push(`${ref.kind}:${ref.key}`);
+            if (ref.kind === "run") return null;
+            return {
+              href: `/brain#${ref.key}`,
+              title: ref.kind === "lesson" ? "Expiry exits" : undefined,
+            };
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(seen).toEqual([
+      "day:2026-10-05",
+      "lesson:les_1a2b3c",
+      "symbol:NSE:RELIANCE",
+      "run:run_9",
+    ]);
+    const links = [...container.querySelectorAll("a.wikilink")];
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Monday", "/brain#2026-10-05"],
+      ["Expiry exits", "/brain#les_1a2b3c"],
+      ["NSE:RELIANCE", "/brain#NSE:RELIANCE"],
+    ]);
+    expect(container.querySelector("span.wikilink")?.textContent).toBe("run_9");
+    expect(container.textContent).toContain("[[note:x]] stays text.");
+  });
+
+  test("without a way to place them, wikilinks are text and the brackets go", () => {
+    const { container } = render(<Markdown text={NOTE} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toContain("Held on Monday; see les_1a2b3c, NSE:RELIANCE");
   });
 });

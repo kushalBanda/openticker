@@ -1,5 +1,6 @@
 """The daemon's side of agent jobs (ADR 29 in docs/adr): asks for the
-reviews that are due on their strategies' schedules, starts pending jobs
+reviews that are due on their strategies' schedules and the day's debrief
+when it is due after the close, starts pending jobs
 one at a time, holds each to its timeout, and records how it ended, with
 the agent's answer and cost when the harness reports them. After a restart,
 a job a previous daemon left running is stopped and ends `lost`: a
@@ -19,14 +20,18 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from openticker.core.agents.debriefs import DebriefOutcome
 from openticker.core.agents.jobs import (
     SCHEDULE_TRIGGER,
     AgentJob,
     AgentJobEndReason,
+    AgentJobKind,
     AgentJobStatus,
     AgentSettings,
     capped,
+    debrief_prompt,
     exit_reason,
+    job_title,
     review_prompt,
 )
 from openticker.core.agents.reviews import review_due
@@ -40,7 +45,13 @@ from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError, re
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError, start_review
-from openticker.use_cases.api_keys import agent_key_name, create_review_key, revoke_agent_keys
+from openticker.use_cases.api_keys import (
+    agent_key_name,
+    create_debrief_key,
+    create_review_key,
+    revoke_agent_keys,
+)
+from openticker.use_cases.brain.debrief import DEBRIEF_TRIGGER, debrief_outcome, write_quiet_day
 from openticker.use_cases.strategies.define import UnknownStrategyError
 from openticker.use_cases.strategies.ledger import ledger_runs
 
@@ -96,6 +107,33 @@ def queue_due_reviews(context: AgentContext, now: datetime) -> list[AgentJob]:
     return queued
 
 
+def queue_due_debrief(context: AgentContext, now: datetime) -> AgentJob | None:
+    """Today's debrief, when it's due (core/agents/debriefs.py): a pending
+    job, or on a quiet day a one-line note the server writes itself. Waits
+    while the day's cap is taken, like a scheduled review."""
+    outcome, today = debrief_outcome(now)
+    if outcome is DebriefOutcome.QUIET:
+        write_quiet_day(today, context.events, now)
+        log.info("debrief of %s: a quiet day, noted without a job", today)
+        return None
+    if outcome is not DebriefOutcome.DUE or _cap_taken(context.settings, now):
+        return None
+    with write_transaction() as session:
+        if agent_jobs_repo.debrief_for(session, today) is not None:
+            return None
+        job = agent_jobs_repo.add_job(
+            session,
+            AgentJobKind.DEBRIEF,
+            None,
+            context.settings.harness,
+            DEBRIEF_TRIGGER,
+            now,
+            subject=today,
+        )
+    log.info("debrief of %s is due: job %s", today, job.id)
+    return job
+
+
 def _cap_taken(settings: AgentSettings, now: datetime) -> bool:
     today = now.astimezone(EXCHANGE_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
     with Session(get_engine()) as session:
@@ -115,36 +153,50 @@ def start_next_job(context: AgentContext, now: datetime) -> None:
             return
         today = now.astimezone(EXCHANGE_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
         started_today = agent_jobs_repo.started_since(session, today)
-        stored = strategies_repo.find_strategy(job.strategy_id)
+        stored = strategies_repo.find_strategy(job.strategy_id) if job.strategy_id else None
         refusal = None
-        if stored is None:
+        if job.kind is AgentJobKind.REVIEW and stored is None:
             refusal = "its strategy was deleted"
+        elif job.kind is AgentJobKind.DEBRIEF and job.subject is None:
+            refusal = "it names no trading day"
         elif started_today >= context.settings.jobs_per_day:
             refusal = f"{context.settings.jobs_per_day} jobs already ran today, the daily cap"
         if refusal is None:
             agent_jobs_repo.mark_started(session, job.id, now)
-    if refusal is not None or stored is None:
-        _end(context, job, AgentJobEndReason.REFUSED, refusal or "", now)
+    if refusal is not None:
+        _end(context, job, AgentJobEndReason.REFUSED, refusal, now)
         return
+    title = job_title(job.kind, stored.name if stored else None, job.subject)
     local = now.astimezone(EXCHANGE_TIMEZONE)
     agent_job_files.append_log(
         job.id,
-        f"=== job {job.id} ({job.kind} of {stored.name}) started {local:%Y-%m-%d %H:%M:%S %Z} "
+        f"=== job {job.id} ({title}) started {local:%Y-%m-%d %H:%M:%S %Z} "
         f"with {job.harness}, asked by {job.trigger} ===",
     )
     try:
-        key = create_review_key(job.strategy_id, job.id, now)
+        if job.kind is AgentJobKind.DEBRIEF:
+            assert job.subject is not None
+            key = create_debrief_key(job.subject, job.id, now)
+            prompt = debrief_prompt(job.subject, job.id, job.trigger)
+            agent, writes_notes = "debrief", False
+        else:
+            assert stored is not None
+            key = create_review_key(stored.id, job.id, now)
+            prompt = review_prompt(stored.name, stored.id, job.id, job.trigger)
+            agent, writes_notes = "reviewer", True
         pid = context.processes.start(
             AgentLaunch(
                 job_id=job.id,
                 harness=job.harness,
-                prompt=review_prompt(stored.name, stored.id, job.id, job.trigger),
+                prompt=prompt,
                 labs_dir=context.labs_dir,
                 log_path=agent_job_files.log_path(job.id),
                 result_path=agent_job_files.result_path(job.id),
                 api_key=key,
                 mcp_url=context.mcp_url,
                 max_budget_usd=context.settings.max_budget_usd,
+                agent=agent,
+                writes_notes=writes_notes,
             )
         )
     except (DuplicateApiKeyNameError, OSError) as exc:
@@ -153,9 +205,11 @@ def start_next_job(context: AgentContext, now: datetime) -> None:
     with write_transaction() as session:
         agent_jobs_repo.mark_running(session, job.id, pid, now)
     agent_job_files.prune({kept.id for kept in agent_jobs_repo.recent_jobs(KEPT_JOBS)})
-    log.info("agent job %s (%s of %s) started, pid %d", job.id, job.kind, stored.name, pid)
+    log.info("agent job %s (%s) started, pid %d", job.id, title, pid)
     context.events.publish(
-        AgentJobStarted(job.id, job.kind, job.strategy_id, job.harness, job.trigger)
+        AgentJobStarted(
+            job.id, job.kind, job.strategy_id, job.subject, title, job.harness, job.trigger
+        )
     )
 
 
@@ -247,12 +301,14 @@ def _end(
         return
     agent_job_files.append_log(job.id, f"=== job {job.id} ended: {reason}, {detail} ===")
     log.info("agent job %s ended: %s, %s", job.id, reason, detail)
-    stored = strategies_repo.find_strategy(job.strategy_id)
+    stored = strategies_repo.find_strategy(job.strategy_id) if job.strategy_id else None
     context.events.publish(
         AgentJobEnded(
             job_id=job.id,
             kind=job.kind,
             strategy_id=job.strategy_id,
+            subject=job.subject,
+            title=job_title(job.kind, stored.name if stored else None, job.subject),
             strategy_name=stored.name if stored else job.strategy_id,
             reason=reason,
             detail=detail,

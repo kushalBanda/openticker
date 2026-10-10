@@ -92,13 +92,21 @@ def _read_only_tools() -> set[str]:
     return {t.name for t in tools if t.annotations and t.annotations.read_only_hint}
 
 
-def test_the_reviewer_can_only_read_openticker() -> None:
+REVIEW_BRAIN_APPENDS = {"check_lesson", "record_lesson_use", "raise_proposal"}
+
+
+def test_reviewer_tools_are_read_only_or_brain_appends() -> None:
+    from openticker.adapters.inbound.scopes import REVIEW_BRAIN_WRITES, REVIEW_ROUTES, TOOL_ROUTES
+
     fields, _ = _claude_reviewer()
     tools = [tool.strip() for tool in fields["tools"].split(",")]
     openticker = {t.removeprefix("mcp__openticker__") for t in tools if "openticker" in t}
 
-    assert "get_strategy_ledger" in openticker
-    assert openticker <= _read_only_tools()
+    assert {"get_strategy_ledger", "search_brain", "get_brain_note"} <= openticker
+    assert REVIEW_BRAIN_APPENDS <= openticker
+    assert openticker - REVIEW_BRAIN_APPENDS <= _read_only_tools()
+    assert {TOOL_ROUTES[t] for t in REVIEW_BRAIN_APPENDS} == REVIEW_BRAIN_WRITES
+    assert {TOOL_ROUTES[t] for t in ("search_brain", "get_brain_note")} <= REVIEW_ROUTES
     assert not {t for t in tools if t.startswith("mcp__") and "openticker" not in t}
 
 
@@ -117,3 +125,50 @@ def test_both_reviewers_follow_their_own_copy_of_the_skill_with_the_same_tools()
     assert ".agents/skills/review-strategy/SKILL.md" in codex["developer_instructions"]
     assert set(server["enabled_tools"]) == claude_tools
     assert {k: server[k] for k in ("command", "args")} == OPENTICKER_SERVER
+
+
+def _claude_agent(name: str) -> tuple[dict[str, str], str]:
+    text = (LABS / ".claude" / "agents" / f"{name}.md").read_text()
+    front = re.match(r"---\n(.*?)\n---\n(.*)", text, re.DOTALL)
+    assert front, f"{name}.md starts with frontmatter"
+    return dict(line.split(": ", 1) for line in front.group(1).splitlines()), front.group(2)
+
+
+def test_debrief_agent_and_skill_exist_in_both_trees_identically() -> None:
+    fields, body = _claude_agent("debrief")
+    codex = tomllib.loads((LABS / ".codex" / "agents" / "debrief.toml").read_text())
+    claude_tools = {
+        t.strip().removeprefix("mcp__openticker__")
+        for t in fields["tools"].split(",")
+        if "openticker" in t
+    }
+    server = codex["mcp_servers"]["openticker"]
+
+    assert fields["name"] == codex["name"] == "debrief"
+    assert ".claude/skills/debrief-day/SKILL.md" in body
+    assert ".agents/skills/debrief-day/SKILL.md" in codex["developer_instructions"]
+    assert codex["sandbox_mode"] == "read-only"
+    assert set(server["enabled_tools"]) == claude_tools
+    assert {k: server[k] for k in ("command", "args")} == OPENTICKER_SERVER
+    assert "debrief-day" in _skills(CLAUDE_SKILLS)
+
+
+def test_debrief_agent_has_no_trading_write_or_file_tools() -> None:
+    from openticker.adapters.inbound.scopes import DEBRIEF_ROUTES, TOOL_ROUTES
+
+    fields, _ = _claude_agent("debrief")
+    tools = [tool.strip() for tool in fields["tools"].split(",")]
+    openticker = {t.removeprefix("mcp__openticker__") for t in tools if "openticker" in t}
+    brain_writes = {
+        "write_debrief",
+        "create_lesson",
+        "update_lesson",
+        "check_lesson",
+        "record_lesson_use",
+        "raise_proposal",
+    }
+
+    assert {"get_day_record", "write_debrief", "check_lesson"} <= openticker
+    assert openticker - brain_writes <= _read_only_tools()
+    assert {TOOL_ROUTES[t] for t in openticker} <= DEBRIEF_ROUTES  # its key reaches each
+    assert [t for t in tools if "openticker" not in t] == ["Read"]  # its skill; no writes

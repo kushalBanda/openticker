@@ -54,7 +54,9 @@ class StoredStrategy:
     review_schedule: ReviewSchedule | None = None  # None: reviewed only on start_review
 
 
-def insert_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrategy:
+def insert_strategy(
+    name: str, spec: StrategySpec, now: datetime, created_by: str | None = None
+) -> StoredStrategy:
     with write_transaction() as session:
         _refuse_taken(session, name)
         row = StrategyRow(
@@ -69,6 +71,7 @@ def insert_strategy(name: str, spec: StrategySpec, now: datetime) -> StoredStrat
             deleted_at=None,
             scheduled_broker=None,
             review_schedule=None,
+            created_by=created_by,
         )
         session.add(row)
         session.flush()

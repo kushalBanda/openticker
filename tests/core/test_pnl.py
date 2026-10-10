@@ -12,6 +12,7 @@ from openticker.core.pnl import Source, client_name, source_of
         ("mcp:cursor", Source.AGENT),
         ("mcp", Source.AGENT),  # before clients were named
         ("review:s1", Source.AGENT),
+        ("debrief:2026-10-05", Source.AGENT),
         ("strategy:s1", Source.STRATEGY),
         ("webhook", Source.ALERT),
         ("alert:s1", Source.ALERT),

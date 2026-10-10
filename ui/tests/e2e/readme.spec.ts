@@ -35,4 +35,13 @@ test("README screenshots", async ({ page }) => {
   await shoot(page, "strategy");
   await open(page, "/symbols/NSE/RELIANCE");
   await shoot(page, "symbol");
+  await open(page, "/brain");
+  await shoot(page, "brain");
+  await page
+    .getByRole("group", { name: "Brain view" })
+    .getByRole("button", { name: "Days" })
+    .click();
+  await page.getByRole("table", { name: "Days" }).getByRole("row").nth(1).click(); // today
+  await open(page, page.url());
+  await shoot(page, "brain-day");
 });

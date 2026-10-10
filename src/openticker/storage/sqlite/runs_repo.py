@@ -7,11 +7,12 @@ happen under one lock.
 
 import json
 import secrets
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import and_, func, literal_column, or_, select
 from sqlalchemy.orm import Session
 
 from openticker.core.risk.models import PositionRisk, StrategyStopReason, TrailingStop, TrailMode
@@ -222,6 +223,25 @@ def list_runs(strategy_id: str, limit: int) -> list[Run]:
         .where(StrategyRunRow.strategy_id == strategy_id)
         .order_by(StrategyRunRow.started_at.desc())
         .limit(limit)
+    )
+    with Session(get_engine()) as session:
+        return [_run(row) for row in session.scalars(statement).all()]
+
+
+def runs_of_day(run_ids: Collection[str], start: datetime, end: datetime) -> list[Run]:
+    """The runs in `run_ids`, and those that ended from `start` up to `end`,
+    oldest first."""
+    statement = (
+        select(StrategyRunRow)
+        .where(
+            or_(
+                StrategyRunRow.id.in_(list(run_ids)),
+                and_(
+                    StrategyRunRow.ended_at >= _naive(start), StrategyRunRow.ended_at < _naive(end)
+                ),
+            )
+        )
+        .order_by(StrategyRunRow.started_at, StrategyRunRow.id)
     )
     with Session(get_engine()) as session:
         return [_run(row) for row in session.scalars(statement).all()]

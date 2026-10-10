@@ -107,3 +107,23 @@ def test_old_database_gains_the_audit_index(tmp_path: Path) -> None:
 
     indexed = {tuple(i["column_names"]) for i in inspect(engine).get_indexes("audit_log")}
     assert {("event_type",), ("triggered_by",)} <= indexed
+
+
+def test_old_database_gains_agent_jobs_subject_and_brain_tables(tmp_path: Path) -> None:
+    with sqlite3.connect(tmp_path / "openticker.db") as connection:
+        connection.execute(
+            "CREATE TABLE agent_jobs (id VARCHAR PRIMARY KEY, kind VARCHAR, strategy_id VARCHAR, "
+            "harness VARCHAR, status VARCHAR, trigger VARCHAR, created_at DATETIME)"
+        )
+        connection.execute(
+            "INSERT INTO agent_jobs VALUES ('job_1', 'review', 'str_1', 'claude', 'ended', "
+            "'manual', '2026-10-01 10:00:00')"
+        )
+
+    engine = get_engine()
+
+    tables = set(inspect(engine).get_table_names())
+    assert {"brain_notes", "brain_links", "brain_lesson_checks", "brain_lesson_uses"} <= tables
+    assert "brain_settings" in tables
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT subject FROM agent_jobs").all() == [(None,)]

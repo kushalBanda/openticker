@@ -347,6 +347,22 @@ def list_trades(since: datetime, limit: int) -> list[StoredTrade]:
     return _trades(rows)
 
 
+def list_trades_between(start: datetime, end: datetime, limit: int) -> list[StoredTrade]:
+    """Fills from `start` up to `end`, oldest first, each with who placed its order."""
+    with Session(get_engine()) as session:
+        rows = session.execute(
+            select(SandboxTradeRow, SandboxOrderRow.triggered_by)
+            .join(SandboxOrderRow, SandboxOrderRow.order_id == SandboxTradeRow.order_id)
+            .where(
+                SandboxTradeRow.filled_at >= _naive_utc(start),
+                SandboxTradeRow.filled_at < _naive_utc(end),
+            )
+            .order_by(SandboxTradeRow.filled_at, SandboxTradeRow.id)
+            .limit(limit)
+        ).all()
+    return _trades(rows)
+
+
 def list_strategy_trades(strategy_id: str) -> list[StoredTrade]:
     """Every fill of the strategy's runs, oldest first."""
     with Session(get_engine()) as session:

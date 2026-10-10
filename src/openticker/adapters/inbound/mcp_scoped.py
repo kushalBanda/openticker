@@ -29,7 +29,7 @@ from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.pnl import client_name
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
-from openticker.use_cases.api_keys import authenticate
+from openticker.use_cases.api_keys import DEBRIEF_SCOPE_PREFIX, REVIEW_SCOPE_PREFIX, authenticate
 
 MCP_PATH = "/mcp"
 API_KEY_HEADER = "x-api-key"
@@ -52,13 +52,24 @@ def current_client() -> str | None:
     return _client.get()
 
 
+_job: ContextVar[str | None] = ContextVar("openticker_mcp_job", default=None)
+_JOB_SCOPES = (REVIEW_SCOPE_PREFIX, DEBRIEF_SCOPE_PREFIX)
+
+
+def current_job() -> str | None:
+    """The agent job's key scope ("review:<id>", "debrief:<date>") when an
+    unattended job made the call: who did it (ADR 35). None otherwise."""
+    return _job.get()
+
+
 @contextmanager
-def as_client(name: str | None) -> Iterator[None]:
-    token = _client.set(name)
+def as_client(name: str | None, job: str | None = None) -> Iterator[None]:
+    token, job_token = _client.set(name), _job.set(job)
     try:
         yield
     finally:
         _client.reset(token)
+        _job.reset(job_token)
 
 
 def _client_of(context: Context[Any, Any] | None) -> tuple[str | None, str | None]:
@@ -78,12 +89,14 @@ def _strategy_of_run(run_id: str) -> str | None:
     return run.strategy_id if run is not None else None
 
 
-def _tool_refusal(scope: str, tool: str, arguments: Mapping[str, object]) -> str | None:
+def _tool_refusal(
+    scope: str, tool: str, arguments: Mapping[str, object], *, listing: bool = False
+) -> str | None:
     route = TOOL_ROUTES.get(tool)
     if route is None:
         return f"{tool} has no route, so no key but a full one may call it"
     method, path = route
-    return refusal(scope, method, path, arguments, _strategy_of_run)
+    return refusal(scope, method, path, arguments, _strategy_of_run, whole_call=not listing)
 
 
 class ScopedMCPServer(MCPServer):
@@ -102,7 +115,11 @@ class ScopedMCPServer(MCPServer):
         scope = _scope(ctx.request)
         if scope is None:
             return listed
-        allowed = [tool for tool in listed.tools if _tool_refusal(scope, tool.name, {}) is None]
+        allowed = [
+            tool
+            for tool in listed.tools
+            if _tool_refusal(scope, tool.name, {}, listing=True) is None
+        ]
         return ListToolsResult(tools=allowed)
 
     async def call_tool(
@@ -122,7 +139,8 @@ class ScopedMCPServer(MCPServer):
         client, client_version = _client_of(context)
         if client is not None and self.on_client is not None:
             self.on_client(client, "stdio" if request is None else "http", client_version, name)
-        with as_client(client):  # sync tools run in a thread, which copies it
+        job = scope if scope is not None and scope.startswith(_JOB_SCOPES) else None
+        with as_client(client, job):  # sync tools run in a thread, which copies it
             return await super().call_tool(name, arguments, context)
 
 

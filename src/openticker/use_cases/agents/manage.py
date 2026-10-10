@@ -13,6 +13,7 @@ from openticker.core.agents.jobs import (
     AgentJobKind,
     AgentJobStatus,
     AgentSettings,
+    job_title,
 )
 from openticker.core.agents.reviews import ReviewSchedule, parse_every
 from openticker.events.bus import EventPublisher
@@ -102,6 +103,11 @@ def unschedule_review(strategy_id: str) -> StoredStrategy:
     return strategies_repo.find_strategy(strategy_id) or stored
 
 
+def strategy_names() -> dict[str, str]:
+    """Every strategy's name by id: what a job's title names."""
+    return {s.id: s.name for s in strategies_repo.list_strategies()}
+
+
 def get_agent_jobs(limit: int, strategy_id: str | None = None) -> list[AgentJob]:
     return agent_jobs_repo.recent_jobs(min(limit, MAX_AGENT_JOBS), strategy_id)
 
@@ -145,12 +151,14 @@ def stop_agent_job(
                 session, job_id, AgentJobEndReason.STOPPED, f"stopped by {triggered_by}", now
             )
     if ended is not None:
-        stored = strategies_repo.find_strategy(ended.strategy_id)
+        stored = strategies_repo.find_strategy(ended.strategy_id) if ended.strategy_id else None
         events.publish(
             AgentJobEnded(
                 job_id=ended.id,
                 kind=ended.kind,
                 strategy_id=ended.strategy_id,
+                subject=ended.subject,
+                title=job_title(ended.kind, stored.name if stored else None, ended.subject),
                 strategy_name=stored.name if stored else ended.strategy_id,
                 reason=AgentJobEndReason.STOPPED,
                 detail=ended.end_detail or "",

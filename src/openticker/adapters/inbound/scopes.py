@@ -8,13 +8,26 @@ both: an MCP call is allowed exactly when its tool's route would be.
 - A hosted script's key (`script:<id>`) reaches prices, orders and
   positions (ADR 25).
 - A review job's key (`review:<strategy_id>`) reads that one strategy (its
-  definition, ledger, runs and signals) and market data. It can't place an
-  order, change or start a strategy, or see another strategy's runs.
+  definition, ledger, runs and signals), market data and the brain's notes.
+  Its only writes are appends to the brain about its own strategy: a check
+  of a lesson on one of its runs, a lesson's use, a proposal. It can't
+  place an order, change or start a strategy, or see another strategy's
+  runs.
+- A debrief job's key (`debrief:<date>`) reads the desk (strategies, their
+  runs and ledgers, trades, P&L, the audit log, market data) and the brain,
+  and writes the brain: its own day's debrief, lessons and their checks,
+  uses and proposals. It can't place an order, change a strategy, decide a
+  proposal, retire a lesson or touch another day's debrief.
 """
 
 from collections.abc import Callable, Mapping
 
-from openticker.use_cases.api_keys import FULL_SCOPE, REVIEW_SCOPE_PREFIX, SCRIPT_SCOPE_PREFIX
+from openticker.use_cases.api_keys import (
+    DEBRIEF_SCOPE_PREFIX,
+    FULL_SCOPE,
+    REVIEW_SCOPE_PREFIX,
+    SCRIPT_SCOPE_PREFIX,
+)
 
 # Every MCP tool's REST route (ADR 17).
 TOOL_ROUTES: dict[str, tuple[str, str]] = {
@@ -92,7 +105,27 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "schedule_script": ("POST", "/api/v1/scripts/{script_id}/schedule"),
     "unschedule_script": ("DELETE", "/api/v1/scripts/{script_id}/schedule"),
     "get_script_logs": ("GET", "/api/v1/scripts/{script_id}/logs"),
+    "get_brain_graph": ("GET", "/api/v1/brain/graph"),
+    "search_brain": ("GET", "/api/v1/brain/notes"),
+    "get_brain_note": ("GET", "/api/v1/brain/notes/{note_id}"),
+    "get_day_record": ("GET", "/api/v1/brain/days/{trading_date}/record"),
+    "write_debrief": ("PUT", "/api/v1/brain/days/{trading_date}"),
+    "create_lesson": ("POST", "/api/v1/brain/lessons"),
+    "update_lesson": ("PATCH", "/api/v1/brain/lessons/{lesson_id}"),
+    "check_lesson": ("POST", "/api/v1/brain/lessons/{lesson_id}/checks"),
+    "record_lesson_use": ("POST", "/api/v1/brain/lessons/{lesson_id}/uses"),
+    "set_lesson_override": ("POST", "/api/v1/brain/lessons/{lesson_id}/override"),
+    "raise_proposal": ("POST", "/api/v1/brain/proposals"),
+    "decide_proposal": ("POST", "/api/v1/brain/proposals/{proposal_id}/decision"),
+    "start_debrief": ("POST", "/api/v1/brain/debrief"),
+    "schedule_debrief": ("PUT", "/api/v1/brain/debrief-schedule"),
+    "get_debrief_schedule": ("GET", "/api/v1/brain/debrief-schedule"),
+    "get_learning": ("GET", "/api/v1/brain/learning"),
 }
+
+# Routes with no MCP tool: the user's own text on a note is theirs to edit,
+# with a full key or from the web app, never by an agent.
+REST_ONLY_ROUTES = frozenset({("PATCH", "/api/v1/brain/notes/{note_id}")})
 
 # A hosted script's key: prices, market depth and margin, placing, reading,
 # changing and cancelling orders, and closing one position. Never broker
@@ -123,9 +156,23 @@ SCRIPT_ROUTES = frozenset(
     }
 )
 
-# A review job's key: its own strategy, read only, and market data.
-REVIEW_ROUTES = frozenset(
+# A review's appends to the brain, each about its own strategy only. Over
+# REST their arguments are in the body, which the route checks itself
+# (`refusal` with the body's fields); the key's check sees only the path.
+REVIEW_BRAIN_WRITES = frozenset(
     {
+        ("POST", "/api/v1/brain/lessons/{lesson_id}/checks"),
+        ("POST", "/api/v1/brain/lessons/{lesson_id}/uses"),
+        ("POST", "/api/v1/brain/proposals"),
+    }
+)
+
+# A review job's key: its own strategy, read only, market data, the brain's
+# notes, and its appends to the brain.
+REVIEW_ROUTES = REVIEW_BRAIN_WRITES | frozenset(
+    {
+        ("GET", "/api/v1/brain/notes"),
+        ("GET", "/api/v1/brain/notes/{note_id}"),
         ("GET", "/api/v1/strategies/{strategy_id}"),
         ("GET", "/api/v1/strategies/{strategy_id}/ledger"),
         ("GET", "/api/v1/strategies/{strategy_id}/runs"),
@@ -143,16 +190,62 @@ REVIEW_ROUTES = frozenset(
 )
 
 
+_BRAIN_READS = (
+    "get_brain_graph",
+    "search_brain",
+    "get_brain_note",
+    "get_day_record",
+    "get_learning",
+)
+
+# A debrief job's key: the desk's reads, the brain's reads and its writes.
+DEBRIEF_ROUTES = frozenset(
+    TOOL_ROUTES[tool]
+    for tool in (
+        *_BRAIN_READS,
+        "write_debrief",
+        "create_lesson",
+        "update_lesson",
+        "check_lesson",
+        "record_lesson_use",
+        "raise_proposal",
+        "list_strategies",
+        "get_strategy",
+        "get_strategy_ledger",
+        "get_strategy_runs",
+        "get_strategy_run",
+        "get_strategy_signals",
+        "get_tradebook",
+        "get_orderbook",
+        "get_order_status",
+        "get_pnl_history",
+        "get_charges_summary",
+        "get_audit_log",
+        "get_market_status",
+        "search_instruments",
+        "get_quote",
+        "get_quotes",
+        "get_option_chain",
+    )
+)
+# The routes whose trading date a debrief's key must keep to its own.
+_ITS_DAY = frozenset(TOOL_ROUTES[t] for t in ("get_day_record", "write_debrief"))
+
+
 def refusal(
     scope: str,
     method: str,
     path: str | None,
     params: Mapping[str, object],
     strategy_of_run: Callable[[str], str | None],
+    *,
+    whole_call: bool = True,
 ) -> str | None:
     """Why a key with `scope` may not make this call, or None when it may.
     `params` are the call's path parameters (REST) or arguments (MCP);
-    `strategy_of_run` finds which strategy a run belongs to."""
+    `strategy_of_run` finds which strategy a run belongs to. `whole_call` is
+    False when only part of the call is known: a tool being listed, or a
+    REST request whose body is checked later by its route."""
     if scope == FULL_SCOPE:
         return None
     route = (method, path)
@@ -164,10 +257,24 @@ def refusal(
         strategy_id = scope.removeprefix(REVIEW_SCOPE_PREFIX)
         if route not in REVIEW_ROUTES:
             return "a review's key reads its own strategy and market data only"
-        if "strategy_id" in params and params["strategy_id"] != strategy_id:
+        asked = params.get("strategy_id")
+        if asked is not None and asked != strategy_id:
             return f"a review's key reads strategy {strategy_id} only"
         run_id = params.get("run_id")
         if isinstance(run_id, str) and strategy_of_run(run_id) != strategy_id:
             return f"a review's key reads the runs of strategy {strategy_id} only"
+        if route in REVIEW_BRAIN_WRITES and whole_call:
+            if params.get("order_id") is not None:
+                return f"a review's key checks lessons on the runs of strategy {strategy_id} only"
+            if route != TOOL_ROUTES["check_lesson"] and asked is None:
+                return f"a review's key writes about strategy {strategy_id} only: give strategy_id"
+        return None
+    if scope.startswith(DEBRIEF_SCOPE_PREFIX):
+        day = scope.removeprefix(DEBRIEF_SCOPE_PREFIX)
+        if route not in DEBRIEF_ROUTES:
+            return "a debrief's key reads the desk and writes the brain only"
+        asked = params.get("trading_date")
+        if route in _ITS_DAY and asked is not None and str(asked)[:10] != day:
+            return f"a debrief's key reads and writes the day {day} only"
         return None
     return f"unknown key scope {scope!r}"

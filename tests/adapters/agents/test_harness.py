@@ -136,3 +136,28 @@ def test_a_missing_harness_says_so(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="claude is not on PATH"):
         processes.start(_launch(tmp_path))
+
+
+def test_claude_debrief_command_has_no_file_tools(tmp_path: Path) -> None:
+    argv = command(_launch(tmp_path, agent="debrief", writes_notes=False), "/bin/claude")
+
+    assert argv[argv.index("--agent") + 1] == "debrief"
+    allowed = argv[argv.index("--allowedTools") + 1].split(",")
+    assert allowed == ["mcp__openticker", "Read(.claude/skills/**)"]  # its skill, no writes
+
+
+def test_codex_debrief_runs_read_only_sandbox(tmp_path: Path) -> None:
+    argv = command(_launch(tmp_path, Harness.CODEX, writes_notes=False), "/bin/codex")
+
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+
+
+def test_reviewer_command_unchanged(tmp_path: Path) -> None:
+    claude = command(_launch(tmp_path), "/bin/claude")
+    codex = command(_launch(tmp_path, Harness.CODEX), "/bin/codex")
+
+    assert claude[claude.index("--agent") + 1] == "reviewer"
+    assert claude[claude.index("--allowedTools") + 1] == (
+        "mcp__openticker,Read,Glob,Grep,Edit(notes/**),Write(notes/**)"
+    )
+    assert codex[codex.index("--sandbox") + 1] == "workspace-write"

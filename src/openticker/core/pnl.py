@@ -45,6 +45,7 @@ RULES = (
     Rule("mcp:codex", Source.CODEX),
     Rule("mcp:", Source.AGENT, prefix=True),
     Rule("review:", Source.AGENT, prefix=True),
+    Rule("debrief:", Source.AGENT, prefix=True),
     Rule("strategy:", Source.STRATEGY, prefix=True),
     Rule("alert:", Source.ALERT, prefix=True),
     Rule("script:", Source.SCRIPT, prefix=True),
