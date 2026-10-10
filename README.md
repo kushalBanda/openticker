@@ -1,51 +1,79 @@
 <h1><img src="assets/profile.png" alt="OpenTicker" width="360"></h1>
 
-**A self-hosted trading platform for Indian markets that AI agents operate directly.**
+**A trading desk for Indian markets that you watch and your coding agent runs.**
 
-OpenTicker exposes brokerage operations as [MCP](https://modelcontextprotocol.io) tools. Claude Code, Codex, or any MCP client can connect your broker, find instruments, and pull live quotes and historical candles by calling tools. A web app on the same server shows you everything they do as it happens, and lets you step in. It runs on your machine, with your own broker API keys, and stores everything locally.
+OpenTicker runs on your machine with your own Zerodha keys. Claude Code, Codex, or any [MCP](https://modelcontextprotocol.io) client trades through it: quotes, option chains with Greeks, paper orders, strategies that run unattended, and reviews of what worked. A web app on the same server shows every move as it happens, says who made it, and lets you step in.
 
-> **Status: early development.** Market data works end to end with Zerodha. Orders are paper trades in a local sandbox; nothing is sent to the broker. See [Roadmap](#roadmap).
+> **Status: early development.** Market data works end to end with Zerodha. Every order is a paper trade in a local sandbox that pays the real bid or ask and real Indian charges. Nothing is sent to the broker. See [Roadmap](#roadmap).
 
 ![The Dashboard: today's P&L after charges, the day's minute line, and what happened since your last visit](docs/images/web-dashboard.png)
 
-## What an agent can do today
+## The web app
 
-| Tool | What it does |
+Open it and you see today: P&L after charges, the shape of the day, and what changed since you last looked. Everything after that is live over one WebSocket.
+
+- **Every line says who did it.** You, Claude, Codex, a strategy, a TradingView alert, or one of your scripts. Agents show up by name.
+- **Paper fills cost what real ones would.** A buy pays the ask, a sell gets the bid, and each fill keeps its brokerage, STT, fees, stamp duty and GST line by line.
+- **Problems come to you.** A killed strategy or an expired Zerodha session sits at the top of the page with the button that fixes it. Fills and stops arrive as toasts.
+- **You can step in without your agent.** Close a position, kill a strategy, or place a paper order from any page with ⌘K.
+
+| | |
 | --- | --- |
-| `get_broker_login_url` | Start a broker login. You log in on the broker's own page. |
-| `connect_broker` | Finish the login; the session is stored encrypted and never returned. |
-| `sync_instruments` | Download the broker's instrument list (~80,000 contracts) into a local database. |
-| `search_instruments` | Find symbols: `RELIANCE`, `NIFTY 50`, all `NIFTY22SEP26` options, ... |
-| `get_quote` | Live last traded price. |
-| `get_historical_bars` | OHLCV candles (minute to daily), also stored locally in DuckDB. |
-| `get_option_chain` | Calls and puts around at-the-money for an index or stock: price, open interest, implied volatility, Greeks. |
-| `place_order` | Paper trade in the local sandbox while the exchange is open: MARKET fills at the live price; LIMIT, SL and SL-M orders wait and fill when the price reaches them. Nothing reaches the broker. |
-| `cancel_order` | Withdraw a waiting order. |
-| `get_market_status` | Whether NSE, BSE, NFO, BFO and MCX are open now, and the next session. Knows weekends, exchange holidays and special sessions. |
-| `get_positions`, `get_funds`, `get_orderbook` | Sandbox positions with live P&L, virtual capital and margin, order history. |
-| `evaluate_risk` | Check stop loss, target and capital cap settings against the live price before acting. |
-| `get_audit_log` | What OpenTicker has done and who triggered it, most recent first. |
-| `create_strategy`, `update_strategy`, `get_strategy`, `list_strategies`, `delete_strategy` | Save options strategies of up to 10 legs chosen relative to the market (ATM, N strikes in or out of the money, weekly or monthly expiry), with a schedule and strategy-wide limits. |
-| `preview_strategy` | The real contracts a strategy would trade right now, with prices and net premium. Places nothing. |
-| `start_strategy`, `stop_strategy`, `close_strategy_leg` | Enter a strategy in the sandbox; `openticker-serve` then watches it on live prices and closes legs on their own stops and targets, and the whole run on the strategy's limits, with nobody in the conversation. |
-| `schedule_strategy`, `unschedule_strategy` | Enter a strategy automatically at its entry time on its weekdays, skipping market holidays. Its exit time and expiry-day exit close every run, scheduled or not. |
-| `kill_strategy`, `release_kill_switch` | Lock a strategy and close everything it holds; unlock it. A locked signal strategy refuses its alerts. |
-| `create_signal_strategy`, `update_signal_strategy` | Save a strategy that alerts drive: up to 10 contracts (stocks, futures or options) that alerts enter and exit long or short, one at a time, with per-leg stops and targets, an entry window, a direction filter and strategy-wide limits. |
-| `rotate_strategy_webhook`, `disable_strategy_webhook` | Give a signal strategy an alert URL for TradingView or ChartInk, optionally limited to the senders' IP addresses; the old URL stops working. |
-| `get_strategy_signals` | Every alert a signal strategy received, whether it was accepted, and what came of it. |
-| `upload_script`, `update_script`, `delete_script`, `list_scripts`, `get_script` | Save your own Python strategy script. It trades through the REST API with a key made for each run that reaches only prices, orders and positions; it is never given your broker keys or other secrets. |
-| `start_script`, `stop_script`, `schedule_script`, `unschedule_script`, `get_script_logs` | Run a script under `openticker-serve` now or once a trading day between a start and a stop time, with memory and CPU limits, and read its output. Linux and macOS. |
-| `get_strategy_runs`, `get_strategy_run` | A strategy's runs: legs, fills, stop reason, P&L (with its peak and trough) and a timeline of what happened. If the live feed goes quiet on a leg, `openticker-serve` prices it from quotes; with no price from either for a minute, the run stops and closes its legs. After a restart it picks up every open run where it left off. |
+| ![Positions, marked live, with who holds each](docs/images/web-positions.png) | ![The option chain, live, with bids and asks to pick](docs/images/web-option-chain.png) |
+| **Portfolio.** Positions, orders and trades, marked with every tick. Each position shows which strategies hold part of it. | **Option chain.** One expiry live with bids, asks and Greeks. Pick legs and see the payoff, margin with hedge benefit, and charges before you place the basket. |
+| ![A strategy: its legs, equity after costs and latest review](docs/images/web-strategy.png) | ![An instrument: candles with your fills, and market depth](docs/images/web-symbol.png) |
+| **Strategies.** Each one's state, legs marked live, equity curve after costs, alert URL, and its latest review's verdict. | **Instruments.** Candles with your fills marked, five levels of market depth, and today's orders for that symbol. |
 
-| `search_brain`, `get_brain_note`, `get_brain_graph` | Read the brain: what the desk learned from its own trades, as linked notes of days, lessons and proposals, each lesson with its status and how often it held. |
-| `get_day_record`, `write_debrief` | One trading day's trades from the record, with the lessons owed a check; write the day's debrief: why each trade, what was given up, what could have been done better. |
-| `create_lesson`, `update_lesson`, `check_lesson`, `record_lesson_use` | A lesson starts as a hunch; checks on later runs and orders decide whether it becomes tested, a rule, or is retired. |
-| `raise_proposal`, `decide_proposal` | Propose one change to a strategy for you to accept or reject; accepting gives you the request to paste into your agent. |
-| `start_debrief`, `schedule_debrief`, `get_learning` | Have `openticker-serve` debrief each day after the close with your own agent, and see how often designs and reviews read a lesson first. |
+The rest of the app covers named watchlists your agent can edit too, your own Python scripts with live logs and memory use, the agents that have connected with their calls today, a filterable activity log, and settings for the broker login, API keys and the paper account.
 
-Example session, in plain language to your agent:
+Light and dark follow your system. The app is for laptop and desktop screens, 1280 pixels wide and up.
 
-> "Connect Zerodha, then show me the last month of daily candles for RELIANCE and this week's NIFTY option chain with IV and delta."
+### The Brain: what the desk learned
+
+![The Brain: what the desk learned, as a graph of linked notes](docs/images/web-brain.png)
+
+The Brain is a graph of linked notes about days, lessons, proposals, strategies, and symbols. It lives on your machine, and any agent can read it.
+
+- **Daily debriefs.** After each close, your own Claude Code or Codex can write the day up: why each trade happened, what was given up, and what could have been done better.
+- **Lessons earn their status.** A lesson starts as a hunch. Checks against later trades make it tested, then a rule, or retire it. One bad day stays a hunch.
+- **Proposals wait for you.** An agent can propose one change to a strategy. Nothing changes until you accept it.
+- **Reading is measured.** Agents search lessons before they design or review a strategy, and the page counts how often they do.
+
+![A day's debrief: each trade with why and what was given up, and the lessons it checked](docs/images/web-brain-day.png)
+
+## Built for coding agents
+
+OpenTicker gives your agent 90 MCP tools and a place to work. You describe an idea in plain words. The agent turns it into a strategy, previews it against today's market, and runs it on paper.
+
+> "Sell an ATM NIFTY straddle every weekday at 9:20 with a 30% stop on each leg. Show me what it would trade right now."
+
+> "Make a signal strategy that buys 10 RELIANCE on my TradingView alert, with a 1% stop. Give me the alert URL."
+
+> "Review my straddle's last 20 runs after costs. Keep it, change one thing, or retire it?"
+
+- **Claude Code, Codex, or any MCP client.** One command adds it to Claude Code, and the JSON config works everywhere else.
+- **A research folder, ready to go.** `labs/` sets up Claude Code and Codex with shared instructions and skills: `new-strategy`, `review-strategy`, and `debrief-day`.
+- **Reviews and debriefs run unattended.** `openticker-serve` runs your own Claude Code or Codex as a background job, on demand or on a schedule. Each job gets a key that reads only what it needs: one strategy for a review, one day for a debrief.
+- **Strategies don't need the conversation.** Once started or scheduled, the server enters, watches and exits them on their own stops, targets, and limits. Signal strategies take TradingView and ChartInk alerts at their own URL.
+- **Your scripts too.** Upload a Python script and it runs under the server with a per-run API key, a clean environment, and memory and CPU limits. It never sees your broker keys.
+
+<details>
+<summary>All 90 tools, by area</summary>
+
+| Area | Tools |
+| --- | --- |
+| Broker and data | `get_broker_login_url`, `connect_broker`, `sync_instruments`, `search_instruments`, `get_quote`, `get_quotes`, `get_market_depth`, `get_historical_bars`, `get_option_chain`, `get_market_status` |
+| Paper trading | `place_order`, `place_basket`, `modify_order`, `cancel_order`, `cancel_all_orders`, `close_position`, `close_all_positions`, `get_positions`, `get_funds`, `get_orderbook`, `get_order_status`, `get_tradebook` |
+| Costs and risk | `preview_charges`, `preview_paper_margin`, `preview_payoff`, `get_margin`, `check_charge_rates`, `get_charges_summary`, `get_pnl_history`, `evaluate_risk` |
+| Options strategies | `create_strategy`, `update_strategy`, `get_strategy`, `list_strategies`, `delete_strategy`, `preview_strategy`, `start_strategy`, `stop_strategy`, `close_strategy_leg`, `schedule_strategy`, `unschedule_strategy`, `kill_strategy`, `release_kill_switch`, `get_strategy_runs`, `get_strategy_run`, `get_strategy_ledger` |
+| Signal strategies | `create_signal_strategy`, `update_signal_strategy`, `rotate_strategy_webhook`, `disable_strategy_webhook`, `get_strategy_signals` |
+| Scripts | `upload_script`, `update_script`, `delete_script`, `list_scripts`, `get_script`, `start_script`, `stop_script`, `schedule_script`, `unschedule_script`, `get_script_logs` |
+| Agent jobs | `start_review`, `schedule_review`, `unschedule_review`, `get_agent_jobs`, `get_agent_job_log`, `stop_agent_job` |
+| The Brain | `get_brain_graph`, `search_brain`, `get_brain_note`, `get_day_record`, `write_debrief`, `create_lesson`, `update_lesson`, `check_lesson`, `record_lesson_use`, `set_lesson_override`, `raise_proposal`, `decide_proposal`, `start_debrief`, `schedule_debrief`, `get_debrief_schedule`, `get_learning` |
+| Watchlists | `list_watchlists`, `create_watchlist`, `add_to_watchlist`, `remove_from_watchlist`, `rename_watchlist`, `delete_watchlist` |
+| Audit | `get_audit_log` |
+
+</details>
 
 ## Quickstart
 
@@ -83,7 +111,7 @@ claude mcp add openticker -- uv --directory /absolute/path/to/openticker run ope
 
 Then ask the agent to connect Zerodha. It walks you through login and instrument sync.
 
-### The web app
+### Start the web app
 
 `openticker-serve` also serves a web app at `http://127.0.0.1:8750`. Build it once (needs [Node 22](https://nodejs.org) and [pnpm](https://pnpm.io)), then start the server:
 
@@ -93,20 +121,6 @@ uv run openticker-serve
 ```
 
 It prints a sign-in link and opens it in your browser; `uv run openticker-serve ui login` prints another. The link works once, for 10 minutes, and signs that browser in for 30 days. The server listens on this machine only.
-
-The first thing you see is today: your P&L after charges, the shape of the day so far, and what changed since you last looked. Below it everything is live: positions and P&L as they tick, every order and fill with what it cost, and each strategy and script with what it's doing and what it's made after charges. Every line says who did it: you, Claude, Codex, a strategy, a TradingView alert or one of your scripts. When something needs you, a killed strategy or an expired Zerodha session, it's at the top of the page with the button that fixes it.
-
-You can step in without asking your agent: close a position, kill a strategy, place a paper order from any page with ⌘K, or build an iron fly from the option chain and see its payoff and margin before you place it. Creating and changing strategies and scripts stays with your agent; the app gives you the prompt to ask it with.
-
-| | |
-| --- | --- |
-| ![Positions, marked live, with who holds each](docs/images/web-positions.png) | ![The option chain, live, with bids and asks to pick](docs/images/web-option-chain.png) |
-| ![A strategy: its legs, equity after costs and latest review](docs/images/web-strategy.png) | ![An instrument: candles with your fills, and market depth](docs/images/web-symbol.png) |
-| ![The Brain: what the desk learned, as a graph of linked notes](docs/images/web-brain.png) | ![A day's debrief: each trade with why and what was given up, and the lessons it checked](docs/images/web-brain-day.png) |
-
-The Brain page is what the desk has learned, kept on your machine and readable by any agent. After each close your own Claude Code or Codex can write the day up: why each trade was made, what was given up for it, and what could have been done better, with hindsight marked as hindsight. Lessons start as hunches and earn their status from later trades, so one bad day stays a hunch. Agents read them before designing or reviewing a strategy, and propose changes that wait for you to decide.
-
-Light and dark follow your system, or the toggle in the top bar. The app is for laptop and desktop screens, 1280 pixels wide and up.
 
 ### Research with your agent: `labs/`
 
