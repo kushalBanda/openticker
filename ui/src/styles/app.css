@@ -3194,8 +3194,14 @@
     gap: 6px;
     margin: 0;
   }
-  .brain-sheet-body > .btn {
-    margin-top: 20px;
+  /* In the meta row, beside the close button; the negative margins keep the
+     row's height the text's and centre the pill on the close button. */
+
+  .brain-sheet-open {
+    flex: none;
+    margin: -6px 0 -6px auto;
+    padding: 0 10px;
+    gap: 4px;
   }
 
   /* A day's page, and the user's note on any note. */

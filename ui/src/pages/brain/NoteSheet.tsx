@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ArrowUpRight, X } from "lucide-react";
 import { Link } from "react-router";
 import { type BrainGraph, useBrainNote } from "../../api/queries";
 import { Markdown } from "../../components/Markdown";
@@ -65,6 +65,17 @@ function NoteBody({ point }: { point: Point }) {
             </>
           )}
         </span>
+        {record && (
+          <Link
+            to={record.href}
+            className="btn brain-sheet-open"
+            data-variant="ghost"
+            data-size="sm"
+          >
+            {record.label}
+            <ArrowUpRight size={13} aria-hidden />
+          </Link>
+        )}
       </div>
       <h2>{point.title}</h2>
       {note?.debrief && <p className="brain-headline">{note.debrief.headline}</p>}
@@ -106,11 +117,6 @@ function NoteBody({ point }: { point: Point }) {
                 ))}
               </p>
             </section>
-          )}
-          {record && (
-            <Link to={record.href} className="btn" data-size="sm">
-              {record.label}
-            </Link>
           )}
         </>
       )}

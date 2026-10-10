@@ -18,6 +18,22 @@ const queries = new QueryClient({
   },
 });
 
+// A new build replaces the hashed chunks, so a tab opened before it asks for
+// files that are gone. Reload once to get the new index.html; a second failure
+// within a minute is a real one and reaches the error page.
+window.addEventListener("vite:preloadError", (event) => {
+  const key = "openticker:chunk-reload";
+  try {
+    const last = Number(sessionStorage.getItem(key) ?? 0);
+    if (Date.now() - last < 60_000) return;
+    sessionStorage.setItem(key, String(Date.now()));
+  } catch {
+    return;
+  }
+  event.preventDefault();
+  window.location.reload();
+});
+
 const root = document.getElementById("root");
 if (!root) throw new Error("index.html has no #root");
 
