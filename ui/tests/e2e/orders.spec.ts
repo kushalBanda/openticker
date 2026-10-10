@@ -6,7 +6,14 @@ import { nextLink } from "./links";
 
 async function openOrders(page: Page) {
   await page.goto(nextLink());
-  await page.getByRole("link", { name: "Orders" }).click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Portfolio" })
+    .click();
+  await page
+    .getByRole("group", { name: "Portfolio" })
+    .getByRole("button", { name: "Orders" })
+    .click();
   await expect(page.getByRole("table", { name: "Open orders" })).toBeVisible({ timeout: 5000 });
 }
 

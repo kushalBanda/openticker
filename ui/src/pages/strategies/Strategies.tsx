@@ -98,7 +98,12 @@ export function Strategies() {
   const today = useTodayPnl(all);
   const rows = all.filter((s) => matches(s, kind, segment, state));
 
-  const running = all.filter((s) => s.state === "running" || s.state === "listening").length;
+  const running = all.filter((s) => s.state === "running").length;
+  const listening = all.filter((s) => s.state === "listening").length;
+  const active = running + listening;
+  // A row with nothing today shows a dash; so does the total when every row does.
+  const quietToday = (s: Strategy) => today.get(s.strategy_id) === 0 && !s.active_run;
+  const judged = all.some((s) => s.judged_runs);
   const scheduled = all.filter((s) => s.state === "scheduled");
   const soonest = scheduled
     .map((s) => s.next_entry)
@@ -159,11 +164,10 @@ export function Strategies() {
       key: "today",
       head: "Today",
       cell: (s) => {
-        const value = today.get(s.strategy_id) ?? null;
-        return value === 0 && !s.active_run ? (
+        return quietToday(s) ? (
           <span className="missing">{MISSING}</span>
         ) : (
-          <Money value={value} />
+          <Money value={today.get(s.strategy_id) ?? null} />
         );
       },
     },
@@ -206,25 +210,49 @@ export function Strategies() {
     >
       <div className="stats">
         <StatCard
-          label="Running"
-          value={loaded(list, () => running, 40)}
-          note={list.data ? `${all.length - running} not running` : undefined}
+          label="Active"
+          value={loaded(list, () => active, 40)}
+          note={
+            list.data
+              ? [running && `${running} running`, listening && `${listening} listening`]
+                  .filter(Boolean)
+                  .join(" · ") || "none"
+              : undefined
+          }
         />
         <StatCard
           label="Scheduled"
           value={loaded(list, () => scheduled.length, 40)}
-          note={soonest ? `next ${when(soonest, now)}` : list.data ? "none" : undefined}
+          note={soonest ? `next ${when(soonest, now)}` : undefined}
         />
         <StatCard
           label="P&L today"
           testId="strategies-today"
-          value={loaded(list, () => <Money value={todayTotal} currency />)}
-          note={list.isError ? undefined : "after charges, open legs live"}
+          value={loaded(list, () =>
+            all.every(quietToday) ? (
+              <span className="missing">{MISSING}</span>
+            ) : (
+              <Money value={todayTotal} currency />
+            ),
+          )}
+          note={
+            list.isError
+              ? undefined
+              : list.data && all.every(quietToday)
+                ? "nothing ran today"
+                : "after charges, open legs live"
+          }
         />
         <StatCard
           label="All time, after costs"
-          value={loaded(list, () => <Money value={allTime} currency />)}
-          note={list.data ? `${qty(runs)} runs` : undefined}
+          value={loaded(list, () =>
+            judged ? (
+              <Money value={allTime} currency />
+            ) : (
+              <span className="missing">{MISSING}</span>
+            ),
+          )}
+          note={list.data ? (runs ? `${qty(runs)} runs` : "no runs yet") : undefined}
         />
       </div>
 
@@ -257,7 +285,7 @@ export function Strategies() {
           onChange={setState}
           segments={[
             { value: "all", label: "Any state" },
-            { value: "running", label: "Running" },
+            { value: "running", label: "Active" },
             { value: "scheduled", label: "Scheduled" },
             { value: "stopped", label: "Stopped" },
             { value: "killed", label: "Killed" },

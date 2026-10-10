@@ -27,21 +27,35 @@ for (const width of [1280, 1440, 1920]) {
 test("below 1440px the sidebar is a rail with tooltips", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(nextLink());
-  const positions = page
+  const portfolio = page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("link", { name: "Positions" });
+    .getByRole("link", { name: "Portfolio" });
 
-  await expect(positions).toHaveAttribute("title", "Positions");
+  await expect(portfolio).toHaveAttribute("title", "Portfolio");
   expect((await page.locator(".sidebar").boundingBox())?.width).toBe(64);
 });
 
-test("g then p goes to Positions", async ({ page }) => {
+test("Portfolio is one sidebar item; its tabs are Positions, Orders and Trades", async ({
+  page,
+}) => {
   await page.goto(nextLink());
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Dashboard");
-  await page.keyboard.press("g");
-  await page.keyboard.press("p");
-
+  const portfolio = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Portfolio" });
+  await portfolio.click();
   await expect(page).toHaveURL("/positions");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Positions/);
   await expect(page).toHaveTitle("Positions · OpenTicker");
+
+  const tabs = page.getByRole("group", { name: "Portfolio" });
+  for (const [name, path] of [
+    ["Orders", "/orders"],
+    ["Trades", "/trades"],
+  ] as const) {
+    await tabs.getByRole("button", { name }).click();
+    await expect(page).toHaveURL(path);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(new RegExp(`^${name}`));
+    await expect(tabs.getByRole("button", { name })).toHaveAttribute("aria-pressed", "true");
+    await expect(portfolio).toHaveAttribute("aria-current", "page");
+  }
 });

@@ -132,7 +132,10 @@ test("proof: reset refused while a strategy runs, then succeeds", async ({ page 
 
   await expect(toast(page, "Paper account reset to ₹25,00,000.00")).toBeVisible();
   await expect(refusal).toHaveCount(0);
-  await page.getByRole("link", { name: "Positions" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Portfolio" })
+    .click();
   await expect(page.getByRole("table", { name: "Positions" })).toHaveCount(0);
 
   // The brain is kept: today's debriefed page keeps its trades and figures.

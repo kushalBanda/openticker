@@ -7,7 +7,14 @@ import { nextLink } from "./links";
 
 async function openTrades(page: Page) {
   await page.goto(nextLink());
-  await page.getByRole("link", { name: "Trades" }).click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Portfolio" })
+    .click();
+  await page
+    .getByRole("group", { name: "Portfolio" })
+    .getByRole("button", { name: "Trades" })
+    .click();
   await expect(page.getByRole("table", { name: "Trades" })).toBeVisible({ timeout: 5000 });
 }
 

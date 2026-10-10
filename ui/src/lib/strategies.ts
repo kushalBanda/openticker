@@ -28,7 +28,7 @@ export function stateBadge(state: StrategyState): { label: string; tone?: "accen
   return STATES[state];
 }
 
-/** A signal strategy waiting on alerts counts as running; filters don't split them. */
+/** "Active" is running or listening: a signal strategy waiting on alerts counts too. */
 export function matches(
   strategy: Strategy,
   kind: KindFilter,
@@ -134,7 +134,7 @@ const VERDICTS: Record<Verdict, { label: string; tone?: "up" | "down" | "warn" }
   keep: { label: "Keep", tone: "up" },
   change: { label: "Change", tone: "warn" },
   retire: { label: "Retire", tone: "down" },
-  not_yet: { label: "Not yet" },
+  not_yet: { label: "Too early" },
 };
 
 export function verdictBadge(verdict: Verdict | null | undefined) {

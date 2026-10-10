@@ -147,16 +147,6 @@
   .nav-item[aria-current="page"] svg {
     color: var(--ink);
   }
-  .nav-item .keys {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--ink-muted);
-    opacity: 0;
-    transition: opacity var(--duration-fast);
-  }
-  .nav-item:hover .keys {
-    opacity: 0.7;
-  }
 
   /* the status bar: global nav, a glass layer content scrolls under */
   .statusbar {
@@ -256,6 +246,9 @@
     align-items: center;
     gap: 14px;
     margin-bottom: 24px;
+  }
+  .page-tabs {
+    margin: -8px 0 16px;
   }
   .back-link {
     display: inline-flex;
