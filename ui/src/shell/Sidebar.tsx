@@ -1,17 +1,27 @@
-import { useEffect } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { Link, useLocation } from "react-router";
 import { type NavPage, PAGES, SETTINGS } from "./nav";
+
+/** Whether `pathname` is `page` or below it; Dashboard only at "/". */
+function covers(page: NavPage, pathname: string): boolean {
+  if (page.path === "/") return pathname === "/";
+  return [page.path, ...(page.also ?? [])].some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`),
+  );
+}
 
 function Item({ page }: { page: NavPage }) {
   const Icon = page.icon;
+  const { pathname } = useLocation();
   return (
-    <NavLink to={page.path} end={page.path === "/"} className="nav-item" title={page.label}>
+    <Link
+      to={page.path}
+      className="nav-item"
+      title={page.label}
+      aria-current={covers(page, pathname) ? "page" : undefined}
+    >
       <Icon aria-hidden />
       <span>{page.label}</span>
-      <span className="keys" aria-hidden>
-        g {page.key}
-      </span>
-    </NavLink>
+    </Link>
   );
 }
 
@@ -22,30 +32,7 @@ export function typing(target: EventTarget | null): boolean {
   );
 }
 
-/** "g" then a page's key goes to that page, as in Gmail and Linear. */
-function useGoShortcuts() {
-  const navigate = useNavigate();
-  useEffect(() => {
-    let armed = 0;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
-      if (event.key === "g") {
-        armed = event.timeStamp;
-        return;
-      }
-      if (armed && event.timeStamp - armed < 1000) {
-        const page = [...PAGES, SETTINGS].find((p) => p.key === event.key);
-        if (page) navigate(page.path);
-      }
-      armed = 0;
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [navigate]);
-}
-
 export function Sidebar() {
-  useGoShortcuts();
   return (
     <nav className="sidebar" aria-label="Pages">
       <div className="wordmark">OpenTicker</div>

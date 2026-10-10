@@ -12,7 +12,7 @@ import { duration, ease, spring } from "../lib/motion";
 import type { OrderDraft, Side } from "../lib/orders";
 import type { InstrumentKey } from "../stream/connection";
 import { usePrices } from "../stream/prices";
-import { PAGES, SETTINGS } from "./nav";
+import { DESTINATIONS } from "./nav";
 
 const keyOf = (i: Instrument) => `${i.exchange}:${i.symbol}` as InstrumentKey;
 const nameOf = (i: Instrument) =>
@@ -79,7 +79,7 @@ function Palette({
   // The symbol the actions are for: the one last highlighted, else the first.
   const target = found.find((i) => `symbol ${keyOf(i)}` === symbol) ?? found[0];
   const wanted = query.trim().toLowerCase();
-  const pages = [...PAGES, SETTINGS].filter(
+  const pages = DESTINATIONS.filter(
     (page) => wanted === "" || page.label.toLowerCase().includes(wanted),
   );
 

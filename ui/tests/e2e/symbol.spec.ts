@@ -111,9 +111,7 @@ test("quote, depth, your fills and your position", async ({ page }) => {
   await expect(page.getByRole("table", { name: "Executed orders" })).not.toContainText("HDFCBANK");
 });
 
-test("B and S open the order window for this instrument; g s still goes to Strategies", async ({
-  page,
-}) => {
+test("B and S open the order window for this instrument", async ({ page }) => {
   await signIn(page);
   await page.goto(RELIANCE);
   await expect(page.getByTestId("candle-chart")).toBeVisible();
@@ -130,11 +128,6 @@ test("B and S open the order window for this instrument; g s still goes to Strat
   await page.keyboard.press("s");
   await expect(page.getByRole("dialog", { name: /Sell RELIANCE/ })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-
-  await page.keyboard.press("g");
-  await page.keyboard.press("s");
-  await expect(page).toHaveURL(/\/strategies$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 

@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router";
 import { type InstrumentType, instrumentName } from "../lib/format";
-import { PAGES, SETTINGS } from "../shell/nav";
+import { DESTINATIONS } from "../shell/nav";
 
 /** An instrument's page: /symbols/NFO/NIFTY27OCT26FUT. */
 export const symbolPath = (exchange: string, symbol: string) =>
@@ -14,7 +14,7 @@ export interface From {
 
 /** The page at `pathname`, as a way back to it. */
 export function fromPage(pathname: string, search = ""): From {
-  const page = [...PAGES, SETTINGS].find((p) => p.path === pathname);
+  const page = DESTINATIONS.find((p) => p.path === pathname);
   const label = page
     ? page.label
     : pathname.startsWith("/strategies/")

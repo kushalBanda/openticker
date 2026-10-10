@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useOrders } from "../../api/queries";
 import { Page } from "../../components/Page";
+import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
 import { type PlacerFilter, placedByAny } from "../../lib/orders";
 import { useLive } from "../../stream/StreamProvider";
@@ -18,6 +19,7 @@ export function Orders() {
   return (
     <Page
       title="Orders"
+      tabs={<PortfolioTabs />}
       actions={
         <Segmented<PlacerFilter>
           label="Placed by"

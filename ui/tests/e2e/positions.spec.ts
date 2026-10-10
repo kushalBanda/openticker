@@ -9,7 +9,7 @@ async function openPositions(page: Page) {
   await page.goto(nextLink());
   await page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("link", { name: "Positions" })
+    .getByRole("link", { name: "Portfolio" })
     .click();
   await expect(page.getByRole("table", { name: "Positions" })).toBeVisible({ timeout: 5000 });
 }

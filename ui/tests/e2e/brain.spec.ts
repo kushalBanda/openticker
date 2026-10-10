@@ -24,12 +24,14 @@ async function pick(page: Page, name: string) {
   await page.keyboard.press("Enter");
 }
 
-test("proof: g b opens the graph of the real strategies; a note's links lead on", async ({
+test("proof: Brain opens the graph of the real strategies; a note's links lead on", async ({
   page,
 }) => {
   await signIn(page);
-  await page.keyboard.press("g");
-  await page.keyboard.press("b");
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("link", { name: "Brain" })
+    .click();
   await expect(page).toHaveURL(/\/brain$/);
   await expect(page.getByTestId("brain-graph").locator("canvas")).toBeVisible();
   await expect(page.getByText(/^\d+ notes · \d+ links$/)).toBeVisible();

@@ -6,6 +6,7 @@ import { InfoPopover } from "../../components/InfoPopover";
 import { Instrument } from "../../components/Instrument";
 import { Page } from "../../components/Page";
 import { PlacedBy, SideBadge } from "../../components/PlacedBy";
+import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
@@ -139,6 +140,7 @@ export function Trades() {
   return (
     <Page
       title="Trades"
+      tabs={<PortfolioTabs />}
       actions={
         <>
           <Segmented<Period>

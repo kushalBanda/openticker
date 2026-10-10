@@ -6,6 +6,7 @@ import { HoldButton } from "../../components/HoldButton";
 import { Instrument, useOpenSymbol } from "../../components/Instrument";
 import { LivePrice } from "../../components/LivePrice";
 import { Page } from "../../components/Page";
+import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
 import {
@@ -255,6 +256,7 @@ export function Positions() {
   return (
     <Page
       title="Positions"
+      tabs={<PortfolioTabs />}
       count={open.data ? openPositions.length : undefined}
       actions={
         view === "open" &&

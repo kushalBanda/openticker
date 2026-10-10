@@ -14,6 +14,7 @@ export function Page({
   count,
   badges,
   back,
+  tabs,
   actions,
   children,
 }: {
@@ -23,6 +24,8 @@ export function Page({
   badges?: ReactNode;
   /** A detail page's way up to its list: "‹ Strategies". */
   back?: { to: string; label: string };
+  /** Sibling pages, above the title: Portfolio's tabs. */
+  tabs?: ReactNode;
   actions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -61,6 +64,7 @@ export function Page({
           {back.label}
         </Link>
       )}
+      {tabs}
       <div className="page-head">
         <h1 ref={heading} className="page-title" data-tucked={tucked}>
           {title}
