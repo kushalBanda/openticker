@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { ApiError } from "../../api/client";
 import {
   type AgentSettings,
   type ChoiceKind,
@@ -27,10 +28,29 @@ const BACKGROUND: { kind: ChoiceKind; name: string; about: string }[] = [
   { kind: "reviews", name: "Reviews", about: "Judge one strategy's ledger after costs" },
   { kind: "debriefs", name: "Debriefs", about: "Each trading day, after the close" },
 ];
+type DefaultsBody = Parameters<ReturnType<typeof useSetAgentDefaults>["mutate"]>[0];
+
 const DEFAULT = "__default";
 const MAX_RUNS = 500;
 
 const failed = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** Why the settings didn't load. A bare 404 means the server predates them (ADR 40). */
+function loadFailed(error: unknown) {
+  if (error instanceof ApiError && error.status === 404 && error.detail === "Not Found") {
+    return (
+      <>
+        Agent settings didn't load: this <code>openticker-serve</code> doesn't have them yet.
+        Restart it from this version.
+      </>
+    );
+  }
+  return `Agent settings didn't load: ${failed(error)}`;
+}
+
+const Pending = ({ width }: { width: number }) => (
+  <span className="skeleton" style={{ width }} aria-hidden />
+);
 
 /**
  * How the user's coding agent runs (ADR 40), set here and read by every run
@@ -41,7 +61,9 @@ const failed = (error: unknown) => (error instanceof Error ? error.message : Str
  */
 export function AgentsSection() {
   const settings = useAgentSettings();
-  const harnesses = useHarnesses().data?.harnesses ?? [];
+  const harnessQuery = useHarnesses();
+  const harnesses = harnessQuery.data?.harnesses ?? [];
+  const harnessesLoaded = harnessQuery.isSuccess;
   const defaults = useSetAgentDefaults();
   const reset = useResetAgentSettings();
   const { notify } = useActions();
@@ -50,7 +72,7 @@ export function AgentsSection() {
   const harness = data ? (data.harness ?? data.harness_env) : undefined;
   const runs = data ? (data.runs_per_day ?? data.runs_per_day_env) : undefined;
 
-  const saveDefaults = (body: Parameters<typeof defaults.mutate>[0]) =>
+  const saveDefaults = (body: DefaultsBody) =>
     defaults.mutate(body, {
       onSuccess: () => notify("Saved"),
       onError: (error) => notify(`Not saved: ${failed(error)}`),
@@ -60,18 +82,85 @@ export function AgentsSection() {
     <section className="tile" id="agents" aria-labelledby="agents-title">
       <div className="settings-head">
         <h2 id="agents-title">Agents</h2>
-        <span className="flex-1" />
-        <span className="note">Changes save as you make them</span>
       </div>
       <p className="note settings-note">
-        The coding agent OpenTicker runs for you, on this machine, signed in as you.
+        The coding agent OpenTicker runs for you, on this machine, signed in as you. Changes save as
+        you make them.
       </p>
-      {settings.isError && (
-        <div className="error-line" role="alert">
-          {settings.error.message}
+      {settings.isError ? (
+        <div className="st-error" role="alert">
+          <span className="st-error-text">{loadFailed(settings.error)}</span>
+          <button
+            type="button"
+            className="btn"
+            data-size="sm"
+            disabled={settings.isFetching}
+            onClick={() => settings.refetch()}
+          >
+            Try again
+          </button>
         </div>
+      ) : (
+        <AgentsForm
+          data={data}
+          harness={harness}
+          runs={runs}
+          harnesses={harnesses}
+          harnessesLoaded={harnessesLoaded}
+          pending={defaults.isPending}
+          open={open}
+          setOpen={setOpen}
+          saveDefaults={saveDefaults}
+        />
       )}
 
+      <div className="st-foot">
+        <p className="note">
+          Anything not set here comes from <code>OPENTICKER_AGENT_*</code> in the server's
+          environment, then from the agent's own default.
+        </p>
+        <button
+          type="button"
+          className="btn"
+          data-size="sm"
+          disabled={!data || reset.isPending}
+          onClick={() =>
+            reset.mutate(undefined, {
+              onSuccess: () => notify("Agent settings reset to the environment"),
+              onError: (error) => notify(`Not reset: ${failed(error)}`),
+            })
+          }
+        >
+          Reset to environment
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function AgentsForm({
+  data,
+  harness,
+  runs,
+  harnesses,
+  harnessesLoaded,
+  pending,
+  open,
+  setOpen,
+  saveDefaults,
+}: {
+  data: AgentSettings | undefined;
+  harness: string | null | undefined;
+  runs: number | null | undefined;
+  harnesses: HarnessInfo[];
+  harnessesLoaded: boolean;
+  pending: boolean;
+  open: ChoiceKind | null;
+  setOpen: (kind: ChoiceKind | null) => void;
+  saveDefaults: (body: DefaultsBody) => void;
+}) {
+  return (
+    <>
       <div className="st-group">
         <h3 className="st-gh">Agent</h3>
         <fieldset className="st-harness" aria-label="Agent">
@@ -84,12 +173,12 @@ export function AgentsSection() {
                   name="agent-harness"
                   className="st-radio"
                   checked={harness === name}
-                  disabled={(info !== undefined && !info.installed) || defaults.isPending}
+                  disabled={!data || (info !== undefined && !info.installed) || pending}
                   onChange={() => saveDefaults({ harness: name })}
                 />
                 <span>
                   <b>{harnessLabel(name)}</b>
-                  <span>{installState(info)}</span>
+                  <span>{harnessesLoaded ? installState(info) : <Pending width={96} />}</span>
                 </span>
               </label>
             );
@@ -145,18 +234,18 @@ export function AgentsSection() {
                 <button
                   type="button"
                   aria-label="Fewer runs a day"
-                  disabled={runs === undefined || runs <= 1 || defaults.isPending}
+                  disabled={runs == null || runs <= 1 || pending}
                   onClick={() => runs && saveDefaults({ runs_per_day: runs - 1 })}
                 >
                   −
                 </button>
                 <span className="st-count" aria-live="polite">
-                  {runs ?? "—"}
+                  {runs ?? <Pending width={20} />}
                 </span>
                 <button
                   type="button"
                   aria-label="More runs a day"
-                  disabled={runs === undefined || runs >= MAX_RUNS || defaults.isPending}
+                  disabled={runs == null || runs >= MAX_RUNS || pending}
                   onClick={() => runs && saveDefaults({ runs_per_day: runs + 1 })}
                 >
                   +
@@ -167,30 +256,12 @@ export function AgentsSection() {
         </div>
         <p className="st-gn">These run with nobody watching, so they always use these settings.</p>
       </div>
-
-      <p className="note settings-note">
-        Anything not set here comes from <code>OPENTICKER_AGENT_*</code> in the server's
-        environment, then from the agent's own default.{" "}
-        <button
-          type="button"
-          className="link-button"
-          disabled={reset.isPending}
-          onClick={() =>
-            reset.mutate(undefined, {
-              onSuccess: () => notify("Agent settings reset to the environment"),
-              onError: (error) => notify(`Not reset: ${failed(error)}`),
-            })
-          }
-        >
-          Reset to environment
-        </button>
-      </p>
-    </section>
+    </>
   );
 }
 
 function installState(info: HarnessInfo | undefined) {
-  if (!info) return "—";
+  if (!info) return "Not reported by the server";
   if (!info.installed) return "Not installed on this machine";
   return (
     <>
@@ -226,15 +297,18 @@ function FolderRow({
       <button
         type="button"
         className="st-row"
-        aria-expanded={open}
+        aria-expanded={open && folder !== undefined}
         aria-controls={fieldsId}
+        disabled={!folder}
         onClick={onToggle}
       >
         <span className="st-lbl">
           <b>{name}</b>
           <span className="st-about">{about}</span>
         </span>
-        <span className="st-sum">{folder ? summary(folder, background) : "—"}</span>
+        <span className="st-sum">
+          {folder ? summary(folder, background) : <Pending width={88} />}
+        </span>
         <ChevronRight className="st-chev" aria-hidden />
       </button>
       {open && folder && (
