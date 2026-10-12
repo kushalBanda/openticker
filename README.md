@@ -41,6 +41,18 @@ The Brain is a graph of linked notes about days, lessons, proposals, strategies,
 
 ![A day's debrief: each trade with why and what was given up, and the lessons it checked](docs/images/web-brain-day.png)
 
+### Agents: talk to your own coding agent
+
+![The Agents page: a chat in a strategy's folder, its steps folded, and what ran under the answer](docs/images/web-agents.png)
+
+The Agents page is a chat with your own Claude Code or Codex, signed in as you, on your machine, with the desk's tools.
+
+- **Chats live where they belong.** File a chat in General, under a strategy or a script. A strategy's folder also holds its reviews.
+- **See it work.** Each step shows as it happens: the tools it calls, the files it changes. When it's done, the steps fold away behind "Worked for 41s".
+- **Know what ran.** Each answer ends with the harness, model, effort, tokens and cost.
+- **Pick the model and effort.** Choose them for any message, or set a default for each folder in Settings.
+- **Ask a review why.** A review or a debrief opens as a chat. When it ends, you can ask it a follow-up in the same conversation.
+
 ## Built for coding agents
 
 OpenTicker gives your agent 90 MCP tools and a place to work. You describe an idea in plain words. The agent turns it into a strategy, previews it against today's market, and runs it on paper.

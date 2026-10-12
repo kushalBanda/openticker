@@ -12,7 +12,7 @@ use cases sync (ADR 2 in docs/adr).
 import logging
 import re
 from collections.abc import Callable, Mapping
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import version
 from typing import Annotated, Literal
 
@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from openticker.adapters.agents.harness import detect
 from openticker.adapters.brokers.registry import (
     BrokerConfigError,
     UnknownBrokerError,
@@ -33,6 +34,11 @@ from openticker.adapters.inbound.mcp_models import (
     AgentJobLogResult,
     AgentJobResult,
     AgentJobsResult,
+    AgentSettingsResult,
+    AgentThreadResult,
+    AgentThreadsResult,
+    AgentThreadSummaryResult,
+    AgentTurnResult,
     AlertResult,
     AuditLogResult,
     BarsResult,
@@ -53,7 +59,11 @@ from openticker.adapters.inbound.mcp_models import (
     DeleteScriptResult,
     DeleteStrategyResult,
     DeleteWatchlistResult,
+    FolderCountResult,
+    FolderSettingsResult,
     FundsResult,
+    HarnessesResult,
+    HarnessResult,
     HindsightInput,
     InstrumentRef,
     LearningResult,
@@ -102,6 +112,7 @@ from openticker.adapters.inbound.mcp_models import (
     StrategySignalsResult,
     StrategySummary,
     SyncResult,
+    ThreadSearchResult,
     TradebookResult,
     TradeNoteInput,
     WatchlistResult,
@@ -125,8 +136,11 @@ from openticker.composition import (
     order_broker,
     script_limits,
 )
+from openticker.core.agents.choices import MAX_RUNS_PER_DAY, Effort, FolderKind, RunChoice
 from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
+from openticker.core.agents.jobs import AgentSettings, Harness
 from openticker.core.agents.reviews import ReviewScheduleError
+from openticker.core.agents.threads import Access, Folder
 from openticker.core.brain.lessons import (
     MAX_APPLIES_TO,
     MAX_EVIDENCE,
@@ -181,6 +195,38 @@ from openticker.use_cases.agents.manage import (
     AgentJobBusyError,
     AgentJobCapError,
     UnknownAgentJobError,
+)
+from openticker.use_cases.agents.settings import (
+    AgentSettingsError,
+    read_settings,
+    reset_to_env,
+    resolved_settings,
+    set_folder_choice,
+    set_harness,
+    set_runs_per_day,
+)
+from openticker.use_cases.agents.threads import (
+    ChatChoiceError,
+    NothingToStopError,
+    QueueFullError,
+    SearchKind,
+    ThreadBusyError,
+    ThreadClosedError,
+    TurnStartedError,
+    UnknownThreadError,
+    delete_thread,
+    edit_queued,
+    folder_counts,
+    list_threads,
+    pinned_threads,
+    read_thread,
+    remove_queued,
+    search_threads,
+    send_message,
+    start_chat,
+    stop_thread,
+    thread_changes,
+    update_thread,
 )
 from openticker.use_cases.api_keys import (
     InvalidApiKeyNameError,
@@ -290,6 +336,14 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (UnknownOrderError, 404),
     (NoOpenPositionError, 404),
     (UnknownStrategyError, 404),
+    (UnknownThreadError, 404),
+    (ThreadBusyError, 409),
+    (ThreadClosedError, 409),
+    (QueueFullError, 409),
+    (TurnStartedError, 409),
+    (NothingToStopError, 409),
+    (ChatChoiceError, 422),
+    (AgentSettingsError, 422),
     (LegResolutionError, 404),
     (UnknownRunError, 404),
     (UnknownScriptError, 404),
@@ -370,6 +424,63 @@ _PREVIEW_NEXT_STEP = (
 Broker = Annotated[str, Query(description="Broker name, e.g. zerodha.")]
 Symbol = Annotated[str, Query(description="Standardized symbol, e.g. RELIANCE, NIFTY 50.")]
 ExchangeQuery = Annotated[Exchange, Query()]
+
+
+class SendMessageBody(BaseModel):
+    message: str = Field(min_length=1, max_length=20_000, description="What you ask the agent.")
+    model: str | None = Field(
+        default=None, max_length=100, description="The model; left out, the harness's default."
+    )
+    effort: Effort | None = Field(default=None, description="How hard it thinks.")
+
+
+class EditQueuedBody(BaseModel):
+    message: str = Field(
+        min_length=1, max_length=20_000, description="The waiting message, as it should read."
+    )
+
+
+class StartChatBody(SendMessageBody):
+    folder: Folder = Folder.GENERAL
+    access: Access = Field(
+        default=Access.TRADE,
+        description="read: the agent reads the desk and changes nothing; trade: it may also "
+        "paper trade and change strategies. Fixed after the first message.",
+    )
+    subject: str | None = Field(
+        default=None, description="The strategy's or script's id, for a chat about one."
+    )
+    harness: Harness | None = Field(
+        default=None, description="claude or codex; left out, the folder's default."
+    )
+
+
+class UpdateThreadBody(BaseModel):
+    """What the user changes about a chat; each field left out stays."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=80, description="Rename it.")
+    pinned: bool | None = Field(default=None, description="Keep it on top of the list.")
+    archived: bool | None = Field(
+        default=None, description="Take it out of the list (true) or bring it back (false)."
+    )
+    read: bool | None = Field(default=None, description="true: the user has seen it.")
+
+
+class FolderChoiceBody(BaseModel):
+    """A folder kind's default; each field left out comes from the environment."""
+
+    harness: Harness | None = None
+    model: str | None = Field(default=None, max_length=100)
+    effort: Effort | None = None
+    max_budget_usd: float | None = Field(default=None, gt=0, le=1_000)
+    timeout_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+
+
+class AgentDefaultsBody(BaseModel):
+    """Only the fields sent change; null puts one back to the environment."""
+
+    harness: Harness | None = None
+    runs_per_day: int | None = Field(default=None, ge=1, le=MAX_RUNS_PER_DAY)
 
 
 class DebriefBody(BaseModel):
@@ -1090,7 +1201,11 @@ def create_app(
     def debrief_now(body: StartDebriefBody, caller: Caller) -> StartDebriefResult:
         """Asks openticker-serve to debrief a day now with the user's coding agent."""
         job = brain_debrief.start_debrief(
-            body.trading_date, agent_settings(env), caller.triggered_by, clock(), load_calendar()
+            body.trading_date,
+            resolved_settings(agent_settings(env)),
+            caller.triggered_by,
+            clock(),
+            load_calendar(),
         )
         return StartDebriefResult(job=AgentJobResult.of(job, {}))
 
@@ -1329,7 +1444,7 @@ def create_app(
     def review(strategy_id: str, caller: Caller) -> StartReviewResult:
         """Asks openticker-serve to review the strategy now with the user's coding agent."""
         job = agent_jobs.start_review(
-            strategy_id, agent_settings(env), caller.triggered_by, clock()
+            strategy_id, resolved_settings(agent_settings(env)), caller.triggered_by, clock()
         )
         return StartReviewResult(job=AgentJobResult.of(job, agent_jobs.strategy_names()))
 
@@ -1368,6 +1483,169 @@ def create_app(
             agent_jobs.stop_agent_job(job_id, events, caller.triggered_by, clock()),
             agent_jobs.strategy_names(),
         )
+
+    def resolved() -> AgentSettings:
+        return resolved_settings(agent_settings(env))
+
+    @api.get("/agents/settings")
+    def get_agent_settings() -> AgentSettingsResult:
+        """How the user's coding agent runs: each folder's default, from Settings
+        and the environment (ADR 40)."""
+        return AgentSettingsResult.of(read_settings(agent_settings(env)))
+
+    @api.patch("/agents/settings")
+    def change_agent_defaults(body: AgentDefaultsBody, caller: Caller) -> AgentSettingsResult:
+        """The harness every folder uses, and the background runs a day."""
+        if "harness" in body.model_fields_set:
+            set_harness(body.harness, caller.triggered_by, events, clock())
+        if "runs_per_day" in body.model_fields_set:
+            set_runs_per_day(body.runs_per_day, caller.triggered_by, events, clock())
+        return AgentSettingsResult.of(read_settings(agent_settings(env)))
+
+    @api.put("/agents/settings/folders/{kind}")
+    def change_folder_choice(
+        kind: FolderKind, body: FolderChoiceBody, caller: Caller
+    ) -> FolderSettingsResult:
+        """Replaces a folder kind's default."""
+        choice = RunChoice(
+            harness=body.harness,
+            model=(body.model or "").strip() or None,
+            effort=body.effort,
+            max_budget_usd=body.max_budget_usd,
+            timeout=timedelta(minutes=body.timeout_minutes) if body.timeout_minutes else None,
+        )
+        return FolderSettingsResult.of(
+            set_folder_choice(
+                kind, choice, agent_settings(env), caller.triggered_by, events, clock()
+            )
+        )
+
+    @api.delete("/agents/settings")
+    def reset_agent_settings(caller: Caller) -> AgentSettingsResult:
+        """Every agent setting back to the environment."""
+        reset_to_env(caller.triggered_by, events, clock())
+        return AgentSettingsResult.of(read_settings(agent_settings(env)))
+
+    @api.get("/agents/harnesses")
+    def harnesses() -> HarnessesResult:
+        """Which coding agents are on this machine, with their models and efforts."""
+        return HarnessesResult(harnesses=[HarnessResult.of(info) for info in detect(env)])
+
+    @api.get("/agent-threads")
+    def threads(
+        folder: Folder | None = None,
+        subject: Annotated[str | None, Query(max_length=64)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> AgentThreadsResult:
+        """The web app's chats with the user's coding agent, most recent first
+        (ADR 40), in one folder when asked (a strategy's holds its reviews),
+        and how many each folder holds."""
+        names = agent_jobs.strategy_names()
+        return AgentThreadsResult(
+            threads=[
+                AgentThreadResult.of(view, names).summary()
+                for view in list_threads(folder, subject, limit)
+            ],
+            pinned=[
+                AgentThreadResult.of(view, names).summary()
+                for view in (pinned_threads() if folder is None else [])
+            ],
+            counts=[FolderCountResult.of(count) for count in folder_counts()],
+        )
+
+    @api.post("/agent-threads", status_code=202)
+    def new_thread(body: StartChatBody, caller: Caller) -> AgentThreadResult:
+        """Starts a chat; its first message runs as an agent job."""
+        view = start_chat(
+            body.folder,
+            body.subject,
+            body.message,
+            body.model,
+            body.effort,
+            resolved(),
+            caller.triggered_by,
+            clock(),
+            harness=body.harness,
+            events=events,
+            access=body.access,
+        )
+        return AgentThreadResult.of(view, agent_jobs.strategy_names())
+
+    @api.get("/agent-threads/search")
+    def search_chats(
+        q: Annotated[str, Query(min_length=2, max_length=100, description="Words to find.")],
+        kind: SearchKind | None = None,
+        archived: bool = False,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> ThreadSearchResult:
+        """Chats, reviews and debriefs whose title, messages or answers hold
+        the words; the archived ones only with archived=true."""
+        found = search_threads(q, kind, archived, limit)
+        return ThreadSearchResult.of(found, agent_jobs.strategy_names())
+
+    @api.get("/agent-threads/{thread_id}")
+    def thread(thread_id: str) -> AgentThreadResult:
+        """One chat with every turn and its steps."""
+        return AgentThreadResult.of(read_thread(thread_id), agent_jobs.strategy_names())
+
+    @api.patch("/agent-threads/{thread_id}")
+    def change_thread(thread_id: str, body: UpdateThreadBody) -> AgentThreadSummaryResult:
+        """Renames, pins, archives or marks a chat read."""
+        update_thread(
+            thread_id,
+            clock(),
+            title=body.title,
+            pinned=body.pinned,
+            archived=body.archived,
+            read=body.read,
+        )
+        return AgentThreadResult.of(read_thread(thread_id), agent_jobs.strategy_names()).summary()
+
+    @api.get("/agent-threads/{thread_id}/changes")
+    def chat_changes(
+        thread_id: str, job_id: Annotated[str | None, Query(max_length=64)] = None
+    ) -> AuditLogResult:
+        """What the agent changed on the desk from this chat, in one turn when
+        asked: the audit entries recorded as the chat, most recent first."""
+        return AuditLogResult.of(thread_changes(thread_id, job_id))
+
+    @api.delete("/agent-threads/{thread_id}", status_code=204)
+    def remove_thread(thread_id: str, caller: Caller) -> None:
+        """Deletes a chat from the web app; its turns stay as agent jobs."""
+        delete_thread(thread_id, events, caller.triggered_by, clock())
+
+    @api.post("/agent-threads/{thread_id}/messages", status_code=202)
+    def send(thread_id: str, body: SendMessageBody, caller: Caller) -> AgentTurnResult:
+        """Sends a message to a chat; the agent's reply runs as an agent job. Sent
+        while the agent works, it waits its turn; 409 when one already waits."""
+        turn = send_message(
+            thread_id,
+            body.message,
+            body.model,
+            body.effort,
+            resolved(),
+            caller.triggered_by,
+            clock(),
+        )
+        return AgentTurnResult.of(turn, agent_jobs.strategy_names())
+
+    @api.patch("/agent-threads/{thread_id}/messages/{job_id}")
+    def edit_waiting(thread_id: str, job_id: str, body: EditQueuedBody) -> AgentTurnResult:
+        """Rewrites the message waiting for the agent; 409 once the agent took it."""
+        turn = edit_queued(thread_id, job_id, body.message)
+        return AgentTurnResult.of(turn, agent_jobs.strategy_names())
+
+    @api.delete("/agent-threads/{thread_id}/messages/{job_id}")
+    def remove_waiting(thread_id: str, job_id: str, caller: Caller) -> AgentJobResult:
+        """Takes back the message waiting for the agent; 409 once the agent took it."""
+        job = remove_queued(thread_id, job_id, events, caller.triggered_by, clock())
+        return AgentJobResult.of(job, agent_jobs.strategy_names())
+
+    @api.post("/agent-threads/{thread_id}/stop")
+    def stop_thread_turn(thread_id: str, caller: Caller) -> AgentJobResult:
+        """Stops the turn the agent is on; a message waiting behind it still runs."""
+        job = stop_thread(thread_id, events, caller.triggered_by, clock())
+        return AgentJobResult.of(job, agent_jobs.strategy_names())
 
     @api.get("/runs/{run_id}")
     def run(run_id: str) -> StrategyRunResult:

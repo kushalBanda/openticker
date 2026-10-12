@@ -57,3 +57,17 @@ def test_filters_by_kinds_and_time() -> None:
     kinds = list_audit(10, event_types=["OrderFilled", "StrategyStopped"], since=AT)
 
     assert [e.event_type for e in kinds] == ["StrategyStopped", "OrderFilled"]
+
+
+def test_one_chats_entries_by_exact_triggered_by_within_a_window() -> None:
+    at = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)
+    write_audit("OrderPlaced", at, "chat:claude:thr_1", "{}")
+    write_audit("OrderPlaced", at + timedelta(minutes=5), "chat:claude:thr_1", "{}")
+    write_audit("OrderPlaced", at, "chat:claude:thr_10", "{}")  # another chat, same start
+    write_audit("OrderPlaced", at, "ui", "{}")
+
+    every = list_audit(10, triggered_by="chat:claude:thr_1")
+    early = list_audit(10, triggered_by="chat:claude:thr_1", until=at + timedelta(minutes=1))
+
+    assert [e.occurred_at for e in every] == [at + timedelta(minutes=5), at]
+    assert [e.occurred_at for e in early] == [at]

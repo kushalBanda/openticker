@@ -15,12 +15,12 @@ import { coalescer } from "../lib/coalesce";
 import { notifyDesktop } from "../lib/desktop";
 import {
   BELL_KINDS,
-  brainPageOf,
   byLabel,
-  dayOf,
+  chatOf,
+  chatThreadOf,
   describe,
+  pageOf,
   queriesToInvalidate,
-  strategyOf,
   tierOf,
 } from "../lib/events";
 import { istClock } from "../lib/format";
@@ -112,19 +112,12 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const openOf = useCallback(
     (entry: AuditEntry) => {
-      const page = brainPageOf(entry);
-      if (page) return { label: "Open", run: () => navigate(page) };
-      const strategy = strategyOf(entry);
-      if (strategy) return { label: "Open", run: () => navigate(`/strategies/${strategy}`) };
-      const day = dayOf(entry);
-      if (day) return { label: "Open", run: () => navigate(`/brain/days/${day}`) };
       if (entry.event_type === "BrokerSessionExpired") {
         return { label: "Settings", run: () => navigate("/settings") };
       }
-      if (entry.event_type.startsWith("Order")) {
-        return { label: "Orders", run: () => navigate("/orders") };
-      }
-      return null;
+      const page = entry.event_type === "WatchlistChanged" ? null : pageOf(entry);
+      if (!page) return null;
+      return { label: page === "/orders" ? "Orders" : "Open", run: () => navigate(page) };
     },
     [navigate],
   );
@@ -150,7 +143,9 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     );
     const offEvent = stream.onEvent((entry) => {
       lastSeen.current = entry.id;
-      for (const key of [keys.audit, ...queriesToInvalidate(entry)]) {
+      const fromChat = chatThreadOf(entry);
+      const stale = fromChat ? [[...keys.agentThread(fromChat), "changes"] as const] : [];
+      for (const key of [keys.audit, ...queriesToInvalidate(entry), ...stale]) {
         if (key[0] === "brain") brain.push();
         else void client.invalidateQueries({ queryKey: key });
       }
@@ -160,6 +155,14 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       }
       const tier = tierOf(entry);
       if (tier === "record") return;
+      const chat = chatOf(entry);
+      if (
+        chat &&
+        window.location.pathname === `/agents/${chat}` &&
+        document.visibilityState === "visible"
+      ) {
+        return; // the answer is in front of the user already
+      }
       if (entry.source === "you" && entry.event_type === "OrderFilled") {
         const at = typeof orderId === "string" ? placed.current.get(orderId) : undefined;
         if (at !== undefined && Date.now() - at < OWN_FILL_MS) return;

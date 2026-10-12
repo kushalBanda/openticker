@@ -3,6 +3,7 @@ import {
   BELL_KINDS,
   brainPageOf,
   byLabel,
+  chatOf,
   dayOf,
   describe as describeEvent,
   fromDate,
@@ -90,6 +91,12 @@ describe("event text", () => {
     expect(byLabel(kill)).toBe("SBIN mean reversion");
   });
 
+  test("a chat's calls are named by its harness", () => {
+    expect(byLabel(entry("OrderFilled", {}, "agent", "chat:claude:thr_1"))).toBe("Claude (chat)");
+    expect(byLabel(entry("OrderFilled", {}, "agent", "chat:codex:thr_2"))).toBe("Codex (chat)");
+    expect(byLabel(entry("OrderFilled", {}, "agent", "chat:thr_3"))).toBe("A chat");
+  });
+
   test("Claude and Codex are named; the server is OpenTicker", () => {
     expect(byLabel(entry("OrderFilled", {}, "claude-code", "mcp:claude-code"))).toBe("Claude");
     expect(byLabel(entry("OrderCancelled"))).toBe("OpenTicker");
@@ -158,6 +165,7 @@ describe("agent jobs by their title", () => {
     expect(queriesToInvalidate(entry("AgentJobEnded", debrief))).toEqual([
       ["agent-jobs"],
       ["brain"],
+      ["agent-threads"],
     ]);
   });
 
@@ -263,5 +271,36 @@ describe("the brain's events", () => {
       expect.arrayContaining(["DebriefWritten", "LessonStatusChanged", "ProposalRaised"]),
     );
     expect(BELL_KINDS).not.toContain("LessonWritten");
+  });
+
+  test("an agent settings change is a record that refetches the settings", () => {
+    const changed = entry("AgentSettingsChanged", {
+      change: "folder",
+      summary: "Reviews: opus, high",
+    });
+    expect(tierOf(changed)).toBe("record");
+    expect(describeEvent(changed).text).toBe("Agent settings: Reviews: opus, high");
+    expect(queriesToInvalidate(changed)).toEqual([["agent-settings"]]);
+  });
+});
+
+describe("a chat's answer", () => {
+  const chat = { kind: "chat", title: "Why did expiry days lose?", thread_id: "thr_1" };
+
+  test("is a toast that opens its chat, and says why when it failed", () => {
+    const done = entry("AgentJobEnded", { ...chat, reason: "finished" });
+    const failed = entry("AgentJobEnded", { ...chat, reason: "timeout", detail: "it ran 15 min" });
+
+    expect(tierOf(done)).toBe("worth-knowing");
+    expect(describeEvent(done)).toEqual({
+      kind: "Chat",
+      tone: undefined,
+      text: "Answered in “Why did expiry days lose?”",
+    });
+    expect(describeEvent(failed).text).toBe("“Why did expiry days lose?” ended: it ran 15 min");
+    expect(describeEvent(failed).tone).toBe("down");
+    expect(chatOf(done)).toBe("thr_1");
+    expect(byLabel(done)).toBe("Your agent");
+    expect(chatOf(entry("AgentJobEnded", { kind: "review", reason: "finished" }))).toBeNull();
   });
 });

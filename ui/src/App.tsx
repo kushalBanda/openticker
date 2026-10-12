@@ -40,6 +40,7 @@ const BrainDay = page(() => import("./pages/brain/Day"), "Day");
 const BrainLesson = page(() => import("./pages/brain/Lesson"), "Lesson");
 const BrainProposal = page(() => import("./pages/brain/Proposal"), "Proposal");
 const Agents = page(() => import("./pages/agents/Agents"), "Agents");
+const Workspace = page(() => import("./pages/agents/Workspace"), "Workspace");
 const Activity = page(() => import("./pages/activity/Activity"), "Activity");
 const Settings = page(() => import("./pages/settings/Settings"), "Settings");
 const SymbolPage = page(() => import("./pages/symbol/Symbol"), "SymbolPage");
@@ -86,7 +87,9 @@ const routes: { path: string; element: ReactNode }[] = [
   { path: "/brain/lessons/:id", element: <BrainLesson /> },
   { path: "/brain/proposals", element: <Brain /> },
   { path: "/brain/proposals/:id", element: <BrainProposal /> },
-  { path: "/agents", element: <Agents /> },
+  { path: "/agents", element: <Workspace /> },
+  { path: "/agents/jobs", element: <Agents /> },
+  { path: "/agents/:threadId", element: <Workspace /> },
   { path: "/activity", element: <Activity /> },
   { path: "/settings", element: <Settings /> },
   { path: "/symbols/:exchange/:symbol", element: <SymbolPage /> },

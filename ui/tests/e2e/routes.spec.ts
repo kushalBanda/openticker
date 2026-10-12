@@ -22,6 +22,8 @@ const STATIC = [
   "/brain/lessons",
   "/brain/proposals",
   "/agents",
+  "/agents/jobs",
+  "/agents/thr_e2e",
   "/activity",
   "/settings",
   "/symbols/NSE/RELIANCE",

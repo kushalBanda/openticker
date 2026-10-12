@@ -6,7 +6,8 @@ times a second. It also says where prices come from (the live feed, quiet,
 market closed, no broker session), and sends every new audit log entry
 within half a second: an agent's stdio MCP server is another process with
 its own event bus, so the audit log, which every process writes, is the one
-place its orders show up.
+place its orders show up. A page showing a chat watches it too: its steps as
+the agent works (ADR 40, thread_watch.py).
 
 Subscriptions are counted across connections, and the daemon's feed streams
 every instrument some page wants (`watched()`). A new one sets the feed's
@@ -42,7 +43,10 @@ from openticker.adapters.inbound.web.models import (
     StatusMessage,
     Subscribe,
     TickMessage,
+    UnwatchThread,
+    WatchThread,
 )
+from openticker.adapters.inbound.web.thread_watch import ThreadWatch
 from openticker.ports.errors import BrokerError
 from openticker.ports.models import EXCHANGE_TIMEZONE, Instrument, Quote, Tick
 from openticker.use_cases.feed_status import FeedStatus
@@ -71,6 +75,7 @@ class _Connection:
     keys: dict[StreamKey, Instrument] = field(default_factory=dict)
     sent: dict[StreamKey, datetime] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    thread: ThreadWatch | None = None  # the chat this page shows
 
     async def send(self, message: BaseModel) -> None:
         async with self.lock:
@@ -198,11 +203,18 @@ class StreamHub:
                 message = ClientMessage.model_validate({"message": json.loads(text)}).message
             except (ValueError, ValidationError):
                 await conn.send(
-                    ErrorMessage(detail="expected subscribe, unsubscribe or ping as JSON")
+                    ErrorMessage(
+                        detail="expected subscribe, unsubscribe, watch_thread, unwatch_thread "
+                        "or ping as JSON"
+                    )
                 )
                 continue
             if isinstance(message, Ping):
                 await conn.send(PongMessage())
+            elif isinstance(message, WatchThread):
+                conn.thread = ThreadWatch(message.thread_id)
+            elif isinstance(message, UnwatchThread):
+                conn.thread = None
             elif isinstance(message, Subscribe):
                 await self._subscribe(conn, message.instruments)
             else:
@@ -237,6 +249,19 @@ class StreamHub:
             await asyncio.sleep(TICK_EVERY)
             for key in list(conn.keys):
                 await self._send_price(conn, key)
+            watch = conn.thread
+            if watch is not None:
+                try:
+                    messages = await asyncio.to_thread(watch.poll)
+                except Exception:  # a locked database: the next pass reads again
+                    log.exception("reading the watched chat failed")
+                    messages = []
+                for message in messages:
+                    if (
+                        conn.thread is watch
+                        and conn.socket.client_state == WebSocketState.CONNECTED
+                    ):
+                        await conn.send(message)
             if time.monotonic() >= next_status:
                 next_status = time.monotonic() + STATUS_EVERY
                 latest = await asyncio.to_thread(self._status)

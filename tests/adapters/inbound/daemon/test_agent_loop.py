@@ -78,3 +78,19 @@ def test_step_queues_debrief_after_pnl_recorded(tmp_path: Path) -> None:
 
     [launch] = processes.launches
     assert launch.agent == "debrief" and "2026-09-21" in launch.prompt
+
+
+def test_a_pass_starts_a_waiting_chat_turn_beside_a_review(tmp_path: Path) -> None:
+    from openticker.core.agents.threads import Folder
+    from openticker.use_cases.agents.threads import start_chat
+
+    list_nifty_market()
+    review = start_review(create_strategy("s", STRADDLE, NOW).id, AgentSettings(), "ui", NOW)
+    chat = start_chat(Folder.GENERAL, None, "hi", None, None, AgentSettings(), "ui", NOW)
+    processes = _Processes()
+
+    AgentLoop(
+        AgentContext(processes, _Events(), AgentSettings(), tmp_path, "u"), lambda: NOW
+    ).step()
+
+    assert [launch.job_id for launch in processes.launches] == [review.id, chat.turns[0].job.id]

@@ -28,6 +28,7 @@ import {
 } from "../../lib/agents";
 import { MISSING, qty } from "../../lib/format";
 import { stamp } from "../../lib/scripts";
+import { ranLine } from "../../lib/threads";
 import { useActions } from "../../shell/actions";
 import { useServerNow } from "../../stream/StreamProvider";
 import { useTick } from "../scripts/Scripts";
@@ -210,7 +211,7 @@ const logHeight = (text: string) => {
   return Math.min(440, Math.max(4, lines + 1) * 19 + 24);
 };
 
-/** A job's answer and the end of what it printed. */
+/** A job's answer, what ran, and the end of what it printed. */
 function JobDialog({ job, onClose }: { job: AgentJob | null; onClose: () => void }) {
   const log = useAgentJobLog(job?.job_id ?? null);
   const text = log.data?.log ?? "";
@@ -224,6 +225,7 @@ function JobDialog({ job, onClose }: { job: AgentJob | null; onClose: () => void
     >
       {job?.summary && <Markdown text={job.summary} />}
       {job && !job.summary && job.end_detail && <p className="note">{job.end_detail}</p>}
+      {job && job.status !== "pending" && <p className="aw-ran job-ran">{ranLine(job)}</p>}
       <div className="label job-log-label">What it printed</div>
       {silent ? (
         <p className="note">It printed nothing.</p>

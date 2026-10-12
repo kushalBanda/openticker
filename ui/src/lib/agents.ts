@@ -22,6 +22,20 @@ export function harnessLabel(harness: string): string {
   return harness === "codex" ? "Codex" : "Claude Code";
 }
 
+const EFFORTS: Record<string, string> = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+/** "Extra high" for xhigh; the harness's own default when none is chosen. */
+export function effortLabel(effort: string | null | undefined): string {
+  return effort ? (EFFORTS[effort] ?? effort) : "Default";
+}
+
 export type JobState =
   | "waiting"
   | "running"

@@ -7,7 +7,9 @@ hash would add nothing but latency to every request.
 Each run of a hosted script gets its own key, scoped to trading routes and
 revoked when the run ends (ADR 25 in docs/adr). Each agent job gets one too,
 scoped to what its kind may reach: a review, its own strategy (ADR 29); a
-debrief, the desk's reads and the brain's writes for its own trading day.
+debrief, the desk's reads and the brain's writes for its own trading day; a
+chat's turn, what the user's own session reaches but broker sign-in, keys and
+agent jobs (ADR 40).
 """
 
 import hashlib
@@ -28,6 +30,8 @@ FULL_SCOPE = "full"
 SCRIPT_SCOPE_PREFIX = "script:"  # then the script's id
 REVIEW_SCOPE_PREFIX = "review:"  # then the strategy's id
 DEBRIEF_SCOPE_PREFIX = "debrief:"  # then the trading date
+CHAT_SCOPE_PREFIX = "chat:"  # then the thread's id
+CHAT_READ_SCOPE_PREFIX = "chat-read:"  # then the thread's id: a read-only chat's
 _SCRIPT_KEY_NAME_PREFIX = "script-"  # then the run's id
 _AGENT_KEY_NAME_PREFIX = "agent-"  # then the job's id
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
@@ -107,6 +111,20 @@ def create_debrief_key(trading_date: date, job_id: str, now: datetime) -> str:
         _hash(key),
         key[:_SHOWN_PREFIX_LENGTH],
         DEBRIEF_SCOPE_PREFIX + trading_date.isoformat(),
+        now,
+    )
+    return key
+
+
+def create_chat_key(thread_id: str, job_id: str, now: datetime, *, read_only: bool = False) -> str:
+    """A key for one turn of a chat (ADR 40), revoked when the turn ends. A
+    read-only chat's key reaches the read-only tools only."""
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    insert_api_key(
+        agent_key_name(job_id),
+        _hash(key),
+        key[:_SHOWN_PREFIX_LENGTH],
+        (CHAT_READ_SCOPE_PREFIX if read_only else CHAT_SCOPE_PREFIX) + thread_id,
         now,
     )
     return key

@@ -1,6 +1,7 @@
 """The Scripts and Agents mocks for the web app's end-to-end tests: three
-hosted scripts with today's and yesterday's runs, the MCP clients seen, and
-review jobs besides the ones `e2e_strategies` seeds.
+hosted scripts with today's and yesterday's runs, the MCP clients seen,
+review jobs besides the ones `e2e_strategies` seeds, and one chat about the
+straddle whose turn is the recorded transcript in tests/fixtures/transcripts/.
 
 rel_trail.py is real: started from the page, openticker-serve runs it with
 its own key, and it prints RELIANCE's price from the REST API twice a
@@ -10,13 +11,17 @@ today already ended, so the schedule doesn't start it again.
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, Harness
+from openticker.core.agents.threads import Folder
 from openticker.core.scripts.models import ScriptSchedule, ScriptStopReason
+from openticker.ports.agent_job_port import AgentOutcome
 from openticker.ports.models import EXCHANGE_TIMEZONE
-from openticker.storage import script_files
+from openticker.storage import agent_job_files, script_files
 from openticker.storage.sqlite import agent_jobs_repo, scripts_repo
 from openticker.storage.sqlite.agent_clients_repo import note_client
+from openticker.storage.sqlite.models import AgentThreadRow
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.scripts.manage import schedule_script, upload_script
 
@@ -166,4 +171,98 @@ def seed_agents(strategies: dict[str, str], clock: Callable[[], datetime]) -> No
             "still running after 15 minutes; killed by SIGKILL",
             _local(now, 4, 11, 35),
             exit_code=-9,
+        )
+
+
+CHAT_ID = "thr_e2e"
+GONE_ID = "thr_gone"  # its session is one Claude Code no longer has
+_TRANSCRIPT = Path(__file__).parent / "transcripts" / "claude_turn.jsonl"
+
+
+def seed_chat(straddle_id: str, clock: Callable[[], datetime]) -> None:
+    """ "Why did expiry days lose?", in the straddle's folder: one turn that
+    ended, its steps and what ran read from the recorded transcript."""
+    asked = clock() - timedelta(minutes=30)
+    naive = asked.replace(tzinfo=None) - (asked.utcoffset() or timedelta())
+    with write_transaction() as session:
+        session.add(
+            AgentThreadRow(
+                id=CHAT_ID,
+                title="Why did expiry days lose?",
+                folder=Folder.STRATEGY.value,
+                subject=straddle_id,
+                harness=Harness.CLAUDE.value,
+                session_id="5f0c2a1e-8d3b-4c6a-9e7f-1a2b3c4d5e6f",
+                created_at=naive,
+                updated_at=naive,
+            )
+        )
+        turn = agent_jobs_repo.add_job(
+            session,
+            AgentJobKind.CHAT,
+            None,
+            Harness.CLAUDE,
+            "ui",
+            asked,
+            thread_id=CHAT_ID,
+            prompt="The review says skip expiry days. Why did they lose?",
+            model="opus",
+            effort="high",
+        )
+        agent_jobs_repo.mark_running(session, turn.id, 4343, asked)
+        agent_jobs_repo.mark_outcome(
+            session,
+            turn.id,
+            AgentOutcome(None, None, "5f0c2a1e", "claude-opus-5-5", 36_210, 2_190, 41_000),
+        )
+        agent_jobs_repo.end_job(
+            session,
+            turn.id,
+            AgentJobEndReason.FINISHED,
+            "exited with code 0",
+            asked + timedelta(seconds=41),
+            0,
+            "Four of the five expiry-day losses came when INDIA VIX opened high.",
+            0.07,
+        )
+    agent_job_files.events_path(turn.id).write_text(_TRANSCRIPT.read_text())
+
+
+def seed_gone_chat(clock: Callable[[], datetime]) -> None:
+    """ "An old chat", in General: one turn that ended, whose session
+    tests/fixtures/fake_claude.py no longer has, so it can't be continued."""
+    asked = clock() - timedelta(days=3)
+    naive = asked.replace(tzinfo=None) - (asked.utcoffset() or timedelta())
+    with write_transaction() as session:
+        session.add(
+            AgentThreadRow(
+                id=GONE_ID,
+                title="An old chat",
+                folder=Folder.GENERAL.value,
+                subject=None,
+                harness=Harness.CLAUDE.value,
+                session_id="gone-1a2b3c4d",
+                created_at=naive,
+                updated_at=naive,
+            )
+        )
+        turn = agent_jobs_repo.add_job(
+            session,
+            AgentJobKind.CHAT,
+            None,
+            Harness.CLAUDE,
+            "ui",
+            asked,
+            thread_id=GONE_ID,
+            prompt="What was the desk's best day?",
+        )
+        agent_jobs_repo.mark_running(session, turn.id, 4344, asked)
+        agent_jobs_repo.end_job(
+            session,
+            turn.id,
+            AgentJobEndReason.FINISHED,
+            "exited with code 0",
+            asked + timedelta(seconds=20),
+            0,
+            "Tuesday the 6th: ₹4,210 after charges.",
         )

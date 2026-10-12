@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from openticker.core.agents.choices import Effort, FolderKind, RunChoice
 from openticker.core.agents.jobs import (
     AgentJobEndReason,
     AgentJobStatus,
@@ -79,7 +80,7 @@ class _Processes:
     def stop(self, pid: int, force: bool) -> None:
         self.stopped.append((pid, force))
 
-    def outcome(self, harness: Harness, result_path: Path) -> AgentOutcome:
+    def outcome(self, harness: Harness, events_path: Path, result_path: Path) -> AgentOutcome:
         return self.answer
 
 
@@ -161,6 +162,48 @@ def test_an_ended_job_keeps_its_answer_and_cost_revokes_its_key_and_notifies(
     assert isinstance(event, AgentJobEnded)
     assert (event.strategy_name, event.reason, event.cost_usd) == ("straddle", "finished", 0.42)
     assert f"job {job.id} ended: finished" in get_agent_job_log(job.id).text
+
+
+def test_a_review_runs_with_its_folder_choice_and_records_what_ran(tmp_path: Path) -> None:
+    reviews = RunChoice(Harness.CLAUDE, "opus", Effort.HIGH, 2.0, timedelta(minutes=15))
+    settings = replace(SETTINGS, choices={FolderKind.REVIEWS: reviews})
+    job = start_review(_strategy(), settings, "ui", NOW)
+    processes, events = _Processes(), _Events()
+    processes.answer = AgentOutcome(
+        "keep: net ₹1,200", 0.42, "sess-9", "claude-opus-5-5", 38_000, 400, 41_000
+    )
+    context = replace(_context(processes, events, tmp_path), settings=settings)
+
+    start_next_job(context, NOW)
+    [launch] = processes.launches
+    assert (launch.model, launch.effort, launch.max_budget_usd) == ("opus", Effort.HIGH, 2.0)
+    processes.exited[1001] = 0
+    watch_jobs(context, NOW + timedelta(minutes=1))
+
+    ended = agent_jobs_repo.find_job(job.id)
+    assert ended is not None
+    assert (ended.model, ended.effort, ended.model_used) == ("opus", "high", "claude-opus-5-5")
+    assert (ended.input_tokens, ended.output_tokens, ended.duration_ms) == (38_000, 400, 41_000)
+    assert ended.session_id == "sess-9"
+    [event] = events.of(AgentJobEnded)
+    assert isinstance(event, AgentJobEnded) and event.model_used == "claude-opus-5-5"
+    assert agent_jobs_repo.runs_without_model(NOW) == (0, 1)
+
+
+def test_a_run_with_no_model_reported_counts_against_the_metric(tmp_path: Path) -> None:
+    stopped = start_review(_strategy("a"), SETTINGS, "ui", NOW)
+    stop_agent_job(stopped.id, _Events(), "ui", NOW)  # never ran: not counted
+    start_review(_strategy("b"), SETTINGS, "ui", NOW)
+    processes, events = _Processes(), _Events()
+    context = _context(processes, events, tmp_path)
+    start_next_job(context, NOW)
+    assert agent_jobs_repo.runs_without_model(NOW) == (0, 0)  # still running
+
+    processes.exited[1001] = 0
+    watch_jobs(context, NOW + timedelta(minutes=1))
+
+    assert agent_jobs_repo.runs_without_model(NOW) == (1, 1)
+    assert agent_jobs_repo.runs_without_model(NOW + timedelta(seconds=1)) == (0, 0)
 
 
 def test_a_job_past_its_timeout_is_stopped_then_killed(tmp_path: Path) -> None:
@@ -274,7 +317,7 @@ def test_a_harness_that_wont_start_ends_the_job_and_its_key(tmp_path: Path) -> N
 
     ended = agent_jobs_repo.find_job(job.id)
     assert ended is not None and ended.end_reason is AgentJobEndReason.START_FAILED
-    assert "claude is not on PATH" in (ended.end_detail or "")
+    assert "Claude Code is not installed on this machine" in (ended.end_detail or "")
 
 
 def test_after_a_restart_jobs_left_running_are_stopped_and_lost(tmp_path: Path) -> None:

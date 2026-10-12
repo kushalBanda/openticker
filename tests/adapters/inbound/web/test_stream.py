@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -10,8 +11,14 @@ from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
 from openticker.adapters.inbound.web.stream import MAX_SUBSCRIPTIONS
+from openticker.core.agents.jobs import AgentSettings
+from openticker.core.agents.threads import Folder
 from openticker.ports.models import Tick
+from openticker.storage import agent_job_files
+from openticker.storage.sqlite import agent_jobs_repo
 from openticker.storage.sqlite.audit_repo import write_audit
+from openticker.storage.sqlite.strategies_repo import write_transaction
+from openticker.use_cases.agents.threads import start_chat
 from tests.adapters.inbound.web.conftest import NIFTY, NOW, OWN, Web
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 
@@ -319,3 +326,23 @@ def test_a_page_gone_before_its_hello_leaves_the_hub(web: Web) -> None:
     asyncio.run(web.hub.serve(socket, alive=lambda: True))
 
     assert web.hub._connections == set()  # the tail sends to nobody
+
+
+def test_a_watched_chat_streams_its_running_turns_steps(web: Web) -> None:
+    view = start_chat(Folder.GENERAL, None, "hi", None, None, AgentSettings(), "ui", NOW)
+    job_id = view.turns[0].job.id
+    with write_transaction() as session:
+        agent_jobs_repo.mark_running(session, job_id, 4242, NOW)
+    fixture = Path(__file__).parents[3] / "fixtures" / "transcripts" / "claude_turn.jsonl"
+    agent_job_files.events_path(job_id).write_text(fixture.read_text())
+    socket = _connected(web)
+
+    socket.send_json({"type": "watch_thread", "thread_id": view.thread.id})
+    message = _next(socket, "thread_steps")
+
+    assert (message["thread_id"], message["job_id"], message["from_index"]) == (
+        view.thread.id,
+        job_id,
+        0,
+    )
+    assert message["steps"][1]["tool"] == "get_strategy_runs"

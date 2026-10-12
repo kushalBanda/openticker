@@ -1,4 +1,10 @@
+import asyncio
+
+from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.scopes import (
+    CHAT_READ_EXTRA_TOOLS,
+    CHAT_READ_TOOLS,
+    CHAT_ROUTES,
     DEBRIEF_ROUTES,
     REVIEW_ROUTES,
     SCRIPT_ROUTES,
@@ -153,3 +159,82 @@ def test_review_key_lists_its_brain_appends_before_their_arguments_are_known() -
 
 def test_debrief_key_reads_learning() -> None:
     assert _refusal("debrief:2026-10-05", "get_learning") is None
+
+
+def test_a_chats_key_trades_runs_strategies_and_writes_the_brain() -> None:
+    scope = "chat:thr_1"
+
+    for tool in (
+        "place_order",
+        "close_all_positions",
+        "start_strategy",
+        "kill_strategy",
+        "get_strategy_ledger",
+        "create_lesson",
+        "decide_proposal",
+        "get_agent_jobs",
+    ):
+        assert _refusal(scope, tool, strategy_id="stg_theirs") is None, tool
+
+
+def test_a_chats_key_cannot_sign_in_to_the_broker_or_run_agent_jobs() -> None:
+    scope = "chat:thr_1"
+
+    for tool in (
+        "get_broker_login_url",
+        "connect_broker",
+        "start_review",
+        "schedule_review",
+        "unschedule_review",
+        "stop_agent_job",
+        "start_debrief",
+        "schedule_debrief",
+    ):
+        assert "chat's key" in (_refusal(scope, tool) or ""), tool
+
+
+def test_a_chats_key_reaches_no_route_without_a_tool() -> None:
+    scope = "chat:thr_1"
+
+    for method, path in (
+        ("POST", "/api/v1/keys"),
+        ("POST", "/api/v1/agent-threads"),
+        ("POST", "/api/v1/agent-threads/{thread_id}/messages"),
+        ("PATCH", "/api/v1/brain/notes/{note_id}"),
+    ):
+        assert refusal(scope, method, path, {}, RUNS.get) is not None, path
+
+
+def test_a_read_only_chats_tools_are_exactly_its_chats_read_only_tools() -> None:
+    """A read-only chat's key reaches what the MCP annotations call read-only,
+    of the tools a chat may use; a tool annotated differently changes it here."""
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    read_only = {
+        tool.name
+        for tool in tools
+        if tool.annotations is not None
+        and tool.annotations.read_only_hint
+        and TOOL_ROUTES[tool.name] in CHAT_ROUTES
+    }
+
+    assert set(CHAT_READ_TOOLS) == read_only
+    for extra in CHAT_READ_EXTRA_TOOLS:  # writes the local cache only
+        assert extra not in read_only and TOOL_ROUTES[extra] in CHAT_ROUTES
+
+
+def test_a_read_only_chats_key_reads_the_desk_and_changes_nothing() -> None:
+    scope = "chat-read:thr_1"
+
+    for tool in ("get_quote", "get_historical_bars", "get_positions", "get_strategy_ledger"):
+        assert _refusal(scope, tool, strategy_id="stg_theirs") is None, tool
+    for tool in (
+        "place_order",
+        "cancel_all_orders",
+        "start_strategy",
+        "create_watchlist",
+        "create_lesson",
+        "connect_broker",
+        "start_review",
+    ):
+        assert "read-only" in (_refusal(scope, tool) or ""), tool
+    assert refusal(scope, "POST", "/api/v1/agent-threads", {}, RUNS.get) is not None

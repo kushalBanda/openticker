@@ -185,4 +185,29 @@ describe("stream connection", () => {
     expect(hellos).toEqual([41]);
     expect(events).toEqual(["42 OrderFilled"]);
   });
+
+  test("a watched chat is watched again after a reconnect, and its news reaches listeners", async () => {
+    last().open();
+    const news: unknown[] = [];
+    stream.onThread((n) => news.push(n));
+    const unwatch = stream.watchThread("thr_1");
+    expect(last().sent).toEqual([{ type: "watch_thread", thread_id: "thr_1" }]);
+
+    last().receive({
+      type: "thread_steps",
+      thread_id: "thr_1",
+      job_id: "j",
+      from_index: 0,
+      steps: [],
+    });
+    expect(news).toHaveLength(1);
+
+    last().drop();
+    await vi.advanceTimersByTimeAsync(100);
+    last().open();
+    expect(last().sent).toEqual([{ type: "watch_thread", thread_id: "thr_1" }]);
+
+    unwatch();
+    expect(last().sent.at(-1)).toEqual({ type: "unwatch_thread" });
+  });
 });

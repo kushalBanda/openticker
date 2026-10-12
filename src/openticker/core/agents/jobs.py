@@ -6,11 +6,16 @@ trading day and writes the brain's notes on it. Pure."""
 
 import re
 import signal
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from openticker.core.brain.notes import day_title
+
+if TYPE_CHECKING:
+    from openticker.core.agents.choices import FolderKind, RunChoice
 
 # The part of a job's answer kept with the job: a verdict, not a transcript.
 MAX_SUMMARY_CHARS = 2_000
@@ -28,10 +33,11 @@ class Harness(StrEnum):
 class AgentJobKind(StrEnum):
     REVIEW = "review"  # one strategy
     DEBRIEF = "debrief"  # one trading day, the whole desk
+    CHAT = "chat"  # one message in a chat (ADR 40)
 
 
 class AgentJobStatus(StrEnum):
-    PENDING = "pending"  # waiting for the daemon; one job runs at a time
+    PENDING = "pending"  # waiting for the daemon
     RUNNING = "running"
     STOPPING = "stopping"  # asked to stop; killed if it hasn't within the grace
     ENDED = "ended"
@@ -63,6 +69,11 @@ class AgentSettings:
     timeout: timedelta = timedelta(minutes=15)
     jobs_per_day: int = 20
     max_budget_usd: float | None = None  # Claude Code only; Codex has no spend cap
+    chat_turns_at_once: int = 2  # the chat lane's, beside the one background job (ADR 40)
+    model: str | None = None  # None: the harness's own default
+    effort: str | None = None  # an Effort the harness offers; None: its default
+    # Each folder kind's resolved choice, once Settings are read (ADR 40).
+    choices: "Mapping[FolderKind, RunChoice]" = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.timeout < timedelta(minutes=1):
@@ -92,6 +103,29 @@ class AgentJob:
     summary: str | None = None  # the agent's final answer, capped
     cost_usd: float | None = None  # when the harness reports it
     subject: date | None = None  # the trading date a debrief covers
+    # A chat's turn, and what each run used (ADR 40). None: not recorded.
+    thread_id: str | None = None
+    prompt: str | None = None  # a chat turn's message
+    model: str | None = None  # as asked
+    effort: str | None = None  # as asked
+    model_used: str | None = None  # as the harness reported
+    session_id: str | None = None  # the harness's conversation, to resume
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    duration_ms: int | None = None
+
+
+def harness_name(harness: Harness) -> str:
+    return "Claude Code" if harness is Harness.CLAUDE else "Codex"
+
+
+def start_failure(harness: Harness, error: Exception) -> str:
+    """Why a job's process didn't start, said for the user."""
+    if isinstance(error, FileNotFoundError):
+        return (
+            f"{harness_name(harness)} is not installed on this machine (not on the PATH jobs get)"
+        )
+    return f"could not start: {error}"
 
 
 def job_title(kind: AgentJobKind, strategy_name: str | None, subject: date | None) -> str:
@@ -99,6 +133,8 @@ def job_title(kind: AgentJobKind, strategy_name: str | None, subject: date | Non
     "Debrief of Mon 5 Oct"."""
     if kind is AgentJobKind.DEBRIEF:
         return f"Debrief of {day_title(subject)}" if subject else "Debrief"
+    if kind is AgentJobKind.CHAT:
+        return "Chat"
     return f"Review of {strategy_name or 'a deleted strategy'}"
 
 

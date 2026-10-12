@@ -8,7 +8,7 @@ import { nextLink } from "./links";
 
 async function signIn(page: Page) {
   await page.goto(nextLink());
-  await page.goto("/agents");
+  await page.goto("/agents/jobs");
   await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
 }
 
@@ -52,7 +52,9 @@ test("shows the connected clients, the review settings, and both seeded jobs", a
   await expect(kvValue(page, "Harness")).toHaveText("Claude Code");
   await expect(kvValue(page, "Running now")).toHaveText("0");
   await expect(kvValue(page, "Waiting")).toHaveText("1");
-  await expect(page.getByTestId("jobs-today")).toHaveText("1 of 20"); // today's debrief
+  // Today's debrief, and the review the workspace spec's proof runs when the
+  // app project went first (this project depends on it; alone, it didn't).
+  await expect(page.getByTestId("jobs-today")).toHaveText(/^[12] of 20$/);
   await expect(kvValue(page, "Time limit")).toHaveText("15 min a job");
 
   // Brain's proof asked for another and stopped it before this ran.
@@ -105,6 +107,20 @@ test("a row opens its job: a timed-out one shows what it printed", async ({ page
   const dialog = page.getByRole("dialog", { name: "Review job" });
   await expect(dialog).toContainText("still running after 15 minutes");
   await expect(dialog).toContainText("It printed nothing.");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("a finished review says what ran: harness, model, effort, tokens and cost", async ({
+  page,
+}) => {
+  await signIn(page);
+  await jobRow(page, "BANKNIFTY iron condor").filter({ hasText: "Finished" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Review job" });
+  // Read from the run's stream-json by the harness's own parser (e2e_strategies.py).
+  await expect(
+    dialog.getByText("Claude Code · claude-opus-5-5 · high · 55.1k tokens · $0.42"),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });

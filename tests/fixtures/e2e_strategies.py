@@ -3,6 +3,7 @@ what each is doing now, months of ended runs with fills that paid charges,
 reviews, and a signal strategy's alerts. History is dated June to August, so
 the Trades page's week and month keep only their own fills."""
 
+import json
 import random
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -10,6 +11,7 @@ from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
+from openticker.adapters.agents.harness import read_outcome
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, Harness
 from openticker.core.risk.models import StrategyLimits, StrategyStopReason
 from openticker.core.strategies.models import (
@@ -26,6 +28,7 @@ from openticker.core.strategies.models import (
 )
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, InstrumentType, Product, Side
+from openticker.storage import agent_job_files
 from openticker.storage.sqlite import agent_jobs_repo, runs_repo, signals_repo, strategies_repo
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import SandboxOrderRow, SandboxTradeRow
@@ -198,13 +201,70 @@ def _history(
             )
 
 
+def _review_events(strategy_id: str, summary: str) -> str:
+    """A review's run in Claude Code's own `stream-json` shape
+    (tests/fixtures/transcripts/claude_turn.jsonl): the ledger read, the
+    verdict, and the result line that says what ran."""
+    session = f"sess-{strategy_id}"
+    base = {"parent_tool_use_id": None, "session_id": session}
+    ledger = {"type": "tool_use", "id": "toolu_1", "name": "mcp__openticker__get_strategy_ledger"}
+    usage = {
+        "claude-opus-5-5": {
+            "inputTokens": 12,
+            "cacheReadInputTokens": 52_298,
+            "outputTokens": 1_840,
+        },
+        "claude-haiku-5-5": {"inputTokens": 900, "outputTokens": 60},
+    }
+    lines = [
+        {"type": "system", "subtype": "init", "session_id": session, "model": "claude-opus-5-5"},
+        {
+            **base,
+            "type": "assistant",
+            "message": {"content": [{**ledger, "input": {"strategy_id": strategy_id}}]},
+        },
+        {
+            **base,
+            "type": "user",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "20 runs"}]
+            },
+        },
+        {**base, "type": "assistant", "message": {"content": [{"type": "text", "text": summary}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": summary,
+            "session_id": session,
+            "duration_ms": 180_000,
+            "total_cost_usd": 0.42,
+            "modelUsage": usage,
+        },
+    ]
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
 def _review(
     strategy_id: str, at: datetime, summary: str, trigger: str = "schedule: 20 runs"
 ) -> None:
+    """A finished review, its run read back by the harness's own parser."""
     with write_transaction() as session:
         job = agent_jobs_repo.add_job(
-            session, AgentJobKind.REVIEW, strategy_id, Harness.CLAUDE, trigger, at
+            session,
+            AgentJobKind.REVIEW,
+            strategy_id,
+            Harness.CLAUDE,
+            trigger,
+            at,
+            model="opus",
+            effort="high",
         )
+    events = agent_job_files.events_path(job.id)
+    events.write_text(_review_events(strategy_id, summary))
+    outcome = read_outcome(Harness.CLAUDE, events, agent_job_files.result_path(job.id))
+    with write_transaction() as session:
+        agent_jobs_repo.mark_outcome(session, job.id, outcome)
         agent_jobs_repo.end_job(
             session,
             job.id,
@@ -212,8 +272,8 @@ def _review(
             "exited with code 0",
             at + timedelta(minutes=3),
             exit_code=0,
-            summary=summary,
-            cost_usd=0.42,
+            summary=outcome.summary,
+            cost_usd=outcome.cost_usd,
         )
 
 

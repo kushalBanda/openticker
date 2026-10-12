@@ -6,7 +6,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from openticker.adapters.inbound.mcp_models import AuditEntryResult, InstrumentRef
+from openticker.adapters.inbound.mcp_models import (
+    AgentJobResult,
+    AuditEntryResult,
+    InstrumentRef,
+    StepResult,
+)
 from openticker.adapters.sandbox.broker import SandboxSettings
 from openticker.core.agents.jobs import AgentSettings, Harness
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Tick
@@ -325,8 +330,21 @@ class Ping(BaseModel):
     type: Literal["ping"]
 
 
+class WatchThread(BaseModel):
+    """Send this chat's steps as they happen (ADR 40); one chat per tab."""
+
+    type: Literal["watch_thread"]
+    thread_id: str
+
+
+class UnwatchThread(BaseModel):
+    type: Literal["unwatch_thread"]
+
+
 class ClientMessage(BaseModel):
-    message: Annotated[Subscribe | Unsubscribe | Ping, Field(discriminator="type")]
+    message: Annotated[
+        Subscribe | Unsubscribe | Ping | WatchThread | UnwatchThread, Field(discriminator="type")
+    ]
 
 
 # The server's messages.
@@ -392,6 +410,25 @@ class TickMessage(BaseModel):
             as_of=tick.received_at.astimezone(EXCHANGE_TIMEZONE),
             streamed=streamed,
         )
+
+
+class ThreadStepsMessage(BaseModel):
+    """A watched chat's turn's steps from `from_index` on, replacing any the
+    page has from there: a tool's result arrives after its call."""
+
+    type: Literal["thread_steps"] = "thread_steps"
+    thread_id: str
+    job_id: str
+    from_index: int
+    steps: list[StepResult]
+
+
+class ThreadTurnMessage(BaseModel):
+    """A watched chat's turn was asked, started or ended."""
+
+    type: Literal["thread_turn"] = "thread_turn"
+    thread_id: str
+    turn: AgentJobResult
 
 
 class PongMessage(BaseModel):

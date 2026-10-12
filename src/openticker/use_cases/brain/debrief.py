@@ -4,6 +4,7 @@ server's own note on a day with nothing to debrief."""
 
 from datetime import date, datetime, time, timedelta
 
+from openticker.core.agents.choices import FolderKind, run_choice
 from openticker.core.agents.debriefs import (
     DayActivity,
     DebriefOutcome,
@@ -15,6 +16,7 @@ from openticker.core.agents.jobs import (
     AgentJob,
     AgentJobKind,
     AgentSettings,
+    job_title,
 )
 from openticker.core.brain.notes import NoteKind, WrittenBy, day_title
 from openticker.core.calendar.calendar import session_hours
@@ -24,7 +26,13 @@ from openticker.events.bus import EventPublisher
 from openticker.events.types import DebriefWritten
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import agent_jobs_repo, brain_repo, pnl_repo, runs_repo
+from openticker.storage.sqlite import (
+    agent_jobs_repo,
+    agent_threads_repo,
+    brain_repo,
+    pnl_repo,
+    runs_repo,
+)
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError
 from openticker.use_cases.brain.read import check_trading_day, owed_on
@@ -135,11 +143,21 @@ def start_debrief(
         if agent_jobs_repo.started_since(session, midnight) >= settings.jobs_per_day:
             raise AgentJobCapError(
                 f"{settings.jobs_per_day} agent jobs have run today, the daily cap "
-                "(OPENTICKER_AGENT_JOBS_PER_DAY); try again tomorrow"
+                "(Settings, Agents, or OPENTICKER_AGENT_JOBS_PER_DAY); try again tomorrow"
             )
-        return agent_jobs_repo.add_job(
-            session, AgentJobKind.DEBRIEF, None, settings.harness, triggered_by, now, subject=day
+        choice = run_choice(settings, FolderKind.DEBRIEFS)
+        job = agent_jobs_repo.add_job(
+            session,
+            AgentJobKind.DEBRIEF,
+            None,
+            choice.harness or settings.harness,
+            triggered_by,
+            now,
+            subject=day,
+            model=choice.model,
+            effort=choice.effort.value if choice.effort else None,
         )
+        return agent_threads_repo.open_job_thread(session, job, job_title(job.kind, None, day), now)
 
 
 def get_debrief_schedule(

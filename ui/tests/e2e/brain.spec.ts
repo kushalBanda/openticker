@@ -394,7 +394,7 @@ test("the daily debrief: turned on, asked for now, and a day's rewrite stopped",
   ).toBeVisible();
 
   // It shows on the Agents page as the day's debrief, and is stopped there.
-  await page.goto("/agents");
+  await page.goto("/agents/jobs");
   const waiting = page
     .getByRole("table", { name: "Agent jobs" })
     .getByRole("row")

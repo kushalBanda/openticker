@@ -13,6 +13,7 @@ from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
+from openticker.core.agents.choices import EFFORTS
 from openticker.core.agents.jobs import AgentJobError, AgentSettings, Harness
 from openticker.core.orders.fills import FillSettings
 from openticker.core.scripts.models import InvalidScriptError, ScriptLimits
@@ -173,7 +174,10 @@ def agent_settings(env: Mapping[str, str]) -> AgentSettings:
     """How agent jobs run (ADR 29 in docs/adr): `OPENTICKER_AGENT_HARNESS`
     (claude or codex, default claude), `OPENTICKER_AGENT_TIMEOUT_MINUTES`
     (default 15), `OPENTICKER_AGENT_JOBS_PER_DAY` (default 20) and
-    `OPENTICKER_AGENT_MAX_BUDGET_USD` (Claude Code only; unset, no cap)."""
+    `OPENTICKER_AGENT_MAX_BUDGET_USD` (Claude Code only; unset, no cap), and
+    `OPENTICKER_AGENT_MODEL` and `OPENTICKER_AGENT_EFFORT` (unset, the
+    harness's own default). Each is the fallback for what the web app's
+    Settings leave unset (ADR 40)."""
     defaults = AgentSettings()
     harness_name = (env.get("OPENTICKER_AGENT_HARNESS") or defaults.harness.value).strip()
     if harness_name not in {harness.value for harness in Harness}:
@@ -196,12 +200,21 @@ def agent_settings(env: Mapping[str, str]) -> AgentSettings:
         raise AgentConfigError(
             f"OPENTICKER_AGENT_MAX_BUDGET_USD must be a number of dollars, got {raw_budget!r}"
         ) from None
+    harness = Harness(harness_name)
+    effort = (env.get("OPENTICKER_AGENT_EFFORT") or "").strip().lower() or None
+    if effort is not None and effort not in EFFORTS[harness]:
+        raise AgentConfigError(
+            f"OPENTICKER_AGENT_EFFORT must be one of {', '.join(EFFORTS[harness])} "
+            f"for {harness}, got {effort!r}"
+        )
     try:
         return AgentSettings(
-            harness=Harness(harness_name),
+            harness=harness,
             timeout=timedelta(minutes=whole["OPENTICKER_AGENT_TIMEOUT_MINUTES"]),
             jobs_per_day=whole["OPENTICKER_AGENT_JOBS_PER_DAY"],
             max_budget_usd=budget,
+            model=(env.get("OPENTICKER_AGENT_MODEL") or "").strip() or None,
+            effort=effort,
         )
     except AgentJobError as exc:
         raise AgentConfigError(str(exc)) from exc

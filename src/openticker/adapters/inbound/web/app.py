@@ -62,6 +62,7 @@ from openticker.storage.calendar_file import load_calendar
 from openticker.storage.charges_file import load_charge_book
 from openticker.use_cases.agent_clients import get_agent_clients
 from openticker.use_cases.agents.manage import jobs_started_today
+from openticker.use_cases.agents.settings import resolved_settings
 from openticker.use_cases.api_keys import create_api_key, get_api_keys, revoke_user_key
 from openticker.use_cases.connect_broker import connect_broker, disconnect_broker
 from openticker.use_cases.reset_paper_account import CONFIRMATION, reset_paper_account
@@ -204,7 +205,11 @@ def mount_web(
     def agents() -> AgentsResult:
         """MCP clients seen, and how review jobs run: the harness and the day's cap."""
         now = clock()
-        return AgentsResult.of(get_agent_clients(now), agent_settings(env), jobs_started_today(now))
+        return AgentsResult.of(
+            get_agent_clients(now),
+            resolved_settings(agent_settings(env)),
+            jobs_started_today(now),
+        )
 
     @api.get("/notifications")
     def notifications() -> NotificationsResult:

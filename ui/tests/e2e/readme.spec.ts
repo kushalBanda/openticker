@@ -45,3 +45,17 @@ test("README screenshots", async ({ page }) => {
   await open(page, page.url());
   await shoot(page, "brain-day");
 });
+
+test("README screenshot: the Agents workspace", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(nextLink());
+  await open(page, "/agents/thr_e2e"); // the seeded chat, in the straddle's folder
+  await page.getByRole("button", { name: /Worked for/ }).click();
+  await page
+    .getByRole("navigation", { name: "Chats" })
+    .getByRole("button", { name: /^NIFTY short straddle/ })
+    .click();
+  await page.waitForTimeout(500);
+  await shoot(page, "agents");
+});

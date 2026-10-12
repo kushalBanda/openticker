@@ -64,6 +64,44 @@ for (const width of [1280, 1440, 1920]) {
   });
 }
 
+test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to the environment", async ({
+  page,
+}) => {
+  await signIn(page);
+  const agents = page.locator("#agents");
+  await agents.scrollIntoViewIfNeeded();
+  await expect(agents.getByRole("radio", { name: /Claude Code/ })).toBeChecked();
+  // Both on the e2e server's PATH, each with its version (tests/fixtures/fake_*.py).
+  await expect(agents.locator("label", { hasText: "Claude Code" })).toContainText(
+    "Ready · 2.1.296",
+  );
+  await expect(agents.locator("label", { hasText: "Codex" })).toContainText("Ready · 0.48.0");
+
+  const reviews = agents.getByRole("button", { name: /Reviews/ });
+  await expect(reviews).toContainText("Agent's default");
+  await reviews.click();
+  await expect(reviews).toHaveAttribute("aria-expanded", "true");
+  await agents
+    .getByRole("group", { name: "Reviews effort" })
+    .getByRole("button", { name: "High", exact: true })
+    .click();
+  await expect(toast(page, "Saved")).toBeVisible();
+  await expect(reviews).toContainText("Default model · High");
+  await agents.getByRole("combobox", { name: "Reviews model" }).click();
+  await page.getByRole("option", { name: "opus" }).click();
+  await expect(reviews).toContainText("opus · High");
+
+  const runs = agents.locator(".st-count");
+  const before = Number(await runs.textContent());
+  await agents.getByRole("button", { name: "More runs a day" }).click();
+  await expect(runs).toHaveText(String(before + 1));
+
+  await agents.getByRole("button", { name: "Reset to environment" }).click();
+  await expect(toast(page, "Agent settings reset to the environment")).toBeVisible();
+  await expect(reviews).toContainText("Agent's default");
+  await expect(runs).toHaveText(String(before));
+});
+
 test("proof: disconnect, then connect through the broker's login and its redirect", async ({
   page,
 }) => {

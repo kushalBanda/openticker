@@ -117,6 +117,42 @@ class PaperAccountReset:
 
 
 @dataclass(frozen=True)
+class AgentChatStarted:
+    """A chat with the user's coding agent began in the web app (ADR 40)."""
+
+    thread_id: str
+    title: str
+    folder: str
+    subject: str | None
+    harness: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class AgentChatDeleted:
+    """A chat was deleted: gone from the web app, its turns kept as jobs."""
+
+    thread_id: str
+    title: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class AgentSettingsChanged:
+    """The web app's Settings changed how the user's coding agent runs (ADR 40):
+    a folder's default, the harness every folder uses, the background runs a
+    day, or all of them back to the environment."""
+
+    change: str  # folder, harness, runs_per_day, reset
+    summary: str  # what it is now: "Reviews: opus, high", "Runs a day: 30"
+    triggered_by: str
+    folder: str | None = None  # a FolderKind, for change "folder"
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class WatchlistChanged:
     """A watchlist was created, renamed or deleted, or instruments were added
     to or removed from it (ADR 36). Audited, so the web app hears of an
@@ -257,6 +293,8 @@ class AgentJobEnded:
     detail: str
     summary: str | None
     cost_usd: float | None
+    model_used: str | None = None  # as the harness reported it (ADR 40)
+    thread_id: str | None = None  # a chat turn's chat; its title is the chat's
     occurred_at: datetime = field(default_factory=_now)
 
 
