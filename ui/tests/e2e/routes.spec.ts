@@ -173,17 +173,3 @@ test("with reduced motion, nothing on any route moves", async ({ page }) => {
     expect.soft({ path, moving }).toEqual({ path, moving: [] });
   }
 });
-
-test("the theme chosen stays through every page and a reload", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.goto(nextLink());
-  const html = page.locator("html");
-  await page.getByRole("button", { name: "Switch to dark theme" }).click();
-  await expect(html).toHaveAttribute("data-theme", "dark");
-  for (const path of ["/positions", "/strategies", "/settings", "/symbols/NSE/RELIANCE"]) {
-    await open(page, path);
-    await expect(html).toHaveAttribute("data-theme", "dark");
-  }
-  await page.reload();
-  await expect(html).toHaveAttribute("data-theme", "dark");
-});

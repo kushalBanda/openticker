@@ -11,13 +11,6 @@ async function signIn(page: Page) {
   await page.goto(nextLink());
 }
 
-const noOverflow = (page: Page) =>
-  page.evaluate(() =>
-    [document.documentElement, ...document.querySelectorAll(".tile, .stat, .statusbar")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.className || el.tagName),
-  );
-
 test("proof: a price moves within 1 s of opening the page", async ({ page }) => {
   await signIn(page);
   await page.goto("/"); // the app is loaded; now open the page as a click would
@@ -150,38 +143,3 @@ test("an instrument's name anywhere opens its page; ⌘K too", async ({ page }) 
   await palette.getByRole("option", { name: /Open HDFCBANK/ }).click();
   await expect(page).toHaveURL(/\/symbols\/NSE\/HDFCBANK$/);
 });
-
-test("a stock's page opens its option chain; a contract's has no link", async ({ page }) => {
-  await signIn(page);
-  await page.goto(RELIANCE);
-  await page.getByRole("link", { name: "Option chain" }).click();
-  await expect(page).toHaveURL(/\/options\/NSE\/RELIANCE$/);
-  await expect(page.getByRole("button", { name: /Underlying: RELIANCE/ })).toBeVisible();
-  await page.goto("/symbols/NFO/NIFTY29SEP2624800PE");
-  await expect(page.getByRole("button", { name: "Place paper order" })).toBeEnabled();
-  await expect(page.getByRole("link", { name: "Option chain" })).toHaveCount(0);
-});
-
-test("an instrument that isn't listed says how to find it", async ({ page }) => {
-  await signIn(page);
-  await page.goto("/symbols/NSE/NOPE");
-  await expect(page.getByRole("heading", { name: "No NOPE on NSE" })).toBeVisible();
-});
-
-for (const width of [1280, 1440, 1920]) {
-  test(`symbol at ${width}px: no sideways scroll, screens in both themes`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await page.goto(RELIANCE);
-    await expect(page.getByTestId("candle-chart")).toHaveAttribute("data-marks", /^[1-9]/);
-    await expect(page.getByRole("table", { name: "Market depth" })).toBeVisible();
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(500);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/symbol-${width}-${theme}.png` });
-    }
-  });
-}

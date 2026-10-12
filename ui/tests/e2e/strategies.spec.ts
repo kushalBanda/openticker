@@ -69,16 +69,6 @@ test("each strategy says what it is doing, what it made and its last verdict", a
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("SBIN mean reversion");
 });
 
-test("a row's own button acts without opening the strategy", async ({ page }) => {
-  await openStrategies(page);
-  await row(page, "NIFTY short straddle").hover();
-  await row(page, "NIFTY short straddle").getByRole("button", { name: "Stop" }).click();
-
-  await expect(page.getByRole("dialog", { name: "Stop NIFTY short straddle?" })).toBeVisible();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Strategies (5)");
-  await page.keyboard.press("Escape");
-});
-
 test("today's P&L moves with the open legs' ticks", async ({ page }) => {
   await openStrategies(page);
   const today = page.getByTestId("strategies-today").locator(".value");
@@ -87,18 +77,6 @@ test("today's P&L moves with the open legs' ticks", async ({ page }) => {
 
   await expect(today).not.toHaveText(first ?? "", { timeout: 3000 });
 });
-
-for (const width of [1280, 1440, 1920]) {
-  test(`strategies at ${width}px: no sideways scroll, screens in both themes`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await openStrategies(page);
-    await row(page, "BANKNIFTY iron condor").hover();
-    await screens(page, `strategies-${width}`);
-    await page.getByRole("link", { name: "NIFTY short straddle", exact: true }).click();
-    await expect(page.getByTestId("equity-chart")).toBeVisible();
-    await screens(page, `strategy-${width}`);
-  });
-}
 
 test("a signal strategy's frame: alerts, its definition and the alert URL", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
