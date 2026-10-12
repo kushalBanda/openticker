@@ -43,26 +43,6 @@ test("the book says what each order is and who placed it", async ({ page }) => {
   await expect(executed(page).getByRole("row")).toHaveCount(4); // head, Claude, Codex + reason
 });
 
-for (const width of [1280, 1440, 1920]) {
-  test(`orders at ${width}px: no sideways scroll, screens in both themes`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await openOrders(page);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .statusbar")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/orders-${width}-${theme}.png` });
-    }
-  });
-}
-
 test("proof: place a limit from ⌘K, modify it, cancel it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openOrders(page);

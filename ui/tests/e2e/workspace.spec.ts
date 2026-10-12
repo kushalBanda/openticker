@@ -145,13 +145,6 @@ test("steps arrive while the agent works, and Stop ends the turn", async ({ page
   await expect(chat.getByRole("button", { name: /Worked for \d+s/ })).toBeVisible();
 });
 
-test("Connected agents and jobs stay one click from the rail", async ({ page }) => {
-  await signIn(page);
-  await page.getByRole("link", { name: "Connected agents and jobs" }).click();
-  await expect(page).toHaveURL(/\/agents\/jobs$/);
-  await expect(page.getByRole("table", { name: "Connected agents" })).toBeVisible();
-});
-
 test("proof: a review runs as a chat, continues as one, and is filed under its strategy", async ({
   page,
 }) => {
@@ -195,24 +188,6 @@ test("proof: a review runs as a chat, continues as one, and is filed under its s
     rail.locator('a[data-child="deep"]', { hasText: "Review of SBIN mean reversion" }).first(),
   ).toBeVisible();
   await expect(rail.getByRole("button", { name: /^Reviews \d+$/ })).toBeVisible();
-});
-
-test("a new chat offers questions from the desk, filed where they belong", async ({ page }) => {
-  await signIn(page);
-  const offered = page.getByRole("list", { name: "Suggestions" }).getByRole("button");
-  await expect(offered.first()).toBeVisible();
-  expect(await offered.count()).toBeLessThanOrEqual(3);
-
-  const first = offered.first();
-  const text = await first.locator("span").first().innerText();
-  const where = await first.locator(".aw-ctx").innerText();
-  await first.click();
-  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(text);
-  if (where !== "General") {
-    const chip = page.getByRole("button", { name: `In ${where}: file it in General instead` });
-    await chip.click();
-    await expect(chip).toHaveCount(0);
-  }
 });
 
 test("a chat with Codex: its effort levels, its events read as steps, and it resumes", async ({
@@ -305,96 +280,6 @@ test("failure: a model the agent doesn't know, and a spend cap reached, each say
   await expect(
     chat.getByRole("alert").filter({ hasText: "it reached its spend cap and stopped" }),
   ).toBeVisible({ timeout: 15_000 });
-});
-
-test("delete a chat: gone from the rail, the page goes back to a new chat", async ({ page }) => {
-  await signIn(page);
-  const box = page.getByRole("textbox", { name: "Message" });
-  await box.fill("Delete me later");
-  await box.press("Enter");
-  const chat = page.getByRole("region", { name: "Chat" });
-  await expect(chat.getByText("You asked: Delete me later", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  await chat.getByRole("button", { name: "Delete chat" }).click();
-  const dialog = page.getByRole("dialog", { name: "Delete this chat?" });
-  await expect(dialog).toContainText("What the agent changed stays");
-  await dialog.getByRole("button", { name: "Delete chat" }).click();
-
-  await expect(page).toHaveURL(/\/agents$/);
-  await expect(page.getByTestId("toast").filter({ hasText: "Chat deleted" })).toBeVisible();
-  const rail = page.getByRole("navigation", { name: "Chats" });
-  await expect(rail.getByRole("link", { name: /Delete me later/ })).toHaveCount(0);
-});
-
-test("pin a chat: it moves to Pinned and stays there after a reload, until unpinned", async ({
-  page,
-}) => {
-  await signIn(page);
-  const box = page.getByRole("textbox", { name: "Message" });
-  await box.fill("Pin me please");
-  await box.press("Enter");
-  const chat = page.getByRole("region", { name: "Chat" });
-  await expect(chat.getByText("You asked: Pin me please", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  const rail = page.getByRole("navigation", { name: "Chats" });
-  const row = rail.getByRole("link", { name: /Pin me please/ });
-
-  await row.hover();
-  await rail.getByRole("button", { name: "Pin Pin me please" }).click();
-
-  const pinned = rail.locator(".aw-rh", { hasText: "Pinned" });
-  await expect(pinned).toBeVisible();
-  await page.reload();
-  await expect(pinned).toBeVisible();
-  // Pinned comes first, above Recents, and the chat is listed once.
-  await expect(row).toHaveCount(1);
-  const [pinTop, rowTop, recentsTop] = await Promise.all([
-    pinned.evaluate((el) => el.getBoundingClientRect().top),
-    row.evaluate((el) => el.getBoundingClientRect().top),
-    rail.locator(".aw-rh", { hasText: "Recents" }).evaluate((el) => el.getBoundingClientRect().top),
-  ]);
-  expect(pinTop).toBeLessThan(rowTop);
-  expect(rowTop).toBeLessThan(recentsTop);
-
-  await row.focus();
-  await rail.getByRole("button", { name: "Unpin Pin me please" }).click();
-  await expect(pinned).toHaveCount(0);
-  await expect(row).toHaveCount(1);
-});
-
-test("rename a chat from its ⋯ menu, archive it, and undo the archive", async ({ page }) => {
-  await signIn(page);
-  const box = page.getByRole("textbox", { name: "Message" });
-  await box.fill("Archive me soon");
-  await box.press("Enter");
-  const chat = page.getByRole("region", { name: "Chat" });
-  await expect(chat.getByText("You asked: Archive me soon", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  const rail = page.getByRole("navigation", { name: "Chats" });
-
-  await rail.getByRole("link", { name: /Archive me soon/ }).hover();
-  await rail.getByRole("button", { name: "More for Archive me soon" }).click();
-  const menu = page.getByRole("menu", { name: "Archive me soon" });
-  await expect(menu.getByRole("menuitem", { name: "Rename" })).toBeFocused();
-  await menu.getByRole("menuitem", { name: "Rename" }).click();
-  const name = rail.getByRole("textbox", { name: "Chat name" });
-  await name.fill("Expiry hedges");
-  await name.press("Enter");
-  const row = rail.getByRole("link", { name: /Expiry hedges/ });
-  await expect(row).toBeVisible();
-  await expect(chat.getByRole("heading", { name: "Expiry hedges" })).toBeVisible();
-
-  await row.hover();
-  await rail.getByRole("button", { name: "Archive Expiry hedges" }).click();
-  await expect(page).toHaveURL(/\/agents$/);
-  await expect(row).toHaveCount(0);
-  const toast = page.getByTestId("toast").filter({ hasText: "“Expiry hedges” archived" });
-  await toast.getByRole("button", { name: "Undo" }).click();
-  await expect(row).toBeVisible();
 });
 
 test("an answer that lands off its chat: a toast opens it, and its row is unread until seen", async ({

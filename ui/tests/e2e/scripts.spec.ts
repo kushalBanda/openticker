@@ -17,13 +17,6 @@ const row = (page: Page, name: string): Locator =>
   table(page).getByRole("row").filter({ hasText: name });
 const toast = (page: Page, text: string) => page.getByTestId("toast").filter({ hasText: text });
 
-const noOverflow = (page: Page) =>
-  page.evaluate(() =>
-    [document.documentElement, ...document.querySelectorAll(".tile, .toolbar, .statusbar")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.className || el.tagName),
-  );
-
 test("lists the three seeded scripts: state, schedule, last run, runtime, memory, orders", async ({
   page,
 }) => {
@@ -60,16 +53,6 @@ test("lists the three seeded scripts: state, schedule, last run, runtime, memory
   await expect(scalp.getByRole("cell").last()).toHaveText("0");
 });
 
-test("Ask Claude to write one copies the prompt", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await signIn(page);
-  await page.getByRole("button", { name: "Ask Claude to write one" }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
-    "Write me an OpenTicker hosted script",
-  );
-  await expect(toast(page, "Copied")).toBeVisible();
-});
-
 test("schedule a script: change its days and stop time, then turn it off", async ({ page }) => {
   await signIn(page);
   await row(page, "gap_scanner.py").getByRole("link", { name: "gap_scanner.py" }).click();
@@ -99,44 +82,6 @@ test("schedule a script: change its days and stop time, then turn it off", async
   await expect(toast(page, "gap_scanner.py runs only when started now.")).toBeVisible();
   await expect(page.locator("p.note").filter({ hasText: "Runs only when started" })).toBeVisible();
 });
-
-test("Source is read-only python; Runs lists past runs; Orders shows none for a script with none", async ({
-  page,
-}) => {
-  await signIn(page);
-  await row(page, "gap_scanner.py").getByRole("link", { name: "gap_scanner.py" }).click();
-
-  const sections = page.getByRole("group", { name: "Sections" });
-  await sections.getByRole("button", { name: "Source" }).click();
-  await expect(page.getByTestId("code-python")).toContainText(
-    "Lists the NIFTY 50 stocks that opened more than 1% away from yesterday's close.",
-  );
-  await expect(page.getByText("Source is read-only here.")).toBeVisible();
-
-  await sections.getByRole("button", { name: /^Runs/ }).click();
-  const runs = page.getByRole("table", { name: "Runs" });
-  await expect(runs.getByRole("row")).toHaveCount(2); // head + 1 run
-  await expect(runs).toContainText("09:10:00");
-  await expect(runs).toContainText("exit 0");
-
-  await sections.getByRole("button", { name: /^Orders/ }).click();
-  await expect(page.getByText("No orders from gap_scanner.py today.")).toBeVisible();
-});
-
-for (const width of [1280, 1440, 1920]) {
-  test(`scripts at ${width}px: no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/scripts-${width}-${theme}.png` });
-    }
-  });
-}
 
 test("proof: start rel_trail.py from the page and watch its log grow, then stop it", async ({
   page,

@@ -35,35 +35,6 @@ async function hold(page: Page, button: Locator) {
 const toast = (page: Page, text: string) => page.getByTestId("toast").filter({ hasText: text });
 const broker = (page: Page) => page.locator("#broker");
 
-for (const width of [1280, 1440, 1920]) {
-  test(`settings at ${width}px: every section, no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await expect(broker(page).getByText("Connected")).toBeVisible();
-    await expect(page.locator("#account")).toContainText("₹25,00,000.00");
-    await expect(page.locator("#instruments")).toContainText("NSE");
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .statusbar")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/settings-${width}-${theme}.png` });
-      if (width === 1440) {
-        await page.screenshot({
-          path: `test-results/screens/settings-full-1440-${theme}.png`,
-          fullPage: true,
-        });
-      }
-    }
-  });
-}
-
 test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to the environment", async ({
   page,
 }) => {

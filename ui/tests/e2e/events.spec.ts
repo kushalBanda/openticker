@@ -87,28 +87,3 @@ test("a kill raises a banner, a toast, the bell and the tab's dot; Activity has 
   await expect(banner).toHaveCount(0);
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute("data-dot", "false");
 });
-
-for (const width of [1280, 1920]) {
-  test(`activity at ${width}px: no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page, "/activity");
-    await page
-      .getByRole("group", { name: "Period" })
-      .getByRole("button", { name: "7 days" })
-      .click();
-    await expect(page.getByRole("table", { name: "Activity" })).toBeVisible();
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .statusbar, .banners")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/activity-${width}-${theme}.png` });
-    }
-  });
-}

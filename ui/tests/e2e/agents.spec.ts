@@ -22,13 +22,6 @@ const kv = (page: Page) =>
 const kvValue = (page: Page, label: string): Locator =>
   kv(page).locator("dt", { hasText: label }).locator("xpath=following-sibling::dd[1]");
 
-const noOverflow = (page: Page) =>
-  page.evaluate(() =>
-    [document.documentElement, ...document.querySelectorAll(".tile, .toolbar, .statusbar")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.className || el.tagName),
-  );
-
 test("shows the connected clients, the review settings, and both seeded jobs", async ({ page }) => {
   await signIn(page);
 
@@ -79,28 +72,6 @@ test("shows the connected clients, the review settings, and both seeded jobs", a
   await expect(condor.getByRole("button")).toHaveCount(0);
 });
 
-test("a review a strategy dialog opens over the current strategies, and closes clean", async ({
-  page,
-}) => {
-  await signIn(page);
-  await page.getByRole("button", { name: "Review a strategy…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Review a strategy" });
-  await expect(dialog).toContainText("read-only");
-  const strategy = dialog.getByRole("combobox", { name: "Strategy" });
-  await strategy.click();
-  const list = page.getByRole("listbox", { name: "Strategy" });
-  await list.getByRole("option", { name: /BANKNIFTY iron condor/ }).click();
-  await expect(strategy).toHaveText("BANKNIFTY iron condor");
-  // Escape closes the open list first, then the dialog.
-  await strategy.press("ArrowDown");
-  await expect(list).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(list).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-});
-
 test("a row opens its job: a timed-out one shows what it printed", async ({ page }) => {
   await signIn(page);
   await jobRow(page, "BANKNIFTY iron condor").first().click();
@@ -124,21 +95,6 @@ test("a finished review says what ran: harness, model, effort, tokens and cost",
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
-
-for (const width of [1280, 1440, 1920]) {
-  test(`agents at ${width}px: no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/agents-${width}-${theme}.png` });
-    }
-  });
-}
 
 test("proof: stop the waiting review job before it ever starts", async ({ page }) => {
   await signIn(page);

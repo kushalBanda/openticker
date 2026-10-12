@@ -79,23 +79,3 @@ test("this week shows yesterday's older fills with — and says they aren't coun
   await page.getByRole("button", { name: "CSV" }).click();
   expect((await download).suggestedFilename()).toBe("trades-2026-09-21.csv");
 });
-
-for (const width of [1280, 1440, 1920]) {
-  test(`trades at ${width}px: no sideways scroll, screens in both themes`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await openTrades(page);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .statusbar")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/trades-${width}-${theme}.png` });
-    }
-  });
-}

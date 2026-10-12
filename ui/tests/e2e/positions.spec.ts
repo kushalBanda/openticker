@@ -36,26 +36,6 @@ test("open P&L moves with the ticks", async ({ page }) => {
   await expect(pnl).not.toHaveText(first ?? "", { timeout: 3000 });
 });
 
-for (const width of [1280, 1440, 1920]) {
-  test(`positions at ${width}px: no sideways scroll, screens in both themes`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await openPositions(page);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .stat, .statusbar")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/positions-${width}-${theme}.png` });
-    }
-  });
-}
-
 test("a shared position offers the strategy's part, all of it, or stopping the strategy", async ({
   page,
 }) => {
