@@ -81,7 +81,7 @@ export function TodayHero({
         </span>
         <span className="flex-1" />
         <span className="note">
-          {today.market_open ? "live · " : "market closed · "}updated {istClock(updatedAt)}
+          {today.market_open ? "Live · " : "Market Closed · "}Updated {istClock(updatedAt)}
         </span>
         {today.points.length > 0 && (
           <Segmented
