@@ -4318,6 +4318,9 @@
   .menu.aw-choice-menu {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 156px;
+    /* One row, held to the menu's max height: each column scrolls inside it
+       instead of growing past the menu and being clipped by it. */
+    grid-template-rows: minmax(0, 1fr);
     width: min(468px, calc(100vw - 32px));
     overflow: hidden;
   }
