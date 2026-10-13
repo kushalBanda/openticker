@@ -34,7 +34,7 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 
-from openticker.adapters.agents.harness import HarnessProcesses
+from openticker.adapters.agents.harness import HarnessProcesses, detect
 from openticker.adapters.brokers.registry import FEED_REGISTRY, get_adapter, get_feed
 from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.daemon.agent_loop import AgentLoop
@@ -339,6 +339,9 @@ def _serve(env: Mapping[str, str], dev: bool = False, browser: bool = False) -> 
         )
     for thread in feeds:
         thread.start()
+    # Listing the harnesses' models takes seconds: done now, the web app's
+    # model picker has them on first open (ADR 40).
+    threading.Thread(target=detect, args=(env,), name="detect-harnesses", daemon=True).start()
     link = _sign_in_link(web)
     print(f"\nOpenTicker: {link}\n", flush=True)
     if browser:

@@ -38,7 +38,7 @@ export function NewChat() {
   const folder = useAgentSettings().data?.folders.find((f) => f.kind === choiceKind(where.folder));
   const installed = (useHarnesses().data?.harnesses ?? []).filter((h) => h.installed);
   const harness = picked ?? folder?.resolved.harness ?? "claude";
-  const { info, folderDefault } = useFolderDefault(harness, where.folder);
+  const { info, loading, folderDefault } = useFolderDefault(harness, where.folder);
   const other = installed.find((h) => h.harness !== harness);
 
   const submit = () => {
@@ -150,6 +150,7 @@ export function NewChat() {
               <ChoicePicker
                 harness={harness}
                 info={info}
+                loading={loading}
                 folderDefault={folderDefault}
                 value={choice}
                 onChange={setChoice}

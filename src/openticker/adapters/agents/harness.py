@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -222,6 +223,7 @@ def read_outcome(harness: Harness, events_path: Path, result_path: Path) -> Agen
 DETECT_EVERY = 60.0  # seconds a detection is kept
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?")
 _detected: tuple[float, list[HarnessInfo]] | None = None
+_detecting = threading.Lock()
 Listed = tuple[tuple[ModelOption, ...], ModelOption | None]
 
 
@@ -230,13 +232,16 @@ def detect(parent: Mapping[str, str] | None = None, *, fresh: bool = False) -> l
     models each lists (core/agents/catalog.py): `<cli> --version`, five
     seconds at most, kept a minute; the models kept an hour per version."""
     global _detected
-    if not fresh and _detected is not None and time.monotonic() - _detected[0] < DETECT_EVERY:
-        return _detected[1]
-    env = job_env("", parent if parent is not None else os.environ)
-    del env[KEY_VARIABLE]
-    found = [_detect_one(harness, env, fresh) for harness in Harness]
-    _detected = (time.monotonic(), found)
-    return found
+    # One detection at a time: a request during the server's warm-up waits
+    # for it rather than starting the CLIs again.
+    with _detecting:
+        if not fresh and _detected is not None and time.monotonic() - _detected[0] < DETECT_EVERY:
+            return _detected[1]
+        env = job_env("", parent if parent is not None else os.environ)
+        del env[KEY_VARIABLE]
+        found = [_detect_one(harness, env, fresh) for harness in Harness]
+        _detected = (time.monotonic(), found)
+        return found
 
 
 def _detect_one(harness: Harness, env: Mapping[str, str], fresh: bool) -> HarnessInfo:
