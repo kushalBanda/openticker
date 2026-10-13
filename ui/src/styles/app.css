@@ -1305,6 +1305,13 @@
     align-items: center;
     gap: 10px;
   }
+  :where(.today-top) .segmented {
+    height: 28px;
+  }
+  :where(.today-top) .segmented button {
+    padding: 0 10px;
+    font-size: 12px;
+  }
   .today-figure {
     margin-top: 10px;
     font: 600 64px / 68px var(--font-display);

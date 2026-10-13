@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Schemas } from "../../src/api/client";
-import { dayStats, sinceSentence, weeks } from "../../src/lib/today";
+import { dayStats, pnlCandles, sinceSentence, weeks } from "../../src/lib/today";
 
 type Entry = Schemas["AuditEntryResult"];
 
@@ -108,5 +108,39 @@ test("day stats count only days with a figure", () => {
   ).toMatchObject({ month: 40, streak: 2 });
   expect(dayStats([{ date: "2026-10-01", net: 0, estimated: false }])).toMatchObject({
     streak: 0,
+  });
+});
+
+describe("pnlCandles", () => {
+  const p = (minute: string, net_pnl: number) => ({ minute, net_pnl });
+
+  test("five minutes a candle from 09:15, high and low from the points", () => {
+    const candles = pnlCandles([
+      p("09:15", 0),
+      p("09:16", 120),
+      p("09:17", -40),
+      p("09:19", 60),
+      p("09:20", 80),
+      p("09:23", 30),
+    ]);
+    expect(candles).toEqual([
+      { slot: "09:15", open: 0, high: 120, low: -40, close: 60 },
+      { slot: "09:20", open: 60, high: 80, low: 30, close: 30 },
+    ]);
+  });
+
+  test("a candle after a gap opens at its own first point", () => {
+    const candles = pnlCandles([p("09:15", 10), p("12:01", -200), p("12:03", -150)]);
+    expect(candles[1]).toEqual({ slot: "12:00", open: -200, high: -150, low: -200, close: -150 });
+  });
+
+  test("a candle that follows opens where the last closed, even below its own points", () => {
+    const [, second] = pnlCandles([p("09:15", -500), p("09:20", 100)]);
+    expect(second).toEqual({ slot: "09:20", open: -500, high: 100, low: -500, close: 100 });
+  });
+
+  test("nothing before the open, nothing at all", () => {
+    expect(pnlCandles([p("09:10", 5)])).toEqual([]);
+    expect(pnlCandles([])).toEqual([]);
   });
 });

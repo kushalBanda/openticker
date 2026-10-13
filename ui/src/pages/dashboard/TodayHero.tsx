@@ -1,7 +1,9 @@
 import NumberFlow from "@number-flow/react";
-import { Fragment, lazy, Suspense } from "react";
+import { Fragment, lazy, Suspense, useState } from "react";
 import { Link } from "react-router";
 import type { Today } from "../../api/queries";
+import type { IntradayStyle } from "../../components/IntradayChart";
+import { Segmented } from "../../components/Segmented";
 import { direction, istClock, qty, rupees } from "../../lib/format";
 import { sinceSentence } from "../../lib/today";
 
@@ -24,6 +26,25 @@ function sessionDay(date: string): string {
 const IntradayChart = lazy(() =>
   import("../../components/IntradayChart").then((m) => ({ default: m.IntradayChart })),
 );
+
+// Line or candles: this browser's choice, kept across visits.
+const STYLE_KEY = "ot.today.chart";
+
+function savedStyle(): IntradayStyle {
+  try {
+    return localStorage.getItem(STYLE_KEY) === "candles" ? "candles" : "line";
+  } catch {
+    return "line";
+  }
+}
+
+function saveStyle(style: IntradayStyle) {
+  try {
+    localStorage.setItem(STYLE_KEY, style);
+  } catch {
+    // private window: lasts this page only
+  }
+}
 
 const FIGURE = { minimumFractionDigits: 2, maximumFractionDigits: 2 } as const;
 
@@ -50,6 +71,7 @@ export function TodayHero({
   const day = sessionDay(today.trading_date);
   const since = today.since ? sinceSentence(today.since, names) : null;
   const visit = today.since ? istClock(new Date(today.since.at)).slice(0, 5) : undefined;
+  const [style, setStyle] = useState(savedStyle);
 
   return (
     <section className="today-hero" aria-labelledby="today-label" data-testid="today-hero">
@@ -61,6 +83,20 @@ export function TodayHero({
         <span className="note">
           {today.market_open ? "live · " : "market closed · "}updated {istClock(updatedAt)}
         </span>
+        {today.points.length > 0 && (
+          <Segmented
+            label="Chart style"
+            segments={[
+              { value: "line", label: "Line" },
+              { value: "candles", label: "Candles" },
+            ]}
+            value={style}
+            onChange={(next) => {
+              setStyle(next);
+              saveStyle(next);
+            }}
+          />
+        )}
       </div>
       <div className={`today-figure ${tone ?? ""}`} data-testid="today-net">
         {net === null ? (
@@ -89,6 +125,7 @@ export function TodayHero({
             points={today.points}
             now={today.market_open && net !== null ? { minute, net_pnl: net } : undefined}
             visit={visit}
+            style={style}
           />
         </Suspense>
       ) : (

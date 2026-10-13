@@ -134,3 +134,51 @@ export function dayStats(days: CalendarDay[]) {
     streak: Math.sign(latest.net) * streak,
   };
 }
+
+export interface PnlCandle {
+  slot: string; // HH:MM the candle starts, exchange-local
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+const toMinutes = (hhmm: string) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+const toClock = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+/**
+ * The minute line as candles of `every` minutes from 09:15. The P&L is a
+ * point a minute, so high and low are the highest and lowest of those
+ * points. A candle opens where the one just before it closed, as prices do;
+ * after a gap with no points it opens at its own first point.
+ */
+export function pnlCandles(points: { minute: string; net_pnl: number }[], every = 5): PnlCandle[] {
+  const start = toMinutes("09:15");
+  const candles: PnlCandle[] = [];
+  for (const point of points) {
+    const minutes = toMinutes(point.minute);
+    if (minutes < start) continue;
+    const slot = toClock(start + Math.floor((minutes - start) / every) * every);
+    const last = candles.at(-1);
+    if (last?.slot === slot) {
+      last.high = Math.max(last.high, point.net_pnl);
+      last.low = Math.min(last.low, point.net_pnl);
+      last.close = point.net_pnl;
+      continue;
+    }
+    const follows = last !== undefined && toMinutes(slot) - toMinutes(last.slot) === every;
+    const open = follows ? last.close : point.net_pnl;
+    candles.push({
+      slot,
+      open,
+      high: Math.max(open, point.net_pnl),
+      low: Math.min(open, point.net_pnl),
+      close: point.net_pnl,
+    });
+  }
+  return candles;
+}
