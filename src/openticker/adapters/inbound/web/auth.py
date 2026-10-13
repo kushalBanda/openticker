@@ -21,6 +21,7 @@ from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.web import COOKIE_NAME, host_allowed, origin_allowed
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.web_repo import WebSession
+from openticker.use_cases.agents.threads import recorded_as
 from openticker.use_cases.api_keys import FULL_SCOPE, authenticate
 from openticker.use_cases.web_sessions import session_of
 
@@ -93,7 +94,7 @@ def _key_principal(key: str | None) -> Principal:
     stored = authenticate(key) if key else None
     if stored is None:
         raise HTTPException(status_code=401, detail=KEY_MISSING)
-    caller = stored.scope if stored.scope != FULL_SCOPE else f"rest:{stored.name}"
+    caller = recorded_as(stored.scope) if stored.scope != FULL_SCOPE else f"rest:{stored.name}"
     return Principal(stored.name, stored.scope, "key", caller)
 
 

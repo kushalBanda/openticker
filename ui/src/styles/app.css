@@ -1909,6 +1909,275 @@
   .settings-row .settings-confirm {
     flex: 0 0 160px;
   }
+  /* Settings › Agents, in the manner of System Settings (ADR 40) */
+  .st-group {
+    margin-top: 20px;
+  }
+  .st-gh {
+    margin: 0 0 8px 2px;
+    font: 600 13px / 18px var(--font-text);
+    letter-spacing: -0.01em;
+  }
+  .st-gn {
+    margin: 8px 2px 0;
+    font-size: 12.5px;
+    line-height: 18px;
+    color: var(--ink-muted);
+  }
+  .st-list {
+    border-radius: var(--radius-lg);
+    background: var(--surface-hover);
+    overflow: hidden;
+  }
+  .st-item {
+    position: relative;
+  }
+  .st-item + .st-item::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    height: 1px;
+    background: var(--line-strong);
+    opacity: 0.6;
+  }
+  .st-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 8px 16px;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+  }
+  button.st-row {
+    cursor: pointer;
+  }
+  button.st-row:hover:not(:disabled) {
+    background: var(--fill);
+  }
+  button.st-row:disabled {
+    cursor: default;
+  }
+  .st-lbl {
+    flex: 1;
+    min-width: 0;
+  }
+  .st-lbl b {
+    display: block;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .st-about {
+    display: block;
+    font-size: 12.5px;
+    line-height: 17px;
+    color: var(--ink-muted);
+  }
+  .st-sum {
+    color: var(--ink-muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .st-sum code {
+    color: var(--ink-muted);
+    font-size: 12.5px;
+  }
+  .st-chev {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.8;
+    color: var(--ink-muted);
+    transition: transform var(--duration-base) var(--ease-out);
+  }
+  [aria-expanded="true"] > .st-chev {
+    transform: rotate(90deg);
+  }
+  button.st-row:disabled > .st-chev {
+    opacity: 0.4;
+  }
+  .st-fields {
+    display: grid;
+    grid-template-columns: 140px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px 16px;
+    padding: 4px 16px 16px;
+  }
+  .st-fl {
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+  .st-hint {
+    grid-column: 2;
+    margin-top: -6px;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .st-fields .input {
+    width: 120px;
+    height: 32px;
+  }
+  .st-fields .select-btn {
+    min-width: 180px;
+  }
+  .st-harness {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .st-hp {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--surface-hover);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .st-hp b {
+    display: block;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .st-hp:has(:checked) {
+    box-shadow: inset 0 0 0 2px var(--focus);
+  }
+  .st-hp:has(:disabled:not(:checked)) {
+    cursor: default;
+  }
+  .st-hp:has(:disabled:not(:checked)) b {
+    color: var(--ink-muted);
+  }
+  .st-radio {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    border-radius: 9999px;
+    box-shadow: inset 0 0 0 1.5px var(--ink-muted);
+    appearance: none;
+    cursor: inherit;
+  }
+  .st-radio:checked {
+    box-shadow: inset 0 0 0 5px var(--focus);
+  }
+  .st-hp > span > span {
+    font-size: 12.5px;
+    line-height: 17px;
+    color: var(--ink-muted);
+  }
+  /* A text link that acts in place rather than going somewhere. */
+  .link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link);
+    font: inherit;
+    cursor: pointer;
+  }
+  .link-button:hover {
+    opacity: 0.8;
+  }
+  .link-button:disabled {
+    color: var(--ink-muted);
+    cursor: default;
+  }
+  .st-ok {
+    color: var(--up);
+  }
+  .st-error {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 12px 12px 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--down-soft);
+    color: var(--down);
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .st-error-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .st-error code {
+    color: inherit;
+  }
+  .st-foot {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .st-foot .note {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+  .st-stepper {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 2px;
+    border-radius: 9px;
+    background: var(--fill);
+  }
+  .st-stepper button {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: var(--ink);
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .st-stepper button:hover:not(:disabled) {
+    background: var(--thumb);
+  }
+  .st-stepper button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .st-count {
+    min-width: 36px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  @media (max-width: 640px) {
+    .st-harness,
+    .st-fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .st-hint {
+      grid-column: 1;
+    }
+    .st-error,
+    .st-foot {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
   .settings-pad {
     margin: 0 24px 12px;
   }
@@ -2742,6 +3011,10 @@
 }
 
 @layer components {
+  .job-ran {
+    display: block;
+    margin: 0;
+  }
   .job-log-label {
     margin: 6px 0 -4px;
     color: var(--ink-muted);
@@ -3560,5 +3833,918 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
     overflow: hidden;
+  }
+}
+
+/* The Agents workspace (ADR 40, DESIGN.md "Agents workspace"): the Codex
+   app's layout, a rail of chats beside one thread, in OpenTicker's tokens. */
+@layer components {
+  /* The workspace fills what the bar and any banner leave of the window. */
+  .app:has(> main.aw-page) {
+    height: 100vh;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  main.aw-page {
+    grid-column: 2;
+    grid-row: -2 / -1; /* the last row, banner or not */
+    padding: 16px 24px 24px;
+    min-height: 0;
+    min-width: 0;
+  }
+  .aw {
+    display: grid;
+    grid-template-columns: 288px minmax(0, 1fr);
+    height: 100%;
+    background: var(--surface);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+  }
+  .aw-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 14px 10px;
+    border-right: 1px solid var(--line);
+    overflow: auto;
+    font-size: 13px;
+  }
+  .aw-rail-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 6px 10px;
+  }
+  .aw-rail-top h1 {
+    flex: 1;
+    margin: 0;
+    font: 600 17px / 22px var(--font-text);
+    letter-spacing: -0.015em;
+  }
+  .aw-ico {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--ink-muted);
+    cursor: pointer;
+    transition:
+      background var(--duration-fast),
+      color var(--duration-fast);
+  }
+  .aw-ico:hover:not(:disabled) {
+    background: var(--fill);
+    color: var(--ink);
+  }
+  .aw-ico[aria-pressed="true"] {
+    background: var(--fill);
+    color: var(--ink);
+  }
+  .aw-ico:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .aw-ico svg,
+  .aw-ri svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.6;
+  }
+  .aw-ri {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 0 8px;
+    border-radius: var(--radius-md);
+    color: var(--ink);
+    white-space: nowrap;
+    transition: background var(--duration-fast);
+  }
+  a.aw-ri:hover {
+    background: var(--surface-hover);
+  }
+  .aw-ri[aria-current="page"] {
+    background: var(--fill);
+  }
+  .aw-ri svg {
+    flex: none;
+    color: var(--ink-muted);
+  }
+  .aw-ri[data-child="true"] {
+    padding-left: 33px;
+  }
+  .aw-ri[data-child="deep"] {
+    padding-left: 49px;
+  }
+  button.aw-ri {
+    width: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.aw-ri:hover {
+    background: var(--surface-hover);
+  }
+  .aw-t {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .aw-ri[data-child="deep"] .aw-t,
+  .aw-ri[data-child="true"] .aw-t {
+    color: var(--ink-muted);
+  }
+  .aw-ctx {
+    flex: 0 4 auto;
+    min-width: 24px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink-muted);
+  }
+  .aw-live {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-left: auto;
+    border-radius: var(--radius-full, 9999px);
+    background: var(--accent);
+  }
+  .aw-n {
+    margin-left: auto;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+  .aw-rh {
+    margin: 16px 8px 4px;
+    font: 500 12px / 16px var(--font-text);
+    color: var(--ink-muted);
+  }
+  .aw-more {
+    padding: 4px 8px;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+  .aw-pane {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: 0;
+    min-width: 0;
+  }
+  /* A new chat has no head: its empty state fills, the composer sits at the foot. */
+  .aw-pane[data-new] {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .aw-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 52px;
+    padding: 0 20px 0 28px;
+    min-width: 0;
+  }
+  .aw-head h2 {
+    margin: 0;
+    font: 600 14px / 20px var(--font-text);
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .aw-where {
+    color: var(--ink-muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .aw-scroll {
+    overflow: auto;
+    min-height: 0;
+  }
+  .aw-thread {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 12px 24px 32px;
+  }
+  .aw-you {
+    align-self: flex-end;
+    max-width: 78%;
+    padding: 9px 15px;
+    border-radius: 18px;
+    background: var(--fill);
+    font-size: 14px;
+    line-height: 20px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .aw-queued {
+    align-self: flex-end;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    width: 78%;
+  }
+  .aw-queued-text {
+    max-width: 100%;
+    opacity: 0.65;
+    outline: 1px dashed var(--line-strong);
+    outline-offset: -1px;
+  }
+  .aw-queued-edit {
+    width: 100%;
+    padding: 9px 15px;
+    border-radius: 18px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+    line-height: 20px;
+    resize: vertical;
+  }
+  .aw-queued-meta {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .aw-agent {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 14px;
+    line-height: 22px;
+    min-width: 0;
+  }
+  .aw-worked {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: max-content;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink-muted);
+    font: 400 13px / 18px var(--font-text);
+    cursor: pointer;
+  }
+  .aw-worked:hover {
+    color: var(--ink);
+  }
+  .aw-worked svg {
+    width: 14px;
+    height: 14px;
+    stroke-width: 1.8;
+  }
+  .aw-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding-left: 12px;
+    border-left: 1px solid var(--line-strong);
+  }
+  .aw-st {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 18px;
+    color: var(--ink-muted);
+    overflow-wrap: anywhere;
+  }
+  .aw-st code {
+    color: var(--ink);
+  }
+  .aw-st[data-failed="true"] code {
+    color: var(--down);
+  }
+  .aw-st:has(.aw-st-why) {
+    flex-wrap: wrap;
+  }
+  .aw-st-why {
+    flex-basis: 100%;
+    color: var(--ink-muted);
+  }
+  .aw-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .aw-acts {
+    display: flex;
+    gap: 2px;
+    margin-left: -6px;
+  }
+  .aw-acts .aw-ico {
+    width: 26px;
+    height: 26px;
+  }
+  .aw-ran {
+    font-size: 12px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .aw-dock {
+    padding: 0 24px 20px;
+  }
+  .aw-composer {
+    max-width: 720px;
+    margin: 0 auto;
+    border-radius: var(--radius-xl);
+    background: var(--surface-hover);
+    overflow: hidden;
+  }
+  .aw-chips {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .aw-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .aw-chip svg {
+    width: 13px;
+    height: 13px;
+    stroke-width: 1.8;
+  }
+  .aw-box {
+    padding: 12px 10px 10px 16px;
+    border-radius: var(--radius-xl);
+    background: var(--surface-raised);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .aw-box:focus-within {
+    box-shadow: inset 0 0 0 1px var(--focus);
+  }
+  .aw-box textarea {
+    width: 100%;
+    min-height: 40px;
+    border: 0;
+    outline: 0;
+    resize: none;
+    background: transparent;
+    color: var(--ink);
+    font: 400 14px / 20px var(--font-text);
+  }
+  .aw-box-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .aw-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: none;
+    color: var(--ink);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .aw-pick:hover:not(:disabled) {
+    background: var(--fill);
+  }
+  .aw-pick:disabled {
+    cursor: default;
+  }
+  .aw-pick svg {
+    width: 13px;
+    height: 13px;
+    stroke-width: 1.8;
+    color: var(--ink-muted);
+  }
+  .aw-lvl {
+    color: var(--ink-muted);
+  }
+  /* The model and effort picker opens upward, over the thread. */
+  .menu.aw-menu {
+    position: fixed;
+    top: auto;
+    z-index: 90; /* as a dropdown list */
+    width: 248px;
+    overflow-y: auto;
+    transform-origin: bottom right;
+    font-size: 13px;
+  }
+  .aw-menu .menu-row {
+    height: 30px;
+  }
+  .menu.aw-access-menu {
+    width: 300px;
+    transform-origin: bottom left;
+  }
+  .aw-access-menu .aw-access-row {
+    height: auto;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    text-align: left;
+  }
+  .aw-access-row > svg {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    stroke-width: 1.6;
+    color: var(--ink-muted);
+  }
+  .aw-access-row b {
+    display: block;
+    font-weight: 500;
+  }
+  .aw-access-row b + span {
+    display: block;
+    color: var(--ink-muted);
+    font-size: 12px;
+    line-height: 16px;
+    white-space: normal;
+  }
+  .aw-menu-check {
+    display: inline-grid;
+    width: 14px;
+    color: var(--action);
+  }
+  .aw-menu-hint {
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+  .aw-menu-rule {
+    height: 1px;
+    margin: 6px 4px;
+    border: 0;
+    background: var(--line);
+  }
+  .aw-menu-model {
+    padding: 2px 6px 4px;
+  }
+  .aw-menu-model .input {
+    width: 100%;
+    height: 30px;
+  }
+  button.aw-chip {
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.aw-chip:hover {
+    background: var(--fill);
+  }
+  .aw-send {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--action);
+    color: var(--on-action);
+    cursor: pointer;
+    transition:
+      opacity var(--duration-fast),
+      transform 100ms var(--ease-out);
+  }
+  .aw-send:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .aw-send:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .aw-send svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2;
+  }
+  .aw-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 100%;
+    padding-bottom: 40px;
+  }
+  .aw-empty h2 {
+    margin: 0;
+    font: 600 21px / 26px var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  .aw-empty .note {
+    margin: 0;
+  }
+  .aw-closed {
+    margin: 0 0 8px;
+  }
+  .aw-printed {
+    height: 240px;
+    margin-top: 8px;
+  }
+  .aw-sugg {
+    display: grid;
+    gap: 6px;
+    width: min(520px, 100%);
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .aw-sugg button {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .aw-sugg button:hover {
+    background: var(--surface-hover);
+  }
+  .aw-sugg button > span:first-child {
+    flex: 1;
+    min-width: 0;
+  }
+  /* The side panel (⌥⌘B): a third column on a wide window, a sheet over the
+     chat on a narrower one. */
+  .aw {
+    position: relative;
+  }
+  .aw[data-panel] {
+    grid-template-columns: 288px minmax(0, 1fr) 340px;
+  }
+  .aw-side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    border-left: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 13px;
+  }
+  @media (max-width: 1279px) {
+    .aw[data-panel] {
+      grid-template-columns: 288px minmax(0, 1fr);
+    }
+    .aw-side {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 5;
+      width: min(340px, 100%);
+      box-shadow: var(--shadow-pop);
+    }
+  }
+  .aw-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 12px 12px 0;
+  }
+  .aw-tabs button {
+    height: 28px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: none;
+    color: var(--ink-muted);
+    font: 500 12.5px / 1 var(--font-text);
+    cursor: pointer;
+  }
+  .aw-tabs button[aria-selected="true"] {
+    background: var(--fill);
+    color: var(--ink);
+  }
+  .aw-side-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+    padding: 14px 16px 20px;
+    overflow: auto;
+  }
+  .aw-side-sec {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .aw-side-sec h3 {
+    margin: 0;
+    font: 600 13px / 18px var(--font-text);
+  }
+  .aw-side-sec .note {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 18px;
+  }
+  .aw-kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 12px;
+    margin: 0;
+  }
+  .aw-kv dt {
+    color: var(--ink-muted);
+  }
+  .aw-kv dd {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .aw-side-list {
+    margin: 0;
+    padding: 0;
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    list-style: none;
+  }
+  /* What changed: under an answer, what its agent did on the desk. */
+  .aw-changed {
+    margin-top: 4px;
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .aw-changed h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 8px 14px;
+    background: var(--surface-hover);
+    font: 600 13px / 18px var(--font-text);
+  }
+  .aw-changed-icon {
+    width: 15px;
+    height: 15px;
+    color: var(--ink-muted);
+  }
+  .aw-changed-note {
+    font-weight: 400;
+    color: var(--ink-muted);
+  }
+  .aw-changed ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .aw-change {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    padding: 6px 14px;
+  }
+  .aw-change > svg {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.6;
+    color: var(--ink-muted);
+  }
+  .aw-change-what {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .aw-changed .aw-change {
+    border-top: 1px solid var(--line);
+  }
+  .aw-side-list .aw-change + .aw-change {
+    border-top: 1px solid var(--line);
+  }
+  .aw-change-time {
+    flex: none;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-muted);
+  }
+  .aw-change-act {
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link);
+    font: 500 12.5px / 1 var(--font-text);
+    cursor: pointer;
+  }
+  .aw-change-act:hover {
+    text-decoration: underline;
+  }
+  .aw-change-act:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  /* A chat row and its actions, shown on hover or focus (ADR 40). */
+  .aw-row {
+    position: relative;
+  }
+  .aw-row:hover > .aw-ri {
+    background: var(--surface-hover);
+  }
+  .aw-row-acts {
+    position: absolute;
+    top: 50%;
+    right: 3px;
+    display: flex;
+    gap: 2px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-hover);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition: opacity var(--duration-fast);
+  }
+  .aw-row:has(> [aria-current="page"]) > .aw-row-acts {
+    background: var(--fill);
+  }
+  .aw-row:hover > .aw-row-acts,
+  .aw-row:focus-within > .aw-row-acts {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .aw-row-acts .aw-ico {
+    width: 24px;
+    height: 24px;
+  }
+  .aw-row-acts .aw-ico svg {
+    width: 14px;
+    height: 14px;
+  }
+  .aw-kbd {
+    margin-left: auto;
+    padding: 0 5px;
+    border-radius: 5px;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    font: 500 11px / 16px var(--font-text);
+    color: var(--ink-muted);
+  }
+  /* Search chats (⌘G): the command palette with filters and snippets. */
+  .aw-search-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .aw-search-filters button {
+    height: 26px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--fill);
+    color: var(--ink-muted);
+    font: 500 12px / 1 var(--font-text);
+    cursor: pointer;
+  }
+  .aw-search-filters button[aria-pressed="true"] {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+  .aw-search-note {
+    padding: 20px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+  .aw-search [cmdk-item].aw-hit {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px 10px;
+  }
+  .aw-hit-top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    font-size: 13.5px;
+  }
+  .aw-hit-top b {
+    overflow: hidden;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .aw-hit-top .aw-ctx {
+    white-space: nowrap;
+  }
+  .aw-hit-tag {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+  }
+  .aw-hit-snip {
+    overflow: hidden;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .aw-hit-snip mark {
+    background: none;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .aw-search-foot {
+    display: flex;
+    gap: 14px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    color: var(--ink-muted);
+  }
+  .aw-t[data-unread] {
+    font-weight: 600;
+  }
+  .aw-tm,
+  .aw-fail {
+    flex: none;
+    margin-left: auto;
+    padding-left: 6px;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-muted);
+  }
+  .aw-fail {
+    color: var(--down);
+  }
+  .aw-rename {
+    padding-right: 4px;
+  }
+  .aw-rename-input {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    padding: 0 6px;
+    margin-left: -6px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    box-shadow: inset 0 0 0 1px var(--focus);
+    color: var(--ink);
+    font: inherit;
+    outline: 0;
+  }
+  .menu.aw-row-menu {
+    position: fixed;
+    right: auto;
+    z-index: 90; /* as a dropdown list */
+    width: 200px;
+    min-width: 0;
+    transform-origin: top left;
+    font-size: 13px;
+  }
+  .aw-row-menu .menu-row {
+    height: 30px;
+  }
+  .aw-row-menu .menu-row svg {
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.6;
+    color: var(--ink-muted);
+  }
+  .aw-row-menu .menu-row:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .aw-row-menu .aw-danger,
+  .aw-row-menu .aw-danger svg {
+    color: var(--down);
+  }
+  .aw-glyph {
+    width: 40px;
+    height: 40px;
+    stroke-width: 1.4;
   }
 }

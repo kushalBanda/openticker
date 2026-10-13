@@ -1,9 +1,10 @@
 """The daemon's agent jobs (ADR 29 in docs/adr): every second, records jobs
 that ended and stops one past its timeout, then starts the oldest pending
-job if none is running. Every minute, it first asks for the reviews that
+job if none is running, and the oldest waiting chat turns (ADR 40). Every minute, it first asks for the reviews that
 are due on their strategies' schedules, and for the day's debrief when it's
 due after the close. Its first pass stops what a previous daemon left
-running; when the daemon stops, it stops every job.
+running; when the daemon stops, it stops every job. Each pass reads the web
+app's Settings afresh (ADR 40), so a change applies without a restart.
 
 `step()` does one pass and is what the tests drive; `run()` repeats it and
 keeps going through errors, logging each distinct one once.
@@ -12,13 +13,16 @@ keeps going through errors, logging each distinct one once.
 import logging
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from openticker.use_cases.agents.settings import resolved_settings
 from openticker.use_cases.agents.supervise import (
     AgentContext,
     queue_due_debrief,
     queue_due_reviews,
     recover_jobs,
+    start_next_chat_turn,
     start_next_job,
     stop_all_jobs,
     watch_jobs,
@@ -59,12 +63,14 @@ class AgentLoop:
 
     def step(self) -> None:
         now = self._clock()
+        context = replace(self._context, settings=resolved_settings(self._context.settings))
         if not self._recovered:
-            recover_jobs(self._context, now)
+            recover_jobs(context, now)
             self._recovered = True
-        watch_jobs(self._context, now)
+        watch_jobs(context, now)
         if self._next_review_check is None or now >= self._next_review_check:
             self._next_review_check = now + REVIEW_CHECK_EVERY
-            queue_due_reviews(self._context, now)
-            queue_due_debrief(self._context, now)
-        start_next_job(self._context, now)
+            queue_due_reviews(context, now)
+            queue_due_debrief(context, now)
+        start_next_job(context, now)
+        start_next_chat_turn(context, now)

@@ -200,6 +200,15 @@ const SOURCES: Record<Source, string> = {
   system: "OpenTicker",
 };
 
+/** A chat in the web app, by its harness (ADR 40): "chat:claude:thr_…" is "Claude (chat)". */
+export function chatLabel(triggeredBy: string | null | undefined): string | null {
+  const [kind, harness] = (triggeredBy ?? "").split(":");
+  if (kind !== "chat") return null;
+  if (harness === "claude") return "Claude (chat)";
+  if (harness === "codex") return "Codex (chat)";
+  return "A chat";
+}
+
 /** Who did it, as a row says it: You, Claude, Codex, ... */
 export function sourceLabel(source: Source): string {
   return SOURCES[source];

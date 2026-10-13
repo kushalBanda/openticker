@@ -12,6 +12,7 @@ import { type ThemeChoice, useThemeChoice } from "../../lib/theme";
 import { useActions } from "../../shell/actions";
 import { useLive } from "../../stream/StreamProvider";
 import { AccountSection, ChargesSection } from "./AccountSection";
+import { AgentsSection } from "./AgentsSection";
 import { BrokerSection, InstrumentsSection } from "./BrokerSection";
 import { KeysSection } from "./KeysSection";
 
@@ -21,6 +22,7 @@ const SECTIONS = [
   { id: "keys", label: "API keys" },
   { id: "account", label: "Paper account" },
   { id: "charges", label: "Charges" },
+  { id: "agents", label: "Agents" },
   { id: "notifications", label: "Notifications" },
   { id: "app", label: "App" },
 ];
@@ -172,6 +174,7 @@ export function Settings() {
           <KeysSection />
           <AccountSection />
           <ChargesSection broker={broker} connected={connected} />
+          <AgentsSection />
           <NotificationsSection />
           <AppSection />
         </div>

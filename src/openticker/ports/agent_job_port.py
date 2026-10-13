@@ -16,19 +16,39 @@ class AgentLaunch:
     harness: Harness
     prompt: str
     labs_dir: Path  # the agent's working directory: its skills, agents and notes
-    log_path: Path  # what the agent prints while it works
-    result_path: Path  # its final answer
+    log_path: Path  # what the agent prints on stderr
+    events_path: Path  # its event stream on stdout (ADR 40)
+    result_path: Path  # Codex's final answer
     api_key: str = field(repr=False)  # the job's own key, scoped to its kind
     mcp_url: str  # openticker-serve's MCP endpoint
     max_budget_usd: float | None = None
-    agent: str = "reviewer"  # the labs agent that runs it
+    agent: str | None = "reviewer"  # the labs agent that runs it; None for a chat
     writes_notes: bool = True  # False: no file tools at all, a read-only sandbox
+    model: str | None = None  # None: the harness's own default
+    effort: str | None = None
+    resume_session: str | None = None  # a chat's conversation so far
+    context: str | None = None  # added to a chat's system prompt
 
 
 @dataclass(frozen=True)
 class AgentOutcome:
     summary: str | None  # the agent's final answer
     cost_usd: float | None  # when the harness reports it
+    session_id: str | None = None
+    model_used: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    duration_ms: int | None = None
+    error: str | None = None  # why the harness says the turn failed
+
+
+@dataclass(frozen=True)
+class HarnessInfo:
+    """Whether a harness's CLI is on this machine, and its version."""
+
+    harness: Harness
+    installed: bool
+    version: str | None = None
 
 
 class AgentProcesses(Protocol):
@@ -49,4 +69,4 @@ class AgentProcesses(Protocol):
         """SIGTERM to its process group, or SIGKILL when `force`."""
         ...
 
-    def outcome(self, harness: Harness, result_path: Path) -> AgentOutcome: ...
+    def outcome(self, harness: Harness, events_path: Path, result_path: Path) -> AgentOutcome: ...

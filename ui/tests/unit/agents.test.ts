@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Schemas } from "../../src/api/client";
-import { clientLabel, harnessLabel, jobBadge, jobState, took, why } from "../../src/lib/agents";
+import {
+  clientLabel,
+  effortLabel,
+  harnessLabel,
+  jobBadge,
+  jobState,
+  took,
+  why,
+} from "../../src/lib/agents";
+import { choiceKind } from "../../src/lib/threads";
 
 type Job = Schemas["AgentJobResult"];
 
@@ -96,5 +105,20 @@ describe("why a job ran", () => {
   it("otherwise says who asked, same as a strategy's askedBy", () => {
     expect(why("ui")).toBe("asked by you");
     expect(why("mcp:claude-code")).toBe("asked by Claude");
+  });
+});
+
+describe("model and effort choices", () => {
+  it("names efforts in words and maps a chat's folder to its Settings default", () => {
+    expect([effortLabel("xhigh"), effortLabel("low"), effortLabel(null)]).toEqual([
+      "Extra high",
+      "Low",
+      "Default",
+    ]);
+    expect([choiceKind("strategy"), choiceKind("review"), choiceKind("general")]).toEqual([
+      "strategies",
+      "reviews",
+      "general",
+    ]);
   });
 });

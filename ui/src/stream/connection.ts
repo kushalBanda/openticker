@@ -48,6 +48,17 @@ export interface Hello {
 /** An audit log entry, as the stream and `GET /api/v1/audit` send it. */
 export type AuditEntry = Schemas["AuditEntryResult"];
 
+/** A watched chat's news (ADR 40): steps from an index on, or a turn's new state. */
+export type ThreadNews =
+  | {
+      type: "thread_steps";
+      thread_id: string;
+      job_id: string;
+      from_index: number;
+      steps: Schemas["StepResult"][];
+    }
+  | { type: "thread_turn"; thread_id: string; turn: Schemas["AgentJobResult"] };
+
 export interface Stream {
   /** Wants these prices; returns the function that stops wanting them. */
   subscribe(keys: InstrumentKey[]): () => void;
@@ -56,6 +67,9 @@ export interface Stream {
   onState(fn: (state: StreamState) => void): () => void;
   onHello(fn: (hello: Hello) => void): () => void;
   onEvent(fn: (entry: AuditEntry) => void): () => void;
+  /** Watches one chat's steps; returns the function that stops watching. */
+  watchThread(threadId: string): () => void;
+  onThread(fn: (news: ThreadNews) => void): () => void;
   state(): StreamState;
   close(): void;
 }
@@ -110,6 +124,8 @@ export function createStream({
   const states = listeners<StreamState>();
   const hellos = listeners<Hello>();
   const events = listeners<AuditEntry>();
+  const threads = listeners<ThreadNews>();
+  let watching: string | null = null;
   let current: StreamState = "connecting";
   let ws: WebSocket | null = null;
   let open = false;
@@ -177,6 +193,7 @@ export function createStream({
       pending.add.clear();
       pending.remove.clear();
       if (counts.size) send({ type: "subscribe", instruments: [...counts.keys()].map(ref) });
+      if (watching) send({ type: "watch_thread", thread_id: watching });
     };
     next.onmessage = (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as { type: string } & Record<string, unknown>;
@@ -187,6 +204,8 @@ export function createStream({
         statuses.emit(message.feed as FeedStatus);
       } else if (message.type === "event") {
         events.emit(message.entry as AuditEntry);
+      } else if (message.type === "thread_steps" || message.type === "thread_turn") {
+        threads.emit(message as unknown as ThreadNews);
       } else if (message.type === "hello") {
         hellos.emit(message as unknown as Hello);
       }
@@ -244,6 +263,16 @@ export function createStream({
     onState: states.add,
     onHello: hellos.add,
     onEvent: events.add,
+    watchThread(threadId) {
+      watching = threadId;
+      send({ type: "watch_thread", thread_id: threadId });
+      return () => {
+        if (watching !== threadId) return;
+        watching = null;
+        send({ type: "unwatch_thread" });
+      };
+    },
+    onThread: threads.add,
     state: () => current,
     close() {
       closed = true;

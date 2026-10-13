@@ -6,6 +6,11 @@ the agent's answer and cost when the harness reports them. After a restart,
 a job a previous daemon left running is stopped and ends `lost`: a
 half-finished review is run again by asking for it again, not resumed.
 
+Chat turns (ADR 40) run in a lane of their own: a few at once, beside the
+background job, and not counted against the day's cap, since the user is
+there asking. Each resumes its thread's conversation; the first stores the
+harness's session on the thread.
+
 Each job gets its own API key, scoped to what its kind may read, created as
 it starts and revoked as it ends. The key reaches the agent only through
 its environment and is stored only as a hash.
@@ -20,6 +25,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from openticker.core.agents.choices import (
+    FolderKind,
+    RunChoice,
+    folder_kind,
+    job_kind_folder,
+    run_choice,
+)
 from openticker.core.agents.debriefs import DebriefOutcome
 from openticker.core.agents.jobs import (
     SCHEDULE_TRIGGER,
@@ -33,20 +45,30 @@ from openticker.core.agents.jobs import (
     exit_reason,
     job_title,
     review_prompt,
+    start_failure,
 )
 from openticker.core.agents.reviews import review_due
+from openticker.core.agents.threads import (
+    Access,
+    AgentThread,
+    chat_prompt_context,
+    folder_context,
+)
+from openticker.core.agents.transcript import session_gone
 from openticker.events.bus import EventPublisher
 from openticker.events.types import AgentJobEnded, AgentJobStarted
 from openticker.ports.agent_job_port import AgentLaunch, AgentProcesses
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage import agent_job_files
-from openticker.storage.sqlite import agent_jobs_repo, strategies_repo
+from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo, strategies_repo
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError, revoke_api_key
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError, start_review
+from openticker.use_cases.agents.threads import subject_name
 from openticker.use_cases.api_keys import (
     agent_key_name,
+    create_chat_key,
     create_debrief_key,
     create_review_key,
     revoke_agent_keys,
@@ -121,14 +143,20 @@ def queue_due_debrief(context: AgentContext, now: datetime) -> AgentJob | None:
     with write_transaction() as session:
         if agent_jobs_repo.debrief_for(session, today) is not None:
             return None
+        choice = run_choice(context.settings, FolderKind.DEBRIEFS)
         job = agent_jobs_repo.add_job(
             session,
             AgentJobKind.DEBRIEF,
             None,
-            context.settings.harness,
+            choice.harness or context.settings.harness,
             DEBRIEF_TRIGGER,
             now,
             subject=today,
+            model=choice.model,
+            effort=choice.effort.value if choice.effort else None,
+        )
+        job = agent_threads_repo.open_job_thread(
+            session, job, job_title(job.kind, None, today), now
         )
     log.info("debrief of %s is due: job %s", today, job.id)
     return job
@@ -144,9 +172,9 @@ def _cap_taken(settings: AgentSettings, now: datetime) -> bool:
 
 
 def start_next_job(context: AgentContext, now: datetime) -> None:
-    """Starts the oldest pending job, unless one is running."""
+    """Starts the oldest pending background job, unless one is running."""
     with write_transaction() as session:
-        if agent_jobs_repo.active_jobs(session):
+        if agent_jobs_repo.active_background(session):
             return
         job = agent_jobs_repo.next_pending(session)
         if job is None:
@@ -191,20 +219,106 @@ def start_next_job(context: AgentContext, now: datetime) -> None:
                 prompt=prompt,
                 labs_dir=context.labs_dir,
                 log_path=agent_job_files.log_path(job.id),
+                events_path=agent_job_files.events_path(job.id),
                 result_path=agent_job_files.result_path(job.id),
                 api_key=key,
                 mcp_url=context.mcp_url,
-                max_budget_usd=context.settings.max_budget_usd,
+                max_budget_usd=_choice_of(context, job).max_budget_usd,
                 agent=agent,
                 writes_notes=writes_notes,
+                model=job.model,
+                effort=job.effort,
             )
         )
     except (DuplicateApiKeyNameError, OSError) as exc:
-        _end(context, job, AgentJobEndReason.START_FAILED, f"could not start: {exc}", now)
+        _end(context, job, AgentJobEndReason.START_FAILED, start_failure(job.harness, exc), now)
         return
+    _running(context, job, pid, title, now)
+
+
+def start_next_chat_turn(context: AgentContext, now: datetime) -> None:
+    """Starts the oldest waiting chat turn while fewer than the chat lane's
+    limit run."""
+    with write_transaction() as session:
+        running = agent_jobs_repo.active_chat_turns(session)
+        if len(running) >= context.settings.chat_turns_at_once:
+            return
+        job = agent_jobs_repo.next_pending_chat(session)
+        if job is None:
+            return
+        thread = agent_threads_repo.find_thread(job.thread_id, session) if job.thread_id else None
+        refusal = None
+        if thread is None or thread.deleted_at is not None:
+            refusal = "its chat was deleted"
+        elif thread.session_id is None and _follows_a_turn(session, job):
+            # It waited behind a turn that left no conversation to resume.
+            refusal = "the chat can't be continued: its conversation is gone. Start a new chat"
+        if refusal is None:
+            agent_jobs_repo.mark_started(session, job.id, now)
+    if refusal is not None or thread is None:
+        _end(context, job, AgentJobEndReason.REFUSED, refusal or "", now)
+        return
+    local = now.astimezone(EXCHANGE_TIMEZONE)
+    agent_job_files.append_log(
+        job.id,
+        f"=== job {job.id} (chat {thread.id}) started {local:%Y-%m-%d %H:%M:%S %Z} "
+        f"with {job.harness}, asked by {job.trigger} ===",
+    )
+    name = subject_name(thread)
+    try:
+        key = create_chat_key(thread.id, job.id, now, read_only=thread.access is Access.READ)
+        pid = context.processes.start(
+            AgentLaunch(
+                job_id=job.id,
+                harness=job.harness,
+                prompt=job.prompt or "",
+                labs_dir=context.labs_dir,
+                log_path=agent_job_files.log_path(job.id),
+                events_path=agent_job_files.events_path(job.id),
+                result_path=agent_job_files.result_path(job.id),
+                api_key=key,
+                mcp_url=context.mcp_url,
+                max_budget_usd=_choice_of(context, job, thread).max_budget_usd,
+                agent=None,
+                writes_notes=True,
+                model=job.model,
+                effort=job.effort,
+                resume_session=thread.session_id,
+                context=chat_prompt_context(
+                    folder_context(thread.folder, thread.subject, name), job.id, thread.access
+                ),
+            )
+        )
+    except (DuplicateApiKeyNameError, OSError) as exc:
+        _end(context, job, AgentJobEndReason.START_FAILED, start_failure(job.harness, exc), now)
+        return
+    _running(context, job, pid, job_title(job.kind, None, None), now)
+
+
+def _follows_a_turn(session: Session, job: AgentJob) -> bool:
+    turns = agent_jobs_repo.turns_of(job.thread_id or "", session)
+    return bool(turns) and turns[0].id != job.id
+
+
+def _choice_of(
+    context: AgentContext, job: AgentJob, thread: AgentThread | None = None
+) -> RunChoice:
+    """The folder default a job runs under: its kind's, or its chat's folder's."""
+    kind = job_kind_folder(job.kind)
+    if kind is None:
+        if thread is None and job.thread_id is not None:
+            thread = agent_threads_repo.find_thread(job.thread_id)
+        kind = folder_kind(thread.folder) if thread is not None else FolderKind.GENERAL
+    return run_choice(context.settings, kind)
+
+
+def _running(context: AgentContext, job: AgentJob, pid: int, title: str, now: datetime) -> None:
     with write_transaction() as session:
         agent_jobs_repo.mark_running(session, job.id, pid, now)
-    agent_job_files.prune({kept.id for kept in agent_jobs_repo.recent_jobs(KEPT_JOBS)})
+    kept = {kept.id for kept in agent_jobs_repo.recent_jobs(KEPT_JOBS)}
+    agent_job_files.prune(
+        kept | agent_jobs_repo.thread_job_ids(agent_threads_repo.live_thread_ids())
+    )
     log.info("agent job %s (%s) started, pid %d", job.id, title, pid)
     context.events.publish(
         AgentJobStarted(
@@ -229,8 +343,9 @@ def watch_jobs(context: AgentContext, now: datetime) -> None:
             late = now - (job.stop_requested_at or now) >= STOP_GRACE
             context.processes.stop(job.pid, force=late)
             continue
-        if job.started_at is not None and now - job.started_at >= context.settings.timeout:
-            minutes = int(context.settings.timeout.total_seconds() // 60)
+        timeout = _choice_of(context, job).timeout or context.settings.timeout
+        if job.started_at is not None and now - job.started_at >= timeout:
+            minutes = int(timeout.total_seconds() // 60)
             with write_transaction() as session:
                 agent_jobs_repo.request_stop(
                     session,
@@ -276,9 +391,30 @@ def _finish(context: AgentContext, job: AgentJob, returncode: int | None, now: d
     reason, detail = exit_reason(returncode)
     if current.end_reason is not None:
         reason, detail = current.end_reason, f"{current.end_detail}; {detail}"
-    outcome = context.processes.outcome(job.harness, agent_job_files.result_path(job.id))
+    outcome = context.processes.outcome(
+        job.harness, agent_job_files.events_path(job.id), agent_job_files.result_path(job.id)
+    )
+    with write_transaction() as session:
+        agent_jobs_repo.mark_outcome(session, job.id, outcome)
+        thread = agent_threads_repo.find_thread(job.thread_id, session) if job.thread_id else None
+        if thread is not None:
+            if session_gone(outcome.error):
+                # Nothing left to resume: the chat can only be started afresh.
+                agent_threads_repo.set_session(session, thread.id, None)
+                detail = f"its conversation can't be resumed; {detail}"
+            elif thread.session_id is None and outcome.session_id is not None:
+                agent_threads_repo.set_session(session, thread.id, outcome.session_id)
+            agent_threads_repo.touch(session, thread.id, now)
     _end(
-        context, current, reason, detail, now, returncode, capped(outcome.summary), outcome.cost_usd
+        context,
+        current,
+        reason,
+        detail,
+        now,
+        returncode,
+        capped(outcome.summary),
+        outcome.cost_usd,
+        outcome.model_used,
     )
 
 
@@ -291,6 +427,7 @@ def _end(
     exit_code: int | None = None,
     summary: str | None = None,
     cost_usd: float | None = None,
+    model_used: str | None = None,
 ) -> None:
     with write_transaction() as session:
         ended = agent_jobs_repo.end_job(
@@ -302,17 +439,21 @@ def _end(
     agent_job_files.append_log(job.id, f"=== job {job.id} ended: {reason}, {detail} ===")
     log.info("agent job %s ended: %s, %s", job.id, reason, detail)
     stored = strategies_repo.find_strategy(job.strategy_id) if job.strategy_id else None
+    thread = agent_threads_repo.find_thread(job.thread_id) if job.thread_id else None
+    title = job_title(job.kind, stored.name if stored else None, job.subject)
     context.events.publish(
         AgentJobEnded(
             job_id=job.id,
             kind=job.kind,
             strategy_id=job.strategy_id,
             subject=job.subject,
-            title=job_title(job.kind, stored.name if stored else None, job.subject),
+            title=thread.title if thread and job.kind is AgentJobKind.CHAT else title,
             strategy_name=stored.name if stored else job.strategy_id,
             reason=reason,
             detail=detail,
             summary=summary,
             cost_usd=cost_usd,
+            model_used=model_used,
+            thread_id=job.thread_id,
         )
     )

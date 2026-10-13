@@ -42,12 +42,16 @@ def list_audit(
     event_types: Sequence[str] = (),
     source: Source | None = None,
     since: datetime | None = None,
+    until: datetime | None = None,
+    triggered_by: str | None = None,
     before_id: int | None = None,
     after_id: int | None = None,
     oldest_first: bool = False,
 ) -> list[AuditEntry]:
     """Most recent first, unless `oldest_first` (the stream's tail reads
-    forward from `after_id`). `before_id` pages back through older entries."""
+    forward from `after_id`). `before_id` pages back through older entries.
+    `triggered_by` is exact: one chat's entries, not another's whose id
+    starts the same."""
     statement = select(AuditLogRow).limit(limit)
     statement = statement.order_by(AuditLogRow.id.asc() if oldest_first else AuditLogRow.id.desc())
     kinds = [*event_types, *([event_type] if event_type is not None else [])]
@@ -59,6 +63,12 @@ def list_audit(
         statement = statement.where(
             AuditLogRow.occurred_at >= since.astimezone(UTC).replace(tzinfo=None)
         )
+    if until is not None:
+        statement = statement.where(
+            AuditLogRow.occurred_at <= until.astimezone(UTC).replace(tzinfo=None)
+        )
+    if triggered_by is not None:
+        statement = statement.where(AuditLogRow.triggered_by == triggered_by)
     if before_id is not None:
         statement = statement.where(AuditLogRow.id < before_id)
     if after_id is not None:

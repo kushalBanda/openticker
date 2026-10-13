@@ -2,11 +2,12 @@ import { Command } from "cmdk";
 import { ArrowDownRight, ArrowUpRight, ChartCandlestick, Search } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { type Instrument, useInstrumentSearch } from "../api/queries";
 import { useOpenSymbol } from "../components/Instrument";
+import { useDebounced } from "../lib/debounce";
 import { direction, instrumentName, price, qty, signed } from "../lib/format";
 import { duration, ease, spring } from "../lib/motion";
 import type { OrderDraft, Side } from "../lib/orders";
@@ -28,15 +29,6 @@ export function draftFor(instrument: Instrument, side: Side): OrderDraft {
     product: "MIS",
     orderType: "LIMIT",
   };
-}
-
-function useDebounced(value: string, ms: number): string {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
 }
 
 /**

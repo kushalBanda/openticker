@@ -150,6 +150,17 @@ def test_agent_settings_read_their_variables_with_defaults() -> None:
         agent_settings({"OPENTICKER_AGENT_TIMEOUT_MINUTES": "0"})
 
 
+def test_agent_model_and_effort_fall_back_from_the_environment() -> None:
+    from openticker.composition import AgentConfigError, agent_settings
+
+    settings = agent_settings(
+        {"OPENTICKER_AGENT_MODEL": "sonnet", "OPENTICKER_AGENT_EFFORT": "High"}
+    )
+    assert (settings.model, settings.effort) == ("sonnet", "high")
+    with pytest.raises(AgentConfigError, match="minimal, low, medium, high for codex"):
+        agent_settings({"OPENTICKER_AGENT_HARNESS": "codex", "OPENTICKER_AGENT_EFFORT": "max"})
+
+
 def test_labs_is_the_checkouts_unless_set(tmp_path: Path) -> None:
     from openticker.composition import AgentConfigError, labs_dir
 

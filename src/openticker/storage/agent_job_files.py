@@ -1,5 +1,6 @@
 """Each agent job's output under `$OPENTICKER_HOME/agent_jobs/` (ADR 29 in
-docs/adr): what it printed while it worked, and its final answer."""
+docs/adr): what it printed while it worked, its event stream (ADR 40), and
+its final answer."""
 
 from pathlib import Path
 
@@ -23,6 +24,18 @@ def result_path(job_id: str) -> Path:
     return _folder() / f"{job_id}.result"
 
 
+def events_path(job_id: str) -> Path:
+    return _folder() / f"{job_id}.events.jsonl"
+
+
+def read_events(job_id: str) -> list[str]:
+    """Its event stream's lines; none when it has no stream."""
+    try:
+        return events_path(job_id).read_text(errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+
+
 def append_log(job_id: str, line: str) -> None:
     with log_path(job_id).open("a") as log:
         log.write(line + "\n")
@@ -43,5 +56,6 @@ def log_tail(job_id: str) -> tuple[str, bool]:
 def prune(keep: set[str]) -> None:
     """Deletes the output of every job not in `keep`."""
     for path in _folder().iterdir():
-        if path.stem not in keep and path.suffix in (".log", ".result"):
+        job_id, _, suffix = path.name.partition(".")
+        if job_id not in keep and suffix in ("log", "result", "events.jsonl"):
             path.unlink(missing_ok=True)

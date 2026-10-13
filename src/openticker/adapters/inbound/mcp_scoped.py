@@ -29,7 +29,13 @@ from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.pnl import client_name
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
-from openticker.use_cases.api_keys import DEBRIEF_SCOPE_PREFIX, REVIEW_SCOPE_PREFIX, authenticate
+from openticker.use_cases.api_keys import (
+    CHAT_READ_SCOPE_PREFIX,
+    CHAT_SCOPE_PREFIX,
+    DEBRIEF_SCOPE_PREFIX,
+    REVIEW_SCOPE_PREFIX,
+    authenticate,
+)
 
 MCP_PATH = "/mcp"
 API_KEY_HEADER = "x-api-key"
@@ -53,12 +59,18 @@ def current_client() -> str | None:
 
 
 _job: ContextVar[str | None] = ContextVar("openticker_mcp_job", default=None)
-_JOB_SCOPES = (REVIEW_SCOPE_PREFIX, DEBRIEF_SCOPE_PREFIX)
+_JOB_SCOPES = (
+    REVIEW_SCOPE_PREFIX,
+    DEBRIEF_SCOPE_PREFIX,
+    CHAT_SCOPE_PREFIX,
+    CHAT_READ_SCOPE_PREFIX,
+)
 
 
 def current_job() -> str | None:
-    """The agent job's key scope ("review:<id>", "debrief:<date>") when an
-    unattended job made the call: who did it (ADR 35). None otherwise."""
+    """The agent job's key scope ("review:<id>", "debrief:<date>",
+    "chat:<thread_id>") when a job made the call: who did it (ADR 35). None
+    otherwise."""
     return _job.get()
 
 

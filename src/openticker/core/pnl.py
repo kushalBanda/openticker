@@ -46,6 +46,7 @@ RULES = (
     Rule("mcp:", Source.AGENT, prefix=True),
     Rule("review:", Source.AGENT, prefix=True),
     Rule("debrief:", Source.AGENT, prefix=True),
+    Rule("chat:", Source.AGENT, prefix=True),  # a chat in the web app (ADR 40)
     Rule("strategy:", Source.STRATEGY, prefix=True),
     Rule("alert:", Source.ALERT, prefix=True),
     Rule("script:", Source.SCRIPT, prefix=True),

@@ -1369,6 +1369,236 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Settings
+         * @description How the user's coding agent runs: each folder's default, from Settings
+         *     and the environment (ADR 40).
+         */
+        get: operations["get_agent_settings_api_v1_agents_settings_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Reset Agent Settings
+         * @description Every agent setting back to the environment.
+         */
+        delete: operations["reset_agent_settings_api_v1_agents_settings_delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Change Agent Defaults
+         * @description The harness every folder uses, and the background runs a day.
+         */
+        patch: operations["change_agent_defaults_api_v1_agents_settings_patch"];
+        trace?: never;
+    };
+    "/api/v1/agents/settings/folders/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change Folder Choice
+         * @description Replaces a folder kind's default.
+         */
+        put: operations["change_folder_choice_api_v1_agents_settings_folders__kind__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/harnesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Harnesses
+         * @description Which coding agents are on this machine, with their models and efforts.
+         */
+        get: operations["harnesses_api_v1_agents_harnesses_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Threads
+         * @description The web app's chats with the user's coding agent, most recent first
+         *     (ADR 40), in one folder when asked (a strategy's holds its reviews),
+         *     and how many each folder holds.
+         */
+        get: operations["threads_api_v1_agent_threads_get"];
+        put?: never;
+        /**
+         * New Thread
+         * @description Starts a chat; its first message runs as an agent job.
+         */
+        post: operations["new_thread_api_v1_agent_threads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-threads/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Chats
+         * @description Chats, reviews and debriefs whose title, messages or answers hold
+         *     the words; the archived ones only with archived=true.
+         */
+        get: operations["search_chats_api_v1_agent_threads_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Thread
+         * @description One chat with every turn and its steps.
+         */
+        get: operations["thread_api_v1_agent_threads__thread_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove Thread
+         * @description Deletes a chat from the web app; its turns stay as agent jobs.
+         */
+        delete: operations["remove_thread_api_v1_agent_threads__thread_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Change Thread
+         * @description Renames, pins, archives or marks a chat read.
+         */
+        patch: operations["change_thread_api_v1_agent_threads__thread_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/agent-threads/{thread_id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat Changes
+         * @description What the agent changed on the desk from this chat, in one turn when
+         *     asked: the audit entries recorded as the chat, most recent first.
+         */
+        get: operations["chat_changes_api_v1_agent_threads__thread_id__changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-threads/{thread_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send
+         * @description Sends a message to a chat; the agent's reply runs as an agent job. Sent
+         *     while the agent works, it waits its turn; 409 when one already waits.
+         */
+        post: operations["send_api_v1_agent_threads__thread_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-threads/{thread_id}/messages/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Waiting
+         * @description Takes back the message waiting for the agent; 409 once the agent took it.
+         */
+        delete: operations["remove_waiting_api_v1_agent_threads__thread_id__messages__job_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Edit Waiting
+         * @description Rewrites the message waiting for the agent; 409 once the agent took it.
+         */
+        patch: operations["edit_waiting_api_v1_agent_threads__thread_id__messages__job_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/agent-threads/{thread_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Thread Turn
+         * @description Stops the turn the agent is on; a message waiting behind it still runs.
+         */
+        post: operations["stop_thread_turn_api_v1_agent_threads__thread_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1775,6 +2005,12 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * Access
+         * @description What a chat's agent may do on the desk, fixed at its first message.
+         * @enum {string}
+         */
+        Access: "read" | "trade";
         /** AccountResult */
         AccountResult: {
             /** Starting Capital */
@@ -1859,6 +2095,15 @@ export interface components {
             last_tool: string | null;
         };
         /**
+         * AgentDefaultsBody
+         * @description Only the fields sent change; null puts one back to the environment.
+         */
+        AgentDefaultsBody: {
+            harness?: components["schemas"]["Harness"] | null;
+            /** Runs Per Day */
+            runs_per_day?: number | null;
+        };
+        /**
          * AgentJobEndReason
          * @enum {string}
          */
@@ -1885,7 +2130,7 @@ export interface components {
             job_id: string;
             /**
              * Kind
-             * @description review: reads one strategy and writes its verdict in the note. debrief: reads one trading day and writes the brain's notes on it.
+             * @description review: reads one strategy and writes its verdict in the note. debrief: reads one trading day and writes the brain's notes on it. chat: one message in a chat from the web app.
              */
             kind: string;
             /**
@@ -1939,6 +2184,37 @@ export interface components {
              * @description What the run cost, when the harness reports it.
              */
             cost_usd: number | null;
+            /**
+             * Thread Id
+             * @description The chat it belongs to (ADR 40).
+             */
+            thread_id?: string | null;
+            /**
+             * Prompt
+             * @description A chat turn's message.
+             */
+            prompt?: string | null;
+            /**
+             * Model
+             * @description The model asked for.
+             */
+            model?: string | null;
+            /**
+             * Effort
+             * @description The effort asked for.
+             */
+            effort?: string | null;
+            /**
+             * Model Used
+             * @description The model that ran, as the harness reported it.
+             */
+            model_used?: string | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
         };
         /**
          * AgentJobStatus
@@ -1952,6 +2228,181 @@ export interface components {
              * @description Newest first.
              */
             jobs: components["schemas"]["AgentJobResult"][];
+        };
+        /** AgentSettingsResult */
+        AgentSettingsResult: {
+            /** @description Settings' harness for every folder; None: env. */
+            harness: components["schemas"]["Harness"] | null;
+            harness_env: components["schemas"]["Harness"];
+            /**
+             * Runs Per Day
+             * @description Reviews and debriefs a day; None: env.
+             */
+            runs_per_day: number | null;
+            /** Runs Per Day Env */
+            runs_per_day_env: number;
+            /** Folders */
+            folders: components["schemas"]["FolderSettingsResult"][];
+        };
+        /** AgentThreadResult */
+        AgentThreadResult: {
+            /** Thread Id */
+            thread_id: string;
+            /** Title */
+            title: string;
+            folder: components["schemas"]["Folder"];
+            /**
+             * Subject
+             * @description Its strategy's or script's id, or a trading date.
+             */
+            subject: string | null;
+            /**
+             * Subject Name
+             * @description Its strategy's or script's name.
+             */
+            subject_name: string | null;
+            /** Harness */
+            harness: string;
+            last_status: components["schemas"]["AgentJobStatus"] | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Continuable
+             * @description True when a message can be sent to it now; sent while the agent works, it waits its turn.
+             */
+            continuable: boolean;
+            /**
+             * @description read: its agent changes nothing; trade: it may paper trade and change things.
+             * @default trade
+             */
+            access: components["schemas"]["Access"];
+            /**
+             * Pinned
+             * @description True when the user keeps it on top.
+             * @default false
+             */
+            pinned: boolean;
+            /**
+             * Archived
+             * @description True when out of the chat list.
+             * @default false
+             */
+            archived: boolean;
+            /**
+             * Unread
+             * @description True when a turn ended after the user last saw it.
+             * @default false
+             */
+            unread: boolean;
+            /**
+             * Failed
+             * @description True when its last turn failed (not stopped by the user).
+             * @default false
+             */
+            failed: boolean;
+            /**
+             * Active At
+             * @description When something last happened in it: a turn ended or was sent.
+             */
+            active_at?: string | null;
+            /** Origin Job Id */
+            origin_job_id: string | null;
+            /** Turns */
+            turns: components["schemas"]["AgentTurnResult"][];
+        };
+        /** AgentThreadSummaryResult */
+        AgentThreadSummaryResult: {
+            /** Thread Id */
+            thread_id: string;
+            /** Title */
+            title: string;
+            folder: components["schemas"]["Folder"];
+            /**
+             * Subject
+             * @description Its strategy's or script's id, or a trading date.
+             */
+            subject: string | null;
+            /**
+             * Subject Name
+             * @description Its strategy's or script's name.
+             */
+            subject_name: string | null;
+            /** Harness */
+            harness: string;
+            last_status: components["schemas"]["AgentJobStatus"] | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Continuable
+             * @description True when a message can be sent to it now; sent while the agent works, it waits its turn.
+             */
+            continuable: boolean;
+            /**
+             * @description read: its agent changes nothing; trade: it may paper trade and change things.
+             * @default trade
+             */
+            access: components["schemas"]["Access"];
+            /**
+             * Pinned
+             * @description True when the user keeps it on top.
+             * @default false
+             */
+            pinned: boolean;
+            /**
+             * Archived
+             * @description True when out of the chat list.
+             * @default false
+             */
+            archived: boolean;
+            /**
+             * Unread
+             * @description True when a turn ended after the user last saw it.
+             * @default false
+             */
+            unread: boolean;
+            /**
+             * Failed
+             * @description True when its last turn failed (not stopped by the user).
+             * @default false
+             */
+            failed: boolean;
+            /**
+             * Active At
+             * @description When something last happened in it: a turn ended or was sent.
+             */
+            active_at?: string | null;
+        };
+        /** AgentThreadsResult */
+        AgentThreadsResult: {
+            /**
+             * Threads
+             * @description Most recently active first; without the pinned ones when listing them all.
+             */
+            threads: components["schemas"]["AgentThreadSummaryResult"][];
+            /**
+             * Pinned
+             * @description The pinned chats, the latest pinned first.
+             */
+            pinned?: components["schemas"]["AgentThreadSummaryResult"][];
+            /** Counts */
+            counts?: components["schemas"]["FolderCountResult"][];
+        };
+        /** AgentTurnResult */
+        AgentTurnResult: {
+            job: components["schemas"]["AgentJobResult"];
+            /** Steps */
+            steps: components["schemas"]["StepResult"][];
+            /**
+             * Steps Truncated
+             * @description True when earlier steps were left out.
+             */
+            steps_truncated: boolean;
         };
         /** AgentsResult */
         AgentsResult: {
@@ -3117,6 +3568,20 @@ export interface components {
          * @enum {string}
          */
         Direction: "both" | "long_only" | "short_only";
+        /** EditQueuedBody */
+        EditQueuedBody: {
+            /**
+             * Message
+             * @description The waiting message, as it should read.
+             */
+            message: string;
+        };
+        /**
+         * Effort
+         * @description How hard the agent thinks. Each harness offers its own levels.
+         * @enum {string}
+         */
+        Effort: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
         /** EquityPointResult */
         EquityPointResult: {
             /**
@@ -3142,6 +3607,60 @@ export interface components {
          * @enum {string}
          */
         FactKind: "run" | "order";
+        /**
+         * Folder
+         * @enum {string}
+         */
+        Folder: "general" | "strategy" | "script" | "review" | "debrief";
+        /**
+         * FolderChoiceBody
+         * @description A folder kind's default; each field left out comes from the environment.
+         */
+        FolderChoiceBody: {
+            harness?: components["schemas"]["Harness"] | null;
+            /** Model */
+            model?: string | null;
+            effort?: components["schemas"]["Effort"] | null;
+            /** Max Budget Usd */
+            max_budget_usd?: number | null;
+            /** Timeout Minutes */
+            timeout_minutes?: number | null;
+        };
+        /** FolderCountResult */
+        FolderCountResult: {
+            folder: components["schemas"]["Folder"];
+            /**
+             * Subject
+             * @description A strategy's or script's id; None for the folder as a whole.
+             */
+            subject: string | null;
+            /**
+             * Subject Name
+             * @description That strategy's or script's name.
+             */
+            subject_name: string | null;
+            /**
+             * Threads
+             * @description Chats in it; a strategy's count takes in its reviews.
+             */
+            threads: number;
+        };
+        /**
+         * FolderKind
+         * @description Where a run starts, each with its own default.
+         * @enum {string}
+         */
+        FolderKind: "general" | "strategies" | "scripts" | "reviews" | "debriefs";
+        /** FolderSettingsResult */
+        FolderSettingsResult: {
+            kind: components["schemas"]["FolderKind"];
+            /** @description What Settings set. */
+            stored: components["schemas"]["RunChoiceResult"];
+            /** @description What OPENTICKER_AGENT_* gives. */
+            env: components["schemas"]["RunChoiceResult"];
+            /** @description What a run uses with no override. */
+            resolved: components["schemas"]["RunChoiceResult"];
+        };
         /** FundsResult */
         FundsResult: {
             /**
@@ -3182,6 +3701,34 @@ export interface components {
          * @enum {string}
          */
         Harness: "claude" | "codex";
+        /** HarnessResult */
+        HarnessResult: {
+            harness: components["schemas"]["Harness"];
+            /** Installed */
+            installed: boolean;
+            /** Version */
+            version: string | null;
+            /**
+             * Models
+             * @description Names to pick from; empty when any name is taken.
+             */
+            models: string[];
+            /**
+             * Free Text Model
+             * @description True when the model is typed, not picked.
+             */
+            free_text_model: boolean;
+            /**
+             * Efforts
+             * @description The efforts it offers, lowest first.
+             */
+            efforts: components["schemas"]["Effort"][];
+        };
+        /** HarnessesResult */
+        HarnessesResult: {
+            /** Harnesses */
+            harnesses: components["schemas"]["HarnessResult"][];
+        };
         /** HealthResult */
         HealthResult: {
             /** Status */
@@ -4723,6 +5270,24 @@ export interface components {
              */
             percent: boolean;
         };
+        /** RunChoiceResult */
+        RunChoiceResult: {
+            /** @description claude or codex; None: not set here. */
+            harness: components["schemas"]["Harness"] | null;
+            /**
+             * Model
+             * @description None: not set here, or the harness's default.
+             */
+            model: string | null;
+            effort: components["schemas"]["Effort"] | null;
+            /**
+             * Max Budget Usd
+             * @description Claude Code stops a run at this spend.
+             */
+            max_budget_usd: number | null;
+            /** Timeout Minutes */
+            timeout_minutes: number | null;
+        };
         /** RunLegResult */
         RunLegResult: {
             /** Leg Id */
@@ -5030,6 +5595,11 @@ export interface components {
             /** @description What every run is held to: SCRIPT_MEMORY_LIMIT_MB and SCRIPT_CPU_SECONDS. */
             limits?: components["schemas"]["ScriptLimitsResult"] | null;
         };
+        /**
+         * SearchKind
+         * @enum {string}
+         */
+        SearchKind: "chats" | "reviews" | "debriefs";
         /** SearchResult */
         SearchResult: {
             /** Instruments */
@@ -5045,6 +5615,21 @@ export interface components {
          * @enum {string}
          */
         Segment: "EQ" | "FUT" | "OPT";
+        /** SendMessageBody */
+        SendMessageBody: {
+            /**
+             * Message
+             * @description What you ask the agent.
+             */
+            message: string;
+            /**
+             * Model
+             * @description The model; left out, the harness's default.
+             */
+            model?: string | null;
+            /** @description How hard it thinks. */
+            effort?: components["schemas"]["Effort"] | null;
+        };
         /** SessionResult */
         SessionResult: {
             /**
@@ -5259,6 +5844,35 @@ export interface components {
          * @enum {string}
          */
         Source: "you" | "claude-code" | "codex" | "agent" | "strategy" | "alert" | "script" | "schedule" | "rest" | "system";
+        /** StartChatBody */
+        StartChatBody: {
+            /**
+             * Message
+             * @description What you ask the agent.
+             */
+            message: string;
+            /**
+             * Model
+             * @description The model; left out, the harness's default.
+             */
+            model?: string | null;
+            /** @description How hard it thinks. */
+            effort?: components["schemas"]["Effort"] | null;
+            /** @default general */
+            folder: components["schemas"]["Folder"];
+            /**
+             * @description read: the agent reads the desk and changes nothing; trade: it may also paper trade and change strategies. Fixed after the first message.
+             * @default trade
+             */
+            access: components["schemas"]["Access"];
+            /**
+             * Subject
+             * @description The strategy's or script's id, for a chat about one.
+             */
+            subject?: string | null;
+            /** @description claude or codex; left out, the folder's default. */
+            harness?: components["schemas"]["Harness"] | null;
+        };
         /** StartDebriefBody */
         StartDebriefBody: {
             /**
@@ -5284,6 +5898,30 @@ export interface components {
              * @default openticker-serve starts it within a few seconds if no other job is running; it writes its verdict into the strategy's note in labs/notes/. get_agent_jobs shows when it ends, get_agent_job_log what it printed.
              */
             next_step: string;
+        };
+        /**
+         * StepKind
+         * @enum {string}
+         */
+        StepKind: "text" | "thinking" | "tool" | "edit" | "error";
+        /**
+         * StepResult
+         * @description One step of an agent's turn (ADR 40): what it wrote, thought, called or changed.
+         */
+        StepResult: {
+            kind: components["schemas"]["StepKind"];
+            /** At */
+            at: string | null;
+            /** Text */
+            text: string | null;
+            /** Tool */
+            tool: string | null;
+            /** Summary */
+            summary: string | null;
+            /** Result */
+            result: string | null;
+            /** Failed */
+            failed: boolean;
         };
         /** StrategiesResult */
         StrategiesResult: {
@@ -5725,6 +6363,35 @@ export interface components {
              */
             instrument_count: number;
         };
+        /** ThreadSearchHitResult */
+        ThreadSearchHitResult: {
+            thread: components["schemas"]["AgentThreadSummaryResult"];
+            /**
+             * Matched
+             * @description Where the words were.
+             * @enum {string}
+             */
+            matched: "title" | "message" | "answer";
+            /**
+             * Snippet
+             * @description The line around the first match, cut with an ellipsis.
+             */
+            snippet: string;
+            /**
+             * At
+             * Format: date-time
+             * @description When that message was sent, or the chat last moved.
+             */
+            at: string;
+        };
+        /** ThreadSearchResult */
+        ThreadSearchResult: {
+            /**
+             * Hits
+             * @description The most recently active first.
+             */
+            hits: components["schemas"]["ThreadSearchHitResult"][];
+        };
         /** TimelineEntry */
         TimelineEntry: {
             /**
@@ -5875,6 +6542,32 @@ export interface components {
              * @description Start of the period (today, this week or this month), exchange-local.
              */
             since: string;
+        };
+        /**
+         * UpdateThreadBody
+         * @description What the user changes about a chat; each field left out stays.
+         */
+        UpdateThreadBody: {
+            /**
+             * Title
+             * @description Rename it.
+             */
+            title?: string | null;
+            /**
+             * Pinned
+             * @description Keep it on top of the list.
+             */
+            pinned?: boolean | null;
+            /**
+             * Archived
+             * @description Take it out of the list (true) or bring it back (false).
+             */
+            archived?: boolean | null;
+            /**
+             * Read
+             * @description true: the user has seen it.
+             */
+            read?: boolean | null;
         };
         /**
          * UsePurpose
@@ -8695,6 +9388,497 @@ export interface operations {
             header?: never;
             path: {
                 job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_settings_api_v1_agents_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSettingsResult"];
+                };
+            };
+        };
+    };
+    reset_agent_settings_api_v1_agents_settings_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSettingsResult"];
+                };
+            };
+        };
+    };
+    change_agent_defaults_api_v1_agents_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDefaultsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSettingsResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_folder_choice_api_v1_agents_settings_folders__kind__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["FolderKind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderChoiceBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderSettingsResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    harnesses_api_v1_agents_harnesses_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarnessesResult"];
+                };
+            };
+        };
+    };
+    threads_api_v1_agent_threads_get: {
+        parameters: {
+            query?: {
+                folder?: components["schemas"]["Folder"] | null;
+                subject?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadsResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    new_thread_api_v1_agent_threads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChatBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_chats_api_v1_agent_threads_search_get: {
+        parameters: {
+            query: {
+                /** @description Words to find. */
+                q: string;
+                kind?: components["schemas"]["SearchKind"] | null;
+                archived?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadSearchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    thread_api_v1_agent_threads__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_thread_api_v1_agent_threads__thread_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_thread_api_v1_agent_threads__thread_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateThreadBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadSummaryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_changes_api_v1_agent_threads__thread_id__changes_get: {
+        parameters: {
+            query?: {
+                job_id?: string | null;
+            };
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_api_v1_agent_threads__thread_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTurnResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_waiting_api_v1_agent_threads__thread_id__messages__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_waiting_api_v1_agent_threads__thread_id__messages__job_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditQueuedBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTurnResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_thread_turn_api_v1_agent_threads__thread_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
             };
             cookie?: never;
         };

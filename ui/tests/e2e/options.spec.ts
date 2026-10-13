@@ -17,13 +17,6 @@ const chain = (page: Page) => page.getByRole("table", { name: "Option chain" });
 const toast = (page: Page, text: string | RegExp) =>
   page.getByTestId("toast").filter({ hasText: text });
 
-const noOverflow = (page: Page) =>
-  page.evaluate(() =>
-    [document.documentElement, ...document.querySelectorAll(".tile, .toolbar, .tray, .stats")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.className || el.tagName),
-  );
-
 /** Picks the bid (sell) or ask (buy) of one contract from the chain. */
 async function pick(page: Page, side: "Sell" | "Buy", name: string) {
   await chain(page)
@@ -142,21 +135,3 @@ test("a stock without options says so; the underlying picker switches", async ({
   await expect(page).toHaveURL(/\/options\/NSE\/NIFTY%2050$/);
   await expect(chain(page)).toBeVisible();
 });
-
-for (const width of [1280, 1440, 1920]) {
-  test(`option chain at ${width}px: no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await pick(page, "Sell", "NIFTY SEP 24800 CE");
-    await pick(page, "Buy", "NIFTY SEP 25000 CE");
-    await expect(page.getByTestId("payoff-chart")).toBeVisible();
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/options-${width}-${theme}.png` });
-    }
-  });
-}

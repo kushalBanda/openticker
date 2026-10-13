@@ -172,6 +172,8 @@ from openticker.use_cases.agents.manage import (
     AgentJobCapError,
     UnknownAgentJobError,
 )
+from openticker.use_cases.agents.settings import resolved_settings
+from openticker.use_cases.agents.threads import recorded_as
 from openticker.use_cases.brain import debrief as brain_debrief
 from openticker.use_cases.brain import read as brain
 from openticker.use_cases.brain import write as brain_write
@@ -355,11 +357,12 @@ clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 def _who() -> str:
     """`triggered_by` for this call (ADR 35): an agent job's key scope
-    ("debrief:<date>") when a job made it, else "mcp:<client>" when the
+    ("debrief:<date>") when a job made it, a chat's with its harness
+    ("chat:claude:<thread_id>"), else "mcp:<client>" when the
     client gave its name, else "mcp"."""
     job = current_job()
     if job:
-        return job
+        return recorded_as(job)
     client = current_client()
     return f"mcp:{client}" if client else "mcp"
 
@@ -1811,7 +1814,9 @@ def start_review(strategy_id: StrategyId) -> StartReviewResult:
     The verdict goes into the strategy's note. Refused while a review of it
     is pending or running, or once the day's cap of jobs has run."""
     with _agent_facing_errors():
-        job = agent_jobs.start_review(strategy_id, agent_settings(os.environ), _who(), clock())
+        job = agent_jobs.start_review(
+            strategy_id, resolved_settings(agent_settings(os.environ)), _who(), clock()
+        )
     return StartReviewResult(job=AgentJobResult.of(job, agent_jobs.strategy_names()))
 
 
@@ -2504,7 +2509,11 @@ def start_debrief(
     for that day waits or runs, or once the day's cap of jobs has run."""
     with _agent_facing_errors():
         job = brain_debrief.start_debrief(
-            trading_date, agent_settings(os.environ), _who(), clock(), load_calendar()
+            trading_date,
+            resolved_settings(agent_settings(os.environ)),
+            _who(),
+            clock(),
+            load_calendar(),
         )
     return StartDebriefResult(job=AgentJobResult.of(job, {}))
 

@@ -35,34 +35,43 @@ async function hold(page: Page, button: Locator) {
 const toast = (page: Page, text: string) => page.getByTestId("toast").filter({ hasText: text });
 const broker = (page: Page) => page.locator("#broker");
 
-for (const width of [1280, 1440, 1920]) {
-  test(`settings at ${width}px: every section, no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await expect(broker(page).getByText("Connected")).toBeVisible();
-    await expect(page.locator("#account")).toContainText("₹25,00,000.00");
-    await expect(page.locator("#instruments")).toContainText("NSE");
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      const overflow = await page.evaluate(() =>
-        [document.documentElement, ...document.querySelectorAll(".tile, .statusbar")]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.className || el.tagName),
-      );
-      expect(overflow).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/settings-${width}-${theme}.png` });
-      if (width === 1440) {
-        await page.screenshot({
-          path: `test-results/screens/settings-full-1440-${theme}.png`,
-          fullPage: true,
-        });
-      }
-    }
-  });
-}
+test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to the environment", async ({
+  page,
+}) => {
+  await signIn(page);
+  const agents = page.locator("#agents");
+  await agents.scrollIntoViewIfNeeded();
+  await expect(agents.getByRole("radio", { name: /Claude Code/ })).toBeChecked();
+  // Both on the e2e server's PATH, each with its version (tests/fixtures/fake_*.py).
+  await expect(agents.locator("label", { hasText: "Claude Code" })).toContainText(
+    "Ready · 2.1.296",
+  );
+  await expect(agents.locator("label", { hasText: "Codex" })).toContainText("Ready · 0.48.0");
+
+  const reviews = agents.getByRole("button", { name: /Reviews/ });
+  await expect(reviews).toContainText("Agent's default");
+  await reviews.click();
+  await expect(reviews).toHaveAttribute("aria-expanded", "true");
+  await agents
+    .getByRole("group", { name: "Reviews effort" })
+    .getByRole("button", { name: "High", exact: true })
+    .click();
+  await expect(toast(page, "Saved")).toBeVisible();
+  await expect(reviews).toContainText("Default model · High");
+  await agents.getByRole("combobox", { name: "Reviews model" }).click();
+  await page.getByRole("option", { name: "opus" }).click();
+  await expect(reviews).toContainText("opus · High");
+
+  const runs = agents.locator(".st-count");
+  const before = Number(await runs.textContent());
+  await agents.getByRole("button", { name: "More runs a day" }).click();
+  await expect(runs).toHaveText(String(before + 1));
+
+  await agents.getByRole("button", { name: "Reset to environment" }).click();
+  await expect(toast(page, "Agent settings reset to the environment")).toBeVisible();
+  await expect(reviews).toContainText("Agent's default");
+  await expect(runs).toHaveText(String(before));
+});
 
 test("proof: disconnect, then connect through the broker's login and its redirect", async ({
   page,

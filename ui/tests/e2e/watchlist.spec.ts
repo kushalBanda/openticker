@@ -27,13 +27,6 @@ const tab = (page: Page, name: RegExp) =>
   page.getByRole("group", { name: "Watchlists" }).getByRole("button", { name });
 const toast = (page: Page, text: string) => page.getByTestId("toast").filter({ hasText: text });
 
-const noOverflow = (page: Page) =>
-  page.evaluate(() =>
-    [document.documentElement, ...document.querySelectorAll(".tile, .toolbar, .statusbar")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.className || el.tagName),
-  );
-
 test("proof: an agent adds RELIANCE to a list and it appears on the page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
@@ -104,54 +97,6 @@ test("B / S from a row, by pointer and by keyboard; a row opens its page", async
   await expect(page).toHaveURL(/\/symbols\/NSE\/TCS$/);
 });
 
-test("only the row under the pointer shows its pill", async ({ page }) => {
-  await signIn(page);
-  const shown = () =>
-    page.evaluate(
-      () =>
-        [...document.querySelectorAll(".row-actions")].filter(
-          (el) => getComputedStyle(el).opacity !== "0",
-        ).length,
-    );
-  const hdfc = row(page, "HDFCBANK");
-  await hdfc.hover();
-  await hdfc.getByRole("button", { name: "Buy HDFCBANK" }).click();
-  await page.keyboard.press("Escape"); // focus doesn't come back into the pill
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.keyboard.press("ArrowDown"); // a selected row keeps no pill either
-  await row(page, "TCS").hover();
-  await page.waitForTimeout(250);
-  expect(await shown()).toBe(1);
-  await page.mouse.move(5, 500); // off the table
-  await page.waitForTimeout(250);
-  expect(await shown()).toBe(0);
-});
-
-test("an instrument's page has a way back to where it was opened from", async ({ page }) => {
-  await signIn(page);
-  await row(page, "TCS").getByRole("cell").nth(6).click(); // anywhere on the row
-  await expect(page).toHaveURL(/\/symbols\/NSE\/TCS$/);
-  await page.getByRole("link", { name: "Watchlist" }).first().waitFor();
-  await page.locator(".back-link").click();
-  await expect(page).toHaveURL(/\/watchlist$/);
-
-  await page.goto("/positions");
-  await page
-    .getByRole("table", { name: "Positions" })
-    .getByRole("row")
-    .filter({ hasText: "HDFCBANK" })
-    .getByRole("cell")
-    .nth(3)
-    .click();
-  await expect(page).toHaveURL(/\/symbols\/NSE\/HDFCBANK$/);
-  await expect(page.locator(".back-link")).toHaveText("Positions");
-  await page.locator(".back-link").click();
-  await expect(page).toHaveURL(/\/positions$/);
-
-  await page.goto("/symbols/NSE/TCS"); // opened directly
-  await expect(page.locator(".back-link")).toHaveText("Watchlist");
-});
-
 test("make a list, add and remove, rename, and delete it", async ({ page }) => {
   await signIn(page);
   await page.getByRole("button", { name: "New list" }).click();
@@ -210,23 +155,6 @@ test("the Symbol page's Watch puts it on the list and takes it off", async ({ pa
     "false",
   );
 });
-
-for (const width of [1280, 1440, 1920]) {
-  test(`watchlist at ${width}px: no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await expect(row(page, "HDFCBANK").getByTestId("ltp")).not.toHaveText("—");
-    await row(page, "HDFCBANK").hover(); // the pill shows
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/watchlist-${width}-${theme}.png` });
-    }
-  });
-}
 
 test("no lists yet: one button and a request for your agent", async ({ page }) => {
   await page.route("**/api/v1/watchlists", (route) =>

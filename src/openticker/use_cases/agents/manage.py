@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from openticker.core.agents.choices import FolderKind, run_choice
 from openticker.core.agents.jobs import (
     AgentJob,
     AgentJobEndReason,
@@ -20,7 +21,7 @@ from openticker.events.bus import EventPublisher
 from openticker.events.types import AgentJobEnded
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage import agent_job_files
-from openticker.storage.sqlite import agent_jobs_repo, strategies_repo
+from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo, strategies_repo
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import StoredStrategy, write_transaction
 from openticker.use_cases.strategies.define import UnknownStrategyError
@@ -53,7 +54,8 @@ def start_review(
     """A pending review job for openticker-serve to run. One job per strategy
     at a time, and at most the day's cap started."""
     with write_transaction() as session:
-        if strategies_repo.find_strategy(strategy_id) is None:
+        stored = strategies_repo.find_strategy(strategy_id)
+        if stored is None:
             raise _unknown_strategy(strategy_id)
         open_job = agent_jobs_repo.open_job_of(session, strategy_id)
         if open_job is not None:
@@ -65,10 +67,21 @@ def start_review(
         if agent_jobs_repo.started_since(session, today) >= settings.jobs_per_day:
             raise AgentJobCapError(
                 f"{settings.jobs_per_day} agent jobs have run today, the daily cap "
-                "(OPENTICKER_AGENT_JOBS_PER_DAY); try again tomorrow"
+                "(Settings, Agents, or OPENTICKER_AGENT_JOBS_PER_DAY); try again tomorrow"
             )
-        return agent_jobs_repo.add_job(
-            session, AgentJobKind.REVIEW, strategy_id, settings.harness, triggered_by, now
+        choice = run_choice(settings, FolderKind.REVIEWS)
+        job = agent_jobs_repo.add_job(
+            session,
+            AgentJobKind.REVIEW,
+            strategy_id,
+            choice.harness or settings.harness,
+            triggered_by,
+            now,
+            model=choice.model,
+            effort=choice.effort.value if choice.effort else None,
+        )
+        return agent_threads_repo.open_job_thread(
+            session, job, job_title(job.kind, stored.name, None), now
         )
 
 

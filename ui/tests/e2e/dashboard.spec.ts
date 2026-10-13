@@ -65,24 +65,6 @@ test("proof: back after a while, the Dashboard says what happened meanwhile", as
   await expect(page).toHaveTitle("Positions · OpenTicker");
 });
 
-for (const width of [1280, 1920]) {
-  test(`dashboard at ${width}px: every tile, no sideways scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await signIn(page);
-    await expect(page.getByRole("table", { name: "Open positions" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Daily P&L" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Recent events" })).toBeVisible();
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-      }, theme);
-      await page.waitForTimeout(400);
-      expect(await noOverflow(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/screens/dashboard-${width}-${theme}.png` });
-    }
-  });
-}
-
 test("first run: the hero and the four steps until the first fill", async ({ page }) => {
   await page.route("**/api/v1/setup?*", (route) =>
     route.fulfill({

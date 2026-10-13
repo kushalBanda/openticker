@@ -18,11 +18,21 @@ both: an MCP call is allowed exactly when its tool's route would be.
   and writes the brain: its own day's debrief, lessons and their checks,
   uses and proposals. It can't place an order, change a strategy, decide a
   proposal, retire a lesson or touch another day's debrief.
+- A chat turn's key (`chat:<thread_id>`, ADR 40) reaches every tool the
+  user's own session does, but broker sign-in, starting, scheduling or
+  stopping agent jobs, and the routes with no tool (API keys, settings,
+  chats): the user asked, so it may trade on paper and run strategies, and
+  no agent starts another.
+- A read-only chat's key (`chat-read:<thread_id>`, ADR 40) reaches the
+  chat's tools that change nothing: the tools annotated read-only, and
+  historical bars, which only fill the local cache.
 """
 
 from collections.abc import Callable, Mapping
 
 from openticker.use_cases.api_keys import (
+    CHAT_READ_SCOPE_PREFIX,
+    CHAT_SCOPE_PREFIX,
     DEBRIEF_SCOPE_PREFIX,
     FULL_SCOPE,
     REVIEW_SCOPE_PREFIX,
@@ -124,8 +134,30 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
 }
 
 # Routes with no MCP tool: the user's own text on a note is theirs to edit,
-# with a full key or from the web app, never by an agent.
-REST_ONLY_ROUTES = frozenset({("PATCH", "/api/v1/brain/notes/{note_id}")})
+# with a full key or from the web app, never by an agent; and the web app's
+# chats with the user's coding agent and how it runs, so no agent starts or
+# steers one, or changes its own model or spend (ADR 40).
+REST_ONLY_ROUTES = frozenset(
+    {
+        ("PATCH", "/api/v1/brain/notes/{note_id}"),
+        ("GET", "/api/v1/agent-threads"),
+        ("GET", "/api/v1/agent-threads/search"),
+        ("GET", "/api/v1/agent-threads/{thread_id}"),
+        ("GET", "/api/v1/agent-threads/{thread_id}/changes"),
+        ("POST", "/api/v1/agent-threads"),
+        ("POST", "/api/v1/agent-threads/{thread_id}/messages"),
+        ("POST", "/api/v1/agent-threads/{thread_id}/stop"),
+        ("PATCH", "/api/v1/agent-threads/{thread_id}/messages/{job_id}"),
+        ("DELETE", "/api/v1/agent-threads/{thread_id}/messages/{job_id}"),
+        ("PATCH", "/api/v1/agent-threads/{thread_id}"),
+        ("DELETE", "/api/v1/agent-threads/{thread_id}"),
+        ("GET", "/api/v1/agents/settings"),
+        ("PATCH", "/api/v1/agents/settings"),
+        ("DELETE", "/api/v1/agents/settings"),
+        ("PUT", "/api/v1/agents/settings/folders/{kind}"),
+        ("GET", "/api/v1/agents/harnesses"),
+    }
+)
 
 # A hosted script's key: prices, market depth and margin, placing, reading,
 # changing and cancelling orders, and closing one position. Never broker
@@ -228,6 +260,66 @@ DEBRIEF_ROUTES = frozenset(
         "get_option_chain",
     )
 )
+# A chat turn's key: every tool's route but these.
+_NOT_FOR_CHATS = (
+    "get_broker_login_url",
+    "connect_broker",
+    "start_review",
+    "schedule_review",
+    "unschedule_review",
+    "stop_agent_job",
+    "start_debrief",
+    "schedule_debrief",
+)
+CHAT_ROUTES = frozenset(TOOL_ROUTES.values()) - {TOOL_ROUTES[t] for t in _NOT_FOR_CHATS}
+
+# A read-only chat's key: the chat's tools whose MCP annotation is read-only
+# (a test keeps this list and the annotations the same), and historical
+# bars, whose only write is the local bar cache.
+CHAT_READ_TOOLS = (
+    "check_charge_rates",
+    "evaluate_risk",
+    "get_agent_job_log",
+    "get_agent_jobs",
+    "get_audit_log",
+    "get_brain_graph",
+    "get_brain_note",
+    "get_charges_summary",
+    "get_day_record",
+    "get_debrief_schedule",
+    "get_funds",
+    "get_learning",
+    "get_margin",
+    "get_market_depth",
+    "get_market_status",
+    "get_option_chain",
+    "get_order_status",
+    "get_orderbook",
+    "get_pnl_history",
+    "get_positions",
+    "get_quote",
+    "get_quotes",
+    "get_script",
+    "get_script_logs",
+    "get_strategy",
+    "get_strategy_ledger",
+    "get_strategy_run",
+    "get_strategy_runs",
+    "get_strategy_signals",
+    "get_tradebook",
+    "list_scripts",
+    "list_strategies",
+    "list_watchlists",
+    "preview_charges",
+    "preview_paper_margin",
+    "preview_payoff",
+    "preview_strategy",
+    "search_brain",
+    "search_instruments",
+)
+CHAT_READ_EXTRA_TOOLS = ("get_historical_bars",)
+CHAT_READ_ROUTES = frozenset(TOOL_ROUTES[t] for t in (*CHAT_READ_TOOLS, *CHAT_READ_EXTRA_TOOLS))
+
 # The routes whose trading date a debrief's key must keep to its own.
 _ITS_DAY = frozenset(TOOL_ROUTES[t] for t in ("get_day_record", "write_debrief"))
 
@@ -277,4 +369,15 @@ def refusal(
         if route in _ITS_DAY and asked is not None and str(asked)[:10] != day:
             return f"a debrief's key reads and writes the day {day} only"
         return None
+    if scope.startswith(CHAT_SCOPE_PREFIX):
+        if route in CHAT_ROUTES:
+            return None
+        return "a chat's key reaches neither broker sign-in, API keys nor agent jobs"
+    if scope.startswith(CHAT_READ_SCOPE_PREFIX):
+        if route in CHAT_READ_ROUTES:
+            return None
+        return (
+            "this chat is read-only, so its key changes nothing: say what you would do, "
+            "or ask the user to start a Paper trades chat"
+        )
     return f"unknown key scope {scope!r}"

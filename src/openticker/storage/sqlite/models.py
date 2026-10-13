@@ -350,6 +350,60 @@ class AgentJobRow(Base):
     # The trading date a debrief covers; NULL for a review. Nullable, so it
     # can be added to an existing table (ADR 18).
     subject: Mapped[date | None]
+    # A chat's turn, and what each run used (ADR 40). All nullable (ADR 18):
+    # NULL is "not recorded".
+    thread_id: Mapped[str | None] = mapped_column(index=True)
+    prompt: Mapped[str | None]  # a chat turn's message
+    model: Mapped[str | None]  # as asked
+    effort: Mapped[str | None]  # as asked
+    model_used: Mapped[str | None]  # as the harness reported
+    session_id: Mapped[str | None]
+    input_tokens: Mapped[int | None]
+    output_tokens: Mapped[int | None]
+    duration_ms: Mapped[int | None]
+
+
+class AgentThreadRow(Base):
+    """One chat with the user's coding agent, each message an agent job (ADR 40 in docs/adr)."""
+
+    __tablename__ = "agent_threads"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    title: Mapped[str]
+    folder: Mapped[str]  # general, strategy, script, review, debrief
+    subject: Mapped[str | None]  # a strategy or script id, an ISO trading date
+    harness: Mapped[str]
+    session_id: Mapped[str | None]  # the harness's own, from the first turn
+    origin_job_id: Mapped[str | None]  # the review or debrief it began as
+    created_at: Mapped[datetime]  # UTC, stored naive
+    updated_at: Mapped[datetime] = mapped_column(index=True)
+    deleted_at: Mapped[datetime | None]
+    # The user's own handling of the chat list. Nullable (ADR 18): NULL is
+    # not pinned, not archived, and (a chat from before) read.
+    pinned_at: Mapped[datetime | None]
+    archived_at: Mapped[datetime | None]
+    read_at: Mapped[datetime | None]  # the user last saw it; unread when a turn ends after
+    access: Mapped[str | None]  # read or trade; NULL (every chat before) is trade
+
+
+class AgentSettingRow(Base):
+    """A default the web app's Settings set for the user's coding agent (ADR 40
+    in docs/adr): one row per folder kind, and the row `all` for the harness
+    every folder uses and the background runs a day. NULL: from the
+    environment."""
+
+    __tablename__ = "agent_settings"
+
+    kind: Mapped[str] = mapped_column(primary_key=True)  # a FolderKind, or "all"
+    harness: Mapped[str | None]
+    model: Mapped[str | None]
+    effort: Mapped[str | None]
+    max_budget_usd: Mapped[float | None]
+    timeout_minutes: Mapped[int | None]
+    runs_per_day: Mapped[int | None]  # the row "all" only
+    # The harness its model and effort were chosen for, when it names none.
+    chosen_for: Mapped[str | None] = mapped_column(default=None)
+    updated_at: Mapped[datetime]  # UTC, stored naive
 
 
 # The web app's browser sign-in (ADR 31 in docs/adr). Only hashes of the

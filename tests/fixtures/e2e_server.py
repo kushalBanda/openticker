@@ -29,30 +29,35 @@ import functools
 import math
 import os
 import random
+import sys
 import threading
 import time
 import zlib
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from datetime import time as clock_time
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import uvicorn
-from sqlalchemy import update
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 
+from openticker.adapters.agents.harness import HarnessProcesses
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
+from openticker.adapters.inbound.mcp_scoped import MCP_PATH
 from openticker.adapters.inbound.rest_api import create_app
 from openticker.adapters.inbound.web.app import DIST
 from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.adapters.scripts.supervisor import ProcessSupervisor
 from openticker.composition import build_event_bus, order_broker, script_limits
+from openticker.core.agents.jobs import AgentJob, AgentJobKind, AgentJobStatus, AgentSettings
 from openticker.core.options.chain import years_to_expiry
 from openticker.core.options.greeks import black76_price
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
@@ -64,6 +69,8 @@ from openticker.core.strategies.models import (
     StrategySpec,
 )
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, leg_risk
+from openticker.events import types as event_types
+from openticker.events.bus import EventPublisher
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -80,13 +87,21 @@ from openticker.ports.models import (
     Tick,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import runs_repo
+from openticker.storage.sqlite import agent_jobs_repo, runs_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
+from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
-from openticker.storage.sqlite.models import SandboxTradeRow
+from openticker.storage.sqlite.models import AgentJobRow, SandboxTradeRow
 from openticker.storage.sqlite.pnl_repo import upsert_day, upsert_point
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
 from openticker.storage.sqlite.watchlists_repo import WatchlistItem, add_items, insert_watchlist
+from openticker.use_cases.agents.settings import resolved_settings
+from openticker.use_cases.agents.supervise import (
+    AgentContext,
+    start_next_chat_turn,
+    start_next_job,
+    watch_jobs,
+)
 from openticker.use_cases.cancel_order import cancel_order
 from openticker.use_cases.feed_status import feed_status
 from openticker.use_cases.place_order import place_order
@@ -94,7 +109,13 @@ from openticker.use_cases.scripts.manage import upload_script
 from openticker.use_cases.watched_instruments import watched_instruments
 from openticker.use_cases.web_sessions import create_sign_in_link
 from tests.fixtures.e2e_brain import seed_brain
-from tests.fixtures.e2e_hosted import REL_TRAIL, seed_agents, seed_scripts
+from tests.fixtures.e2e_hosted import (
+    REL_TRAIL,
+    seed_agents,
+    seed_chat,
+    seed_gone_chat,
+    seed_scripts,
+)
 from tests.fixtures.e2e_strategies import STRADDLE_E2E, TREND, seed_strategies
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
 
@@ -423,6 +444,19 @@ class Clock:
         return SESSION_START + timedelta(seconds=time.time() - started)
 
 
+def _stamp_events_with(clock: Clock) -> None:
+    """Events stamped with the session's clock, not the wall clock, as every
+    other time here is: so a chat turn's start and end, taken from the clock,
+    hold the audit entries its agent made (ADR 40's What changed)."""
+
+    class _SessionTime:  # what event types read the time from: their `_now`
+        @staticmethod
+        def now(tz: tzinfo) -> datetime:
+            return clock().astimezone(tz)
+
+    event_types.datetime = _SessionTime  # type: ignore[attr-defined,assignment]
+
+
 class WalkingFeed:
     """A MarketFeedPort whose prices take a small random step each 300 ms,
     pulled back toward where they started: a free walk drifted NIFTY 50 a
@@ -586,6 +620,8 @@ def _seed(env: dict[str, str], clock: Clock) -> None:
         )
     seed_scripts(trail.id, clock)
     seed_agents(strategies, clock)
+    seed_chat(straddle, clock)
+    seed_gone_chat(clock)
     seed_brain(straddle, clock, events)
     events.close()
 
@@ -661,6 +697,60 @@ def _serve_broker_login(port: int) -> str:
     return f"http://localhost:{port + 1}/connect/login"
 
 
+def _pending_job_ids() -> set[str]:
+    with Session(get_engine()) as session:
+        rows = session.scalars(
+            select(AgentJobRow.id).where(AgentJobRow.status == AgentJobStatus.PENDING.value)
+        )
+        return set(rows.all())
+
+
+def _run_agents(
+    home: Path, events: EventPublisher, url: str, clock: Clock, stop: threading.Event
+) -> None:
+    """The daemon's agent lanes (ADR 40), with tests/fixtures/fake_claude.py as
+    Claude Code and fake_codex.py as Codex: every chat, and the reviews asked for while the suite runs.
+    Jobs seeded before it started stay as they were (the Agents mock's
+    waiting review stays waiting), and so do debriefs (Brain's proof stops
+    one before it starts)."""
+    seeded = _pending_job_ids()
+
+    def next_pending(session: Session) -> AgentJob | None:
+        row = session.scalars(
+            select(AgentJobRow)
+            .where(
+                AgentJobRow.status == AgentJobStatus.PENDING.value,
+                AgentJobRow.kind == AgentJobKind.REVIEW.value,
+                AgentJobRow.id.not_in(seeded),
+            )
+            .order_by(AgentJobRow.created_at)
+        ).first()
+        return agent_jobs_repo.find_job(row.id) if row else None
+
+    agent_jobs_repo.next_pending = next_pending
+    home = home.resolve()  # the agent runs in it, so its paths can't be relative
+    bin_dir = home / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("claude", "codex"):
+        shim = bin_dir / name
+        fake = Path(__file__).with_name(f"fake_{name}.py")
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{fake}" "$@"\n')
+        shim.chmod(0o755)
+    parent = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+    context = AgentContext(HarnessProcesses(parent), events, AgentSettings(), home, url + MCP_PATH)
+
+    def run() -> None:
+        while not stop.is_set():
+            now = clock()
+            settled = replace(context, settings=resolved_settings(context.settings))
+            watch_jobs(settled, now)
+            start_next_job(settled, now)
+            start_next_chat_turn(settled, now)
+            stop.wait(0.25)
+
+    threading.Thread(target=run, daemon=True, name="chats").start()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8751)
@@ -674,6 +764,7 @@ def main() -> None:
     registry.register_login_url_builder("fake", lambda: kite)
     upsert_instruments(INSTRUMENTS)
     clock = Clock(Path(args.home))
+    _stamp_events_with(clock)
     save_credentials(Credentials("fake", "e2e", None, clock() + timedelta(hours=8)))
     env = dict(E2E_ENV)
     _seed(env, clock)
@@ -716,6 +807,10 @@ def main() -> None:
         clock,
     )
     threading.Thread(target=scripts.run, args=(stop,), daemon=True).start()
+
+    _run_agents(Path(args.home), events, f"http://127.0.0.1:{args.port}", clock, stop)
+    # Settings › Agents finds the fake Claude Code where the chat lane does.
+    env["PATH"] = f"{Path(args.home).resolve() / 'bin'}:{os.environ.get('PATH', '')}"
 
     web = WebSettings(f"http://127.0.0.1:{args.port}", args.port, None, DIST)
     app = create_app(events, env, clock=clock, hub=hub, web=web)

@@ -58,6 +58,11 @@ export const keys = {
   agents: ["agents"] as const,
   agentJobs: ["agent-jobs"] as const,
   agentJobLog: (id: string) => ["agent-job-log", id] as const,
+  // Chats with the user's coding agent (ADR 40).
+  agentThreads: ["agent-threads"] as const,
+  agentSettings: ["agent-settings"] as const,
+  harnesses: ["harnesses"] as const,
+  agentThread: (id: string) => ["agent-threads", id] as const,
   // The brain: every key starts with "brain", so one invalidation reaches them all.
   brainGraph: (window: BrainWindow) => ["brain", "graph", window] as const,
   brainNote: (id: string) => ["brain", "note", id] as const,
@@ -1154,6 +1159,276 @@ export function useAgentJobs() {
     queryFn: () => unwrap(api.GET("/api/v1/agent-jobs", { params: { query: { limit: 50 } } })),
     refetchInterval: (query) =>
       query.state.data?.jobs.some((j) => j.status !== "ended") ? 3_000 : 15_000,
+  });
+}
+
+export type AgentThread = Schemas["AgentThreadResult"];
+export type AgentThreadSummary = Schemas["AgentThreadSummaryResult"];
+export type FolderCount = Schemas["FolderCountResult"];
+export type AgentTurn = Schemas["AgentTurnResult"];
+export type AgentStep = Schemas["StepResult"];
+
+/** While the agent is on a chat's last message, its page asks again this often,
+ * in case the stream missed a turn's end; the stream says it first (ADR 40). */
+const CHAT_REFETCH_MS = 10_000;
+
+/** The chats, most recent first. */
+export function useAgentThreads() {
+  return useQuery({
+    queryKey: keys.agentThreads,
+    queryFn: () => unwrap(api.GET("/api/v1/agent-threads")),
+    refetchInterval: (query) =>
+      query.state.data?.threads.some((t) => t.last_status != null && t.last_status !== "ended")
+        ? CHAT_REFETCH_MS
+        : false,
+  });
+}
+
+/** The chats in one folder (a strategy's holds its reviews), asked for when it opens. */
+export function useFolderThreads(folder: string, subject: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...keys.agentThreads, folder, subject] as const,
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/agent-threads", {
+          params: {
+            query: {
+              folder: folder as FolderCount["folder"],
+              subject: subject ?? undefined,
+              limit: 50,
+            },
+          },
+        }),
+      ),
+    enabled,
+  });
+}
+
+export type SearchKind = Schemas["SearchKind"];
+export type ThreadHit = Schemas["ThreadSearchHitResult"];
+
+/** Chats, reviews and debriefs that hold the words; asked once there are two letters. */
+export function useSearchThreads(q: string, kind: SearchKind | null, archived: boolean) {
+  const words = q.trim();
+  return useQuery({
+    queryKey: [...keys.agentThreads, "search", words, kind, archived] as const,
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/agent-threads/search", {
+          params: { query: { q: words, kind: kind ?? undefined, archived, limit: 20 } },
+        }),
+      ),
+    enabled: words.length >= 2,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** One chat with its turns and their steps, asked again while the agent works. */
+export function useAgentThread(id: string | null) {
+  return useQuery({
+    queryKey: keys.agentThread(id ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/agent-threads/{thread_id}", { params: { path: { thread_id: id ?? "" } } }),
+      ),
+    enabled: id !== null,
+    refetchInterval: (query) => {
+      const last = query.state.data?.turns.at(-1)?.job;
+      return last && last.status !== "ended" ? CHAT_REFETCH_MS : false;
+    },
+  });
+}
+
+export type Effort = NonNullable<Schemas["SendMessageBody"]["effort"]>;
+export type ChatMessage = { message: string; model?: string | null; effort?: Effort | null };
+type NewChat = ChatMessage & {
+  harness?: Schemas["StartChatBody"]["harness"];
+  folder?: Schemas["StartChatBody"]["folder"];
+  subject?: string | null;
+  access?: Schemas["StartChatBody"]["access"];
+};
+
+// How the user's coding agent runs: a default for each folder kind (ADR 40).
+
+export type AgentSettings = Schemas["AgentSettingsResult"];
+export type FolderSettings = Schemas["FolderSettingsResult"];
+export type ChoiceKind = FolderSettings["kind"];
+export type FolderChoice = Schemas["FolderChoiceBody"];
+export type HarnessInfo = Schemas["HarnessResult"];
+
+export function useAgentSettings() {
+  return useQuery({
+    queryKey: keys.agentSettings,
+    queryFn: () => unwrap(api.GET("/api/v1/agents/settings")),
+  });
+}
+
+/** Which coding agents are on the server's machine, with their models and efforts. */
+export function useHarnesses() {
+  return useQuery({
+    queryKey: keys.harnesses,
+    queryFn: () => unwrap(api.GET("/api/v1/agents/harnesses")),
+    staleTime: 60_000,
+  });
+}
+
+export function useSetFolderChoice() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, choice }: { kind: ChoiceKind; choice: FolderChoice }) =>
+      unwrap(
+        api.PUT("/api/v1/agents/settings/folders/{kind}", {
+          params: { path: { kind } },
+          body: choice,
+        }),
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.agentSettings }),
+  });
+}
+
+/** The harness every folder uses and the runs a day; null puts one back to the environment. */
+export function useSetAgentDefaults() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["AgentDefaultsBody"]) =>
+      unwrap(api.PATCH("/api/v1/agents/settings", { body })),
+    onSuccess: (settings) => client.setQueryData(keys.agentSettings, settings),
+  });
+}
+
+export function useResetAgentSettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.DELETE("/api/v1/agents/settings")),
+    onSuccess: (settings) => client.setQueryData(keys.agentSettings, settings),
+  });
+}
+
+/** A new chat in General; its first message waits for the daemon. */
+export function useStartChat() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: NewChat) =>
+      unwrap(
+        api.POST("/api/v1/agent-threads", {
+          body: { folder: "general", access: "trade", ...body },
+        }),
+      ),
+    onSuccess: (thread) => {
+      client.setQueryData(keys.agentThread(thread.thread_id), thread);
+      client.invalidateQueries({ queryKey: keys.agentThreads });
+    },
+  });
+}
+
+export function useSendMessage(threadId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ChatMessage) =>
+      unwrap(
+        api.POST("/api/v1/agent-threads/{thread_id}/messages", {
+          params: { path: { thread_id: threadId } },
+          body,
+        }),
+      ),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentThreads }),
+  });
+}
+
+/** Rewrites the message waiting for the agent, until the agent takes it. */
+export function useEditQueued(threadId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, message }: { jobId: string; message: string }) =>
+      unwrap(
+        api.PATCH("/api/v1/agent-threads/{thread_id}/messages/{job_id}", {
+          params: { path: { thread_id: threadId, job_id: jobId } },
+          body: { message },
+        }),
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.agentThreads }),
+  });
+}
+
+/** Takes back the message waiting for the agent; it never runs. */
+export function useRemoveQueued(threadId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) =>
+      unwrap(
+        api.DELETE("/api/v1/agent-threads/{thread_id}/messages/{job_id}", {
+          params: { path: { thread_id: threadId, job_id: jobId } },
+        }),
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.agentThreads }),
+  });
+}
+
+/** Deletes a chat from the web app; its turns stay as agent jobs. */
+export function useDeleteThread(threadId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      unwrap(
+        api.DELETE("/api/v1/agent-threads/{thread_id}", {
+          params: { path: { thread_id: threadId } },
+        }),
+      ),
+    onSuccess: () => {
+      client.removeQueries({ queryKey: keys.agentThread(threadId) });
+      client.invalidateQueries({ queryKey: keys.agentThreads });
+    },
+  });
+}
+
+export type ThreadChange = Schemas["UpdateThreadBody"];
+export type Access = Schemas["Access"];
+export type ChatChange = Schemas["AuditEntryResult"];
+
+/** What the agent changed on the desk from a chat, most recent first; the stream
+ * refetches it as the chat's agent changes things. */
+export function useThreadChanges(threadId: string | null) {
+  return useQuery({
+    queryKey: [...keys.agentThread(threadId ?? ""), "changes"] as const,
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/agent-threads/{thread_id}/changes", {
+          params: { path: { thread_id: threadId ?? "" } },
+        }),
+      ),
+    enabled: threadId !== null,
+  });
+}
+
+/** Pins or unpins a chat. */
+export function useUpdateThread() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ threadId, change }: { threadId: string; change: ThreadChange }) =>
+      unwrap(
+        api.PATCH("/api/v1/agent-threads/{thread_id}", {
+          params: { path: { thread_id: threadId } },
+          body: change,
+        }),
+      ),
+    onSuccess: (_, { threadId }) => {
+      client.invalidateQueries({ queryKey: keys.agentThreads });
+      client.invalidateQueries({ queryKey: keys.agentThread(threadId) });
+    },
+  });
+}
+
+/** Stops the agent's work on a chat's last message. */
+export function useStopThread(threadId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      unwrap(
+        api.POST("/api/v1/agent-threads/{thread_id}/stop", {
+          params: { path: { thread_id: threadId } },
+        }),
+      ),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentThreads }),
   });
 }
 

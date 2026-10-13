@@ -5,7 +5,16 @@
 
 import type { AuditEntry } from "../stream/connection";
 import { dayTitle, statusLabel } from "./brain";
-import { instrumentName, price, qty, rupees, type Source, signed, sourceLabel } from "./format";
+import {
+  chatLabel,
+  instrumentName,
+  price,
+  qty,
+  rupees,
+  type Source,
+  signed,
+  sourceLabel,
+} from "./format";
 import { contractOf } from "./strategies";
 
 export type Tier = "must-act" | "worth-knowing" | "record";
@@ -35,6 +44,9 @@ const RECORDS = new Set([
   "LessonWritten",
   "ProposalDecided",
   "BrainNoteEdited",
+  "AgentSettingsChanged",
+  "AgentChatStarted",
+  "AgentChatDeleted",
 ]);
 
 type Details = Record<string, unknown>;
@@ -52,6 +64,10 @@ export function tierOf(entry: AuditEntry): Tier {
   if (entry.event_type === "StrategyStopped" && MUST_ACT_STOPS.has(text(d, "reason"))) {
     return "must-act";
   }
+  // A chat's reply is worth a toast: the shell holds it back while that chat is on screen.
+  if (entry.event_type === "AgentJobEnded" && text(d, "kind") === "chat") {
+    return "worth-knowing";
+  }
   // A debrief job's own end already says its debrief is in; a quiet day is a record.
   if (entry.event_type === "DebriefWritten") {
     return d.quiet === true || (entry.triggered_by ?? "").startsWith("debrief:")
@@ -59,6 +75,13 @@ export function tierOf(entry: AuditEntry): Tier {
       : "worth-knowing";
   }
   return RECORDS.has(entry.event_type) ? "record" : "worth-knowing";
+}
+
+/** The chat an agent job's end belongs to, for its toast's Open. */
+export function chatOf(entry: AuditEntry): string | null {
+  if (entry.event_type !== "AgentJobEnded") return null;
+  const thread = text(entry.details, "thread_id");
+  return thread || null;
 }
 
 /** NIFTY OCT FUT, NIFTY SEP 24800 CE, RELIANCE: as the rest of the app names it. */
@@ -206,6 +229,16 @@ export function describe(
     }
     case "AgentJobEnded": {
       const done = text(d, "reason") === "finished";
+      if (text(d, "kind") === "chat" && text(d, "thread_id")) {
+        const chat = `“${text(d, "title")}”`;
+        return {
+          kind: "Chat",
+          tone: done ? undefined : "down",
+          text: done
+            ? `Answered in ${chat}`
+            : `${chat} ended: ${text(d, "detail") || words(text(d, "reason"))}`,
+        };
+      }
       const title = text(d, "title") || `Review of ${text(d, "strategy_name")}`;
       return {
         kind: jobKind(d),
@@ -252,6 +285,12 @@ export function describe(
     }
     case "BrainNoteEdited":
       return { kind: "Note", tone: undefined, text: `Your note on ${text(d, "title")} changed` };
+    case "AgentSettingsChanged":
+      return { kind: "Agents", tone: undefined, text: `Agent settings: ${text(d, "summary")}` };
+    case "AgentChatStarted":
+      return { kind: "Chat", tone: undefined, text: `Chat started: ${text(d, "title")}` };
+    case "AgentChatDeleted":
+      return { kind: "Chat", tone: undefined, text: `Chat deleted: ${text(d, "title")}` };
     default:
       return { kind: entry.event_type, tone: undefined, text: "" };
   }
@@ -284,7 +323,8 @@ function proposalStrategy(d: Details, names: ReadonlyMap<string, string>): strin
 }
 
 function jobKind(d: Details): string {
-  return text(d, "kind") === "debrief" ? "Debrief" : "Review";
+  const kind = text(d, "kind");
+  return kind === "debrief" ? "Debrief" : kind === "chat" ? "Chat" : "Review";
 }
 
 function watchlistText(d: Details): string {
@@ -313,8 +353,10 @@ export function byLabel(entry: AuditEntry, names: ReadonlyMap<string, string> = 
     const name = names.get(id);
     return name ? `Alert → ${name}` : "An alert";
   }
-  if (entry.event_type.startsWith("AgentJob")) return `${jobKind(entry.details)} job`;
-  return sourceLabel(source);
+  if (entry.event_type.startsWith("AgentJob")) {
+    return text(entry.details, "kind") === "chat" ? "Your agent" : `${jobKind(entry.details)} job`;
+  }
+  return chatLabel(entry.triggered_by) ?? sourceLabel(source);
 }
 
 /** The strategy an entry is about, for its Open link. */
@@ -349,6 +391,30 @@ export function dayOf(entry: AuditEntry): string | null {
   return typeof day === "string" && day ? day : null;
 }
 
+/** The page an entry is about, for a link to it: its chat, brain page,
+ * strategy, day, script, the orders or the watchlist. */
+export function pageOf(entry: AuditEntry): string | null {
+  const chat = chatOf(entry);
+  if (chat) return `/agents/${chat}`;
+  const page = brainPageOf(entry);
+  if (page) return page;
+  const strategy = strategyOf(entry);
+  if (strategy) return `/strategies/${strategy}`;
+  const day = dayOf(entry);
+  if (day) return `/brain/days/${day}`;
+  const script = text(entry.details, "script_id");
+  if (entry.event_type.startsWith("Script") && script) return `/scripts/${script}`;
+  if (entry.event_type.startsWith("Order")) return "/orders";
+  if (entry.event_type === "WatchlistChanged") return "/watchlist";
+  return null;
+}
+
+/** The chat whose agent recorded an entry: "chat:claude:thr_1" is thr_1's. */
+export function chatThreadOf(entry: AuditEntry): string | null {
+  const match = /^chat:[a-z]+:(.+)$/.exec(entry.triggered_by ?? "");
+  return match?.[1] ?? null;
+}
+
 type Key = readonly unknown[];
 
 /** The cached reads an entry makes stale; each is a query key prefix. */
@@ -372,6 +438,8 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
   if (type === "InstrumentSyncCompleted") return [["instruments-status"]];
   if (type === "ChargeRatesChecked") return [["account"]];
   if (type === "WatchlistChanged") return [["watchlists"]];
+  if (type === "AgentSettingsChanged") return [["agent-settings"]];
+  if (type.startsWith("AgentChat")) return [["agent-threads"]];
   if (type.startsWith("Strategy")) {
     const id = strategyOf(entry);
     return [
@@ -389,8 +457,11 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
   if (BRAIN_EVENTS.has(type)) return [["brain"]];
   if (type.startsWith("AgentJob")) {
     const id = strategyOf(entry);
-    if (dayOf(entry)) return [["agent-jobs"], ["brain"]];
+    // Reviews and debriefs are chats too (ADR 40): the rail and the open one.
+    const threads = [["agent-threads"]];
+    if (dayOf(entry)) return [["agent-jobs"], ["brain"], ...threads];
     return [
+      ...threads,
       ["strategies"],
       ...(id
         ? [
@@ -435,7 +506,13 @@ export const KINDS: Record<Exclude<KindFilter, "all">, string[]> = {
     "ChargeRatesDiffer",
     "PaperAccountReset",
   ],
-  agents: ["AgentJobStarted", "AgentJobEnded"],
+  agents: [
+    "AgentJobStarted",
+    "AgentJobEnded",
+    "AgentChatStarted",
+    "AgentChatDeleted",
+    "AgentSettingsChanged",
+  ],
   brain: [
     "DebriefWritten",
     "LessonWritten",

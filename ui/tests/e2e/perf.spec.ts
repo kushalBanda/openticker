@@ -187,3 +187,125 @@ test("the Brain page holds 60 fps with 1,000 notes while the pointer moves over 
     stutter: false,
   });
 });
+
+/** A chat of `count` turns, each with its steps folded and a long Markdown answer. */
+function longThread(count: number) {
+  const at = "2026-10-11T10:00:00Z";
+  const turns = Array.from({ length: count }, (_, i) => ({
+    job: {
+      job_id: `job_${i}`,
+      kind: "chat",
+      title: "Chat",
+      strategy_id: null,
+      subject: null,
+      harness: "claude",
+      status: "ended",
+      trigger: "ui",
+      created_at: at,
+      started_at: at,
+      ended_at: at,
+      end_reason: "finished",
+      end_detail: "exited with code 0",
+      summary: null,
+      verdict: null,
+      cost_usd: 0.04,
+      thread_id: "thr_long",
+      prompt: `Question ${i}: how did the straddle do on expiry day ${i}?`,
+      model: "opus",
+      effort: "high",
+      model_used: "claude-opus-5-5",
+      input_tokens: 30_000 + i,
+      output_tokens: 900,
+      duration_ms: 41_000,
+    },
+    steps: [
+      ...Array.from({ length: 12 }, (_, n) => ({
+        kind: "tool",
+        at: null,
+        text: null,
+        tool: "get_strategy_runs",
+        summary: `strategy_id=stg_${n}, limit=20`,
+        result: "20 runs",
+        failed: false,
+      })),
+      {
+        kind: "text",
+        at: null,
+        text: `## Expiry day ${i}\n\n${"The straddle lost ₹1,240 after charges when INDIA VIX opened high. ".repeat(8)}\n\n- one\n- two\n- three`,
+        tool: null,
+        summary: null,
+        result: null,
+        failed: false,
+      },
+    ],
+    steps_truncated: false,
+  }));
+  return {
+    thread_id: "thr_long",
+    title: "A long chat",
+    folder: "general",
+    subject: null,
+    subject_name: null,
+    harness: "claude",
+    last_status: "ended",
+    updated_at: at,
+    continuable: true,
+    origin_job_id: null,
+    turns,
+  };
+}
+
+test("a chat of 60 turns holds 60 fps while it scrolls", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(nextLink());
+  await page.route("**/api/v1/agent-threads/thr_long", (route) =>
+    route.fulfill({ json: longThread(60) }),
+  );
+  await page.goto("/agents/thr_long");
+  await expect(page.getByRole("heading", { name: "A long chat" })).toBeVisible();
+  await page.waitForTimeout(1_000);
+  const scroller = page.locator(".aw-scroll");
+  const box = await scroller.boundingBox();
+  if (!box) throw new Error("no thread");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const timing = page.evaluate(
+    () =>
+      new Promise<Frames>((resolve) => {
+        let longest = 0;
+        const observer = new PerformanceObserver((list) => {
+          for (const task of list.getEntries()) longest = Math.max(longest, task.duration);
+        });
+        observer.observe({ type: "longtask" });
+        const gaps: number[] = [];
+        let last = performance.now();
+        const end = last + 3_000;
+        const frame = (now: number) => {
+          gaps.push(now - last);
+          last = now;
+          if (now < end) requestAnimationFrame(frame);
+          else {
+            observer.disconnect();
+            resolve({
+              frames: gaps.length,
+              slow: gaps.filter((g) => g > 50).length,
+              worst: Math.round(Math.max(...gaps)),
+              longest: Math.round(longest),
+            });
+          }
+        };
+        requestAnimationFrame(frame);
+      }),
+  );
+  for (let step = 0; step < 60; step++) {
+    await page.mouse.wheel(0, step < 30 ? 400 : -400);
+    await page.waitForTimeout(40);
+  }
+  const r = await timing;
+  console.log("a chat of 60 turns", JSON.stringify(r));
+  expect({ fps: r.frames / 3 >= 55, late: r.slow <= 2, stutter: r.longest > 100 }).toEqual({
+    fps: true,
+    late: true,
+    stutter: false,
+  });
+});

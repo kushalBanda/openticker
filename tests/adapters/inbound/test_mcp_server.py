@@ -1196,3 +1196,32 @@ def test_watchlist_tools_turn_mistakes_into_agent_facing_errors() -> None:
         )
     with pytest.raises(ToolError, match="list_watchlists"):
         mcp_server.delete_watchlist(watchlist_id="wl_nope")
+
+
+def test_a_chats_calls_are_recorded_with_its_harness() -> None:
+    from openticker.adapters.inbound.mcp_scoped import as_client
+    from openticker.core.agents.jobs import AgentSettings, Harness
+    from openticker.core.agents.threads import Folder
+    from openticker.core.pnl import Source, source_of
+    from openticker.use_cases.agents.threads import start_chat
+
+    view = start_chat(
+        Folder.GENERAL,
+        None,
+        "Hi",
+        None,
+        None,
+        AgentSettings(),
+        "ui",
+        mcp_server.clock(),
+        harness=Harness.CODEX,
+    )
+
+    with as_client("codex", f"chat:{view.thread.id}"):
+        who = mcp_server._who()
+    with as_client("claude-code", "chat:thr_gone"):
+        unknown = mcp_server._who()
+
+    assert who == f"chat:codex:{view.thread.id}"
+    assert unknown == "chat:thr_gone"
+    assert source_of(who) is Source.AGENT

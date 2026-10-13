@@ -10,15 +10,19 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
+from openticker.core.agents.choices import EFFORTS, MODELS, Effort, FolderKind, RunChoice
 from openticker.core.agents.jobs import (
     AgentJob,
     AgentJobEndReason,
     AgentJobStatus,
+    Harness,
     Verdict,
     job_title,
     verdict_of,
 )
 from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
+from openticker.core.agents.threads import FAILED_ENDS, Access, Folder, is_unread
+from openticker.core.agents.transcript import Step, StepKind
 from openticker.core.brain.lessons import CheckOutcome, Override, UsePurpose
 from openticker.core.brain.notes import (
     NOTICE,
@@ -85,6 +89,7 @@ from openticker.core.strategies.runs import (
     RunStatus,
 )
 from openticker.core.strategies.signals import SignalAction
+from openticker.ports.agent_job_port import HarnessInfo
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -109,6 +114,8 @@ from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.storage.sqlite.watchlists_repo import Watchlist
 from openticker.use_cases.agents.manage import AgentJobLog
+from openticker.use_cases.agents.settings import AgentSettingsView, FolderSettings
+from openticker.use_cases.agents.threads import FolderCount, ThreadHit, ThreadView, Turn
 from openticker.use_cases.brain.read import (
     DayRecord,
     DayTrade,
@@ -2001,7 +2008,8 @@ class AgentJobResult(BaseModel):
     job_id: str
     kind: str = Field(
         description="review: reads one strategy and writes its verdict in the note. "
-        "debrief: reads one trading day and writes the brain's notes on it."
+        "debrief: reads one trading day and writes the brain's notes on it. "
+        "chat: one message in a chat from the web app."
     )
     title: str = Field(description='What it is called: "Review of …", "Debrief of Mon 5 Oct".')
     strategy_id: str | None = Field(description="A review's strategy; None for a debrief.")
@@ -2024,6 +2032,16 @@ class AgentJobResult(BaseModel):
         default=None, description="The verdict the summary leads with, when it leads with one."
     )
     cost_usd: float | None = Field(description="What the run cost, when the harness reports it.")
+    thread_id: str | None = Field(default=None, description="The chat it belongs to (ADR 40).")
+    prompt: str | None = Field(default=None, description="A chat turn's message.")
+    model: str | None = Field(default=None, description="The model asked for.")
+    effort: str | None = Field(default=None, description="The effort asked for.")
+    model_used: str | None = Field(
+        default=None, description="The model that ran, as the harness reported it."
+    )
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    duration_ms: int | None = None
 
     @classmethod
     def of(cls, job: AgentJob, names: Mapping[str, str]) -> "AgentJobResult":
@@ -2045,6 +2063,14 @@ class AgentJobResult(BaseModel):
             summary=job.summary,
             verdict=verdict_of(job.summary),
             cost_usd=job.cost_usd,
+            thread_id=job.thread_id,
+            prompt=job.prompt,
+            model=job.model,
+            effort=job.effort,
+            model_used=job.model_used,
+            input_tokens=job.input_tokens,
+            output_tokens=job.output_tokens,
+            duration_ms=job.duration_ms,
         )
 
 
@@ -2135,6 +2161,253 @@ class StartReviewResult(BaseModel):
 
 class AgentJobsResult(BaseModel):
     jobs: list[AgentJobResult] = Field(description="Newest first.")
+
+
+class StepResult(BaseModel):
+    """One step of an agent's turn (ADR 40): what it wrote, thought, called or changed."""
+
+    kind: StepKind
+    at: datetime | None
+    text: str | None
+    tool: str | None
+    summary: str | None
+    result: str | None
+    failed: bool
+
+    @classmethod
+    def of(cls, step: Step) -> "StepResult":
+        return cls(
+            kind=step.kind,
+            at=_local(step.at),
+            text=step.text,
+            tool=step.tool,
+            summary=step.summary,
+            result=step.result,
+            failed=step.failed,
+        )
+
+
+class AgentTurnResult(BaseModel):
+    job: AgentJobResult
+    steps: list[StepResult]
+    steps_truncated: bool = Field(description="True when earlier steps were left out.")
+
+    @classmethod
+    def of(cls, turn: Turn, names: Mapping[str, str]) -> "AgentTurnResult":
+        return cls(
+            job=AgentJobResult.of(turn.job, names),
+            steps=[StepResult.of(step) for step in turn.steps],
+            steps_truncated=turn.steps_truncated,
+        )
+
+
+_ON_IT = (AgentJobStatus.RUNNING, AgentJobStatus.STOPPING)
+
+
+class AgentThreadSummaryResult(BaseModel):
+    thread_id: str
+    title: str
+    folder: Folder
+    subject: str | None = Field(description="Its strategy's or script's id, or a trading date.")
+    subject_name: str | None = Field(description="Its strategy's or script's name.")
+    harness: str
+    last_status: AgentJobStatus | None
+    updated_at: datetime
+    continuable: bool = Field(
+        description="True when a message can be sent to it now; sent while the agent works, "
+        "it waits its turn."
+    )
+    access: Access = Field(
+        default=Access.TRADE,
+        description="read: its agent changes nothing; trade: it may paper trade and change things.",
+    )
+    pinned: bool = Field(default=False, description="True when the user keeps it on top.")
+    archived: bool = Field(default=False, description="True when out of the chat list.")
+    unread: bool = Field(
+        default=False, description="True when a turn ended after the user last saw it."
+    )
+    failed: bool = Field(
+        default=False, description="True when its last turn failed (not stopped by the user)."
+    )
+    active_at: datetime | None = Field(
+        default=None, description="When something last happened in it: a turn ended or was sent."
+    )
+
+
+class AgentThreadResult(AgentThreadSummaryResult):
+    origin_job_id: str | None
+    turns: list[AgentTurnResult]
+
+    @classmethod
+    def of(cls, view: ThreadView, names: Mapping[str, str]) -> "AgentThreadResult":
+        thread = view.thread
+        jobs = [turn.job for turn in view.turns]
+        waiting = [job for job in jobs if job.status is AgentJobStatus.PENDING]
+        # The turn the agent is on, else the last: a message waiting behind a
+        # running turn doesn't change what the chat is doing (ADR 40).
+        last_job = next(
+            (job for job in reversed(jobs) if job.status in _ON_IT), jobs[-1] if jobs else None
+        )
+        last = last_job.status if last_job else None
+        ended = next((job.ended_at for job in reversed(jobs) if job.ended_at), None)
+        return cls(
+            thread_id=thread.id,
+            title=thread.title,
+            folder=thread.folder,
+            subject=thread.subject,
+            subject_name=view.subject_name,
+            harness=thread.harness,
+            last_status=last,
+            updated_at=thread.updated_at.astimezone(EXCHANGE_TIMEZONE),
+            continuable=thread.deleted_at is None
+            and not waiting
+            and (
+                (thread.session_id is not None and last in (None, AgentJobStatus.ENDED))
+                or last is AgentJobStatus.RUNNING  # it waits its turn
+            ),
+            access=thread.access,
+            pinned=thread.pinned_at is not None,
+            archived=thread.archived_at is not None,
+            unread=is_unread(thread, ended),
+            failed=last_job is not None and last_job.end_reason in FAILED_ENDS,
+            active_at=max(t for t in (thread.updated_at, ended) if t is not None).astimezone(
+                EXCHANGE_TIMEZONE
+            ),
+            origin_job_id=thread.origin_job_id,
+            turns=[AgentTurnResult.of(turn, names) for turn in view.turns],
+        )
+
+    def summary(self) -> AgentThreadSummaryResult:
+        return AgentThreadSummaryResult(**self.model_dump(exclude={"origin_job_id", "turns"}))
+
+
+class ThreadSearchHitResult(BaseModel):
+    thread: AgentThreadSummaryResult
+    matched: Literal["title", "message", "answer"] = Field(description="Where the words were.")
+    snippet: str = Field(description="The line around the first match, cut with an ellipsis.")
+    at: datetime = Field(description="When that message was sent, or the chat last moved.")
+
+
+class ThreadSearchResult(BaseModel):
+    hits: list[ThreadSearchHitResult] = Field(description="The most recently active first.")
+
+    @classmethod
+    def of(cls, found: Sequence[ThreadHit], names: Mapping[str, str]) -> "ThreadSearchResult":
+        return cls(
+            hits=[
+                ThreadSearchHitResult(
+                    thread=AgentThreadResult.of(hit.view, names).summary(),
+                    matched=hit.matched,
+                    snippet=hit.snippet,
+                    at=hit.at.astimezone(EXCHANGE_TIMEZONE),
+                )
+                for hit in found
+            ]
+        )
+
+
+class FolderCountResult(BaseModel):
+    folder: Folder
+    subject: str | None = Field(
+        description="A strategy's or script's id; None for the folder as a whole."
+    )
+    subject_name: str | None = Field(description="That strategy's or script's name.")
+    threads: int = Field(description="Chats in it; a strategy's count takes in its reviews.")
+
+    @classmethod
+    def of(cls, count: FolderCount) -> "FolderCountResult":
+        return cls(
+            folder=count.folder,
+            subject=count.subject,
+            subject_name=count.subject_name,
+            threads=count.threads,
+        )
+
+
+class AgentThreadsResult(BaseModel):
+    threads: list[AgentThreadSummaryResult] = Field(
+        description="Most recently active first; without the pinned ones when listing them all."
+    )
+    pinned: list[AgentThreadSummaryResult] = Field(
+        default_factory=list, description="The pinned chats, the latest pinned first."
+    )
+    counts: list[FolderCountResult] = Field(default_factory=list)
+
+
+class RunChoiceResult(BaseModel):
+    harness: Harness | None = Field(description="claude or codex; None: not set here.")
+    model: str | None = Field(description="None: not set here, or the harness's default.")
+    effort: Effort | None
+    max_budget_usd: float | None = Field(description="Claude Code stops a run at this spend.")
+    timeout_minutes: int | None
+
+    @classmethod
+    def of(cls, choice: RunChoice) -> "RunChoiceResult":
+        return cls(
+            harness=choice.harness,
+            model=choice.model,
+            effort=choice.effort,
+            max_budget_usd=choice.max_budget_usd,
+            timeout_minutes=int(choice.timeout.total_seconds() // 60) if choice.timeout else None,
+        )
+
+
+class FolderSettingsResult(BaseModel):
+    kind: FolderKind
+    stored: RunChoiceResult = Field(description="What Settings set.")
+    env: RunChoiceResult = Field(description="What OPENTICKER_AGENT_* gives.")
+    resolved: RunChoiceResult = Field(description="What a run uses with no override.")
+
+    @classmethod
+    def of(cls, folder: FolderSettings) -> "FolderSettingsResult":
+        return cls(
+            kind=folder.kind,
+            stored=RunChoiceResult.of(folder.stored),
+            env=RunChoiceResult.of(folder.env),
+            resolved=RunChoiceResult.of(folder.resolved),
+        )
+
+
+class AgentSettingsResult(BaseModel):
+    harness: Harness | None = Field(description="Settings' harness for every folder; None: env.")
+    harness_env: Harness
+    runs_per_day: int | None = Field(description="Reviews and debriefs a day; None: env.")
+    runs_per_day_env: int
+    folders: list[FolderSettingsResult]
+
+    @classmethod
+    def of(cls, view: AgentSettingsView) -> "AgentSettingsResult":
+        return cls(
+            harness=view.harness,
+            harness_env=view.harness_env,
+            runs_per_day=view.runs_per_day,
+            runs_per_day_env=view.runs_per_day_env,
+            folders=[FolderSettingsResult.of(folder) for folder in view.folders],
+        )
+
+
+class HarnessResult(BaseModel):
+    harness: Harness
+    installed: bool
+    version: str | None
+    models: list[str] = Field(description="Names to pick from; empty when any name is taken.")
+    free_text_model: bool = Field(description="True when the model is typed, not picked.")
+    efforts: list[Effort] = Field(description="The efforts it offers, lowest first.")
+
+    @classmethod
+    def of(cls, info: HarnessInfo) -> "HarnessResult":
+        return cls(
+            harness=info.harness,
+            installed=info.installed,
+            version=info.version,
+            models=list(MODELS[info.harness]),
+            free_text_model=not MODELS[info.harness],
+            efforts=list(EFFORTS[info.harness]),
+        )
+
+
+class HarnessesResult(BaseModel):
+    harnesses: list[HarnessResult]
 
 
 class AgentJobLogResult(BaseModel):
