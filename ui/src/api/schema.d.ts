@@ -3576,12 +3576,6 @@ export interface components {
              */
             message: string;
         };
-        /**
-         * Effort
-         * @description How hard the agent thinks. Each harness offers its own levels.
-         * @enum {string}
-         */
-        Effort: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
         /** EquityPointResult */
         EquityPointResult: {
             /**
@@ -3620,7 +3614,8 @@ export interface components {
             harness?: components["schemas"]["Harness"] | null;
             /** Model */
             model?: string | null;
-            effort?: components["schemas"]["Effort"] | null;
+            /** Effort */
+            effort?: string | null;
             /** Max Budget Usd */
             max_budget_usd?: number | null;
             /** Timeout Minutes */
@@ -3722,9 +3717,9 @@ export interface components {
             free_text_model: boolean;
             /**
              * Efforts
-             * @description The efforts it offers, lowest first.
+             * @description Every level any of its models takes, lowest first: for a model it doesn't list. A listed model's own are on the model.
              */
-            efforts: components["schemas"]["Effort"][];
+            efforts: string[];
         };
         /** HarnessesResult */
         HarnessesResult: {
@@ -4422,6 +4417,16 @@ export interface components {
              * @description The full name an alias runs today, if told.
              */
             resolves_to: string | null;
+            /**
+             * Efforts
+             * @description The effort levels it takes, lowest first; empty when it takes none.
+             */
+            efforts: string[];
+            /**
+             * Default Effort
+             * @description Its level when none is named, if told.
+             */
+            default_effort: string | null;
         };
         /** ModifyOrderBody */
         ModifyOrderBody: {
@@ -5304,7 +5309,8 @@ export interface components {
              * @description None: not set here, or the harness's default.
              */
             model: string | null;
-            effort: components["schemas"]["Effort"] | null;
+            /** Effort */
+            effort: string | null;
             /**
              * Max Budget Usd
              * @description Claude Code stops a run at this spend.
@@ -5652,8 +5658,11 @@ export interface components {
              * @description The model; left out, the harness's default.
              */
             model?: string | null;
-            /** @description How hard it thinks. */
-            effort?: components["schemas"]["Effort"] | null;
+            /**
+             * Effort
+             * @description How hard it thinks.
+             */
+            effort?: string | null;
         };
         /** SessionResult */
         SessionResult: {
@@ -5881,8 +5890,11 @@ export interface components {
              * @description The model; left out, the harness's default.
              */
             model?: string | null;
-            /** @description How hard it thinks. */
-            effort?: components["schemas"]["Effort"] | null;
+            /**
+             * Effort
+             * @description How hard it thinks.
+             */
+            effort?: string | null;
             /** @default general */
             folder: components["schemas"]["Folder"];
             /**

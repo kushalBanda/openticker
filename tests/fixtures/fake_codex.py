@@ -28,8 +28,17 @@ def main() -> None:
             ("gpt-5.6-terra", "GPT-5.6-Terra", "Older balanced model.", "list"),
             ("codex-auto-review", "Codex Auto Review", "Approval reviews.", "hide"),
         ]
+        levels = [{"effort": e} for e in ("minimal", "low", "medium", "high")]
         models = [
-            {"slug": s, "display_name": n, "description": d, "visibility": v, "priority": i}
+            {
+                "slug": s,
+                "display_name": n,
+                "description": d,
+                "visibility": v,
+                "priority": i,
+                "default_reasoning_level": "medium",
+                "supported_reasoning_levels": levels,
+            }
             for i, (s, n, d, v) in enumerate(catalog)
         ]
         print(json.dumps({"models": models}))

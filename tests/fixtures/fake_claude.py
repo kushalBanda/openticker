@@ -89,9 +89,25 @@ FULL = {
 }
 
 
+# Each model's own effort levels, as Claude Code lists them with it.
+LEVELS = {
+    "opus": ["low", "medium", "high", "xhigh", "max"],
+    "sonnet": ["low", "medium", "high", "xhigh", "max"],
+    "haiku": ["low", "medium", "high"],
+    "fable": ["low", "medium", "high", "xhigh", "max"],
+}
+
+
 def _answer_initialize(request: dict[str, object]) -> None:
     models = [
-        {"value": value, "displayName": name, "description": about, "resolvedModel": FULL[family]}
+        {
+            "value": value,
+            "displayName": name,
+            "description": about,
+            "resolvedModel": FULL[family],
+            "supportsEffort": True,
+            "supportedEffortLevels": LEVELS[family],
+        }
         for value, name, about, family in MODELS
     ]
     response = {"request_id": request["request_id"], "response": {"models": models}}

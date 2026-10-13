@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from openticker.core.agents.choices import Effort
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, AgentJobStatus
 from openticker.core.agents.threads import Folder
 from openticker.core.agents.transcript import StepKind
@@ -72,7 +71,7 @@ def test_start_chat_writes_the_thread_and_its_first_turn_waiting() -> None:
         "ignored",
         "Why did\nexpiry days lose?",
         "opus",
-        Effort.HIGH,
+        "high",
         SETTINGS,
         "ui",
         NOW,
@@ -114,13 +113,13 @@ def test_a_chat_about_a_strategy_needs_one_that_exists() -> None:
         _chat(folder=Folder.REVIEW, subject=strategy.id)
 
 
-def test_an_effort_the_harness_doesnt_take_is_refused() -> None:
-    with pytest.raises(ChatChoiceError, match="not minimal"):
-        _chat(effort=Effort.MINIMAL)  # Codex's level, not Claude Code's
+def test_an_effort_that_isnt_a_level_is_refused() -> None:
+    with pytest.raises(ChatChoiceError, match="isn't an effort level"):
+        _chat(effort="--yolo")  # it would go on the command line
 
 
 def test_the_chat_lane_starts_a_turn_with_a_chat_key_and_no_resume(tmp_path: Path) -> None:
-    thread_id = _chat(model="sonnet", effort=Effort.LOW)
+    thread_id = _chat(model="sonnet", effort="low")
     processes, events = _Processes(), _Events()
 
     start_next_chat_turn(_context(processes, events, tmp_path), NOW)

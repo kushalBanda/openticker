@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from openticker.core.agents.choices import Effort, FolderKind, RunChoice
+from openticker.core.agents.choices import FolderKind, RunChoice
 from openticker.core.agents.jobs import (
     AgentJobEndReason,
     AgentJobStatus,
@@ -165,7 +165,7 @@ def test_an_ended_job_keeps_its_answer_and_cost_revokes_its_key_and_notifies(
 
 
 def test_a_review_runs_with_its_folder_choice_and_records_what_ran(tmp_path: Path) -> None:
-    reviews = RunChoice(Harness.CLAUDE, "opus", Effort.HIGH, 2.0, timedelta(minutes=15))
+    reviews = RunChoice(Harness.CLAUDE, "opus", "high", 2.0, timedelta(minutes=15))
     settings = replace(SETTINGS, choices={FolderKind.REVIEWS: reviews})
     job = start_review(_strategy(), settings, "ui", NOW)
     processes, events = _Processes(), _Events()
@@ -176,7 +176,7 @@ def test_a_review_runs_with_its_folder_choice_and_records_what_ran(tmp_path: Pat
 
     start_next_job(context, NOW)
     [launch] = processes.launches
-    assert (launch.model, launch.effort, launch.max_budget_usd) == ("opus", Effort.HIGH, 2.0)
+    assert (launch.model, launch.effort, launch.max_budget_usd) == ("opus", "high", 2.0)
     processes.exited[1001] = 0
     watch_jobs(context, NOW + timedelta(minutes=1))
 

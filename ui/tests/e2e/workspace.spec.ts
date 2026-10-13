@@ -100,10 +100,17 @@ test("the picker chooses the next message's model and effort, and the turn recor
   await expect(menu.getByRole("menuitemradio", { name: "Max" })).toBeInViewport();
   await page.waitForTimeout(300);
   await page.screenshot({ path: "test-results/screens/agents-choice-picker-1440.png" });
+  // Max picked on the default model, then a model that doesn't take it: let go.
+  await menu.getByRole("menuitemradio", { name: "Max" }).click();
+  await expect(picker).toContainText("Max");
   await menu.getByRole("menuitemradio", { name: /^Haiku 5\.5/ }).click();
+  await expect(menu.getByRole("menuitemradio", { name: "Max" })).toHaveCount(0);
+  await expect(menu.getByText("Effort · Haiku 5.5")).toBeVisible();
+  await expect(picker).toContainText("Auto");
   await menu.getByRole("menuitemradio", { name: "Low" }).click();
   await page.keyboard.press("Escape");
   await expect(picker).toHaveAccessibleName("Model and effort: Haiku 5.5, Low");
+  await page.screenshot({ path: "test-results/screens/agents-choice-button-1440.png" });
 
   const box = page.getByRole("textbox", { name: "Message" });
   await box.fill("Which model answers?");

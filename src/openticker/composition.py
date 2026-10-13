@@ -13,7 +13,7 @@ from openticker.adapters.brokers.registry import get_adapter
 from openticker.adapters.notifications.email import EmailAdapter, SmtpSettings
 from openticker.adapters.notifications.slack import SlackAdapter
 from openticker.adapters.sandbox.broker import SandboxBroker, SandboxSettings
-from openticker.core.agents.choices import EFFORTS
+from openticker.core.agents.choices import check_effort
 from openticker.core.agents.jobs import AgentJobError, AgentSettings, Harness
 from openticker.core.orders.fills import FillSettings
 from openticker.core.scripts.models import InvalidScriptError, ScriptLimits
@@ -202,11 +202,11 @@ def agent_settings(env: Mapping[str, str]) -> AgentSettings:
         ) from None
     harness = Harness(harness_name)
     effort = (env.get("OPENTICKER_AGENT_EFFORT") or "").strip().lower() or None
-    if effort is not None and effort not in EFFORTS[harness]:
-        raise AgentConfigError(
-            f"OPENTICKER_AGENT_EFFORT must be one of {', '.join(EFFORTS[harness])} "
-            f"for {harness}, got {effort!r}"
-        )
+    if effort is not None:
+        try:
+            check_effort(effort)
+        except AgentJobError as exc:
+            raise AgentConfigError(f"OPENTICKER_AGENT_EFFORT: {exc}") from None
     try:
         return AgentSettings(
             harness=harness,

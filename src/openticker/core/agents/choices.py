@@ -6,6 +6,7 @@ that sets it: the message, the folder's default, the default harness Settings
 picked, then the server's environment. Unset everywhere, the harness's own
 default runs. Pure."""
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -14,22 +15,18 @@ from enum import StrEnum
 from openticker.core.agents.jobs import AgentJobError, AgentJobKind, AgentSettings, Harness
 from openticker.core.agents.threads import Folder
 
-
-class Effort(StrEnum):
-    """How hard the agent thinks. Each harness offers its own levels."""
-
-    MINIMAL = "minimal"  # Codex only
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    XHIGH = "xhigh"  # Claude Code only
-    MAX = "max"  # Claude Code only
+# How hard the agent thinks: a level name as the harness takes it ("low",
+# "max"). Which levels there are is each model's, as its harness lists it
+# (core/agents/catalog.py), never a list kept here. The name goes on the
+# harness's command line, so it is held to a plain word.
+Effort = str
+_EFFORT = re.compile(r"[a-z][a-z0-9_-]{0,15}")
 
 
-EFFORTS: Mapping[Harness, tuple[Effort, ...]] = {
-    Harness.CLAUDE: (Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX),
-    Harness.CODEX: (Effort.MINIMAL, Effort.LOW, Effort.MEDIUM, Effort.HIGH),
-}
+def check_effort(effort: str) -> str:
+    if not _EFFORT.fullmatch(effort):
+        raise AgentJobError(f"{effort!r} isn't an effort level: a lowercase word, at most 16")
+    return effort
 
 
 @dataclass(frozen=True)
@@ -44,6 +41,8 @@ class ModelOption:
     name: str  # as the harness shows it
     about: str  # what the harness says it's for
     resolves_to: str | None = None
+    efforts: tuple[Effort, ...] = ()  # the levels it takes, lowest first; (): none
+    default_effort: Effort | None = None  # what it runs with none named, if the harness says
 
 
 MAX_RUNS_PER_DAY = 500
@@ -99,14 +98,11 @@ def stored_choice(stored: StoredSettings, kind: FolderKind, env_harness: Harness
 def resolve(*levels: RunChoice, default_harness: Harness) -> RunChoice:
     """Each field from the first level that sets it, most specific first. A
     level that names a harness other than the one chosen gives nothing else:
-    one harness's model or effort means nothing to the other. An effort the
-    chosen harness doesn't offer, or a spend cap on Codex, is passed over."""
+    one harness's model or effort means nothing to the other. A spend cap on
+    Codex is passed over."""
     harness = next((level.harness for level in levels if level.harness), default_harness)
     usable = [level for level in levels if level.harness in (None, harness)]
-    effort = next(
-        (level.effort for level in usable if level.effort in EFFORTS[harness]),
-        None,
-    )
+    effort = next((level.effort for level in usable if level.effort), None)
     budget = (
         next((lvl.max_budget_usd for lvl in usable if lvl.max_budget_usd is not None), None)
         if harness is Harness.CLAUDE
@@ -124,9 +120,8 @@ def resolve(*levels: RunChoice, default_harness: Harness) -> RunChoice:
 def check_choice(choice: RunChoice, harness: Harness) -> None:
     """A choice someone made, for a run of `harness`: refused with a reason
     rather than passed over."""
-    if choice.effort is not None and choice.effort not in EFFORTS[harness]:
-        offered = ", ".join(EFFORTS[harness])
-        raise AgentJobError(f"{harness} takes effort {offered}, not {choice.effort}")
+    if choice.effort is not None:
+        check_effort(choice.effort)
     if choice.model is not None and not choice.model.strip():
         raise AgentJobError("the model can't be blank: leave it out for the default")
     if choice.max_budget_usd is not None:
@@ -143,7 +138,7 @@ def env_choice(settings: AgentSettings) -> RunChoice:
     return RunChoice(
         harness=settings.harness,
         model=settings.model,
-        effort=Effort(settings.effort) if settings.effort else None,
+        effort=settings.effort,
         max_budget_usd=settings.max_budget_usd,
         timeout=settings.timeout,
     )

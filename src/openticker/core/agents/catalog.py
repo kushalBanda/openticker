@@ -12,9 +12,11 @@ use. Pure: adapters/agents/harness.py runs the commands.
 
 import json
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Any
 
-from openticker.core.agents.choices import ModelOption
+from openticker.core.agents.choices import ModelOption, check_effort
+from openticker.core.agents.jobs import AgentJobError
 
 # Sent on Claude Code's stdin; its answer carries the same request_id.
 CLAUDE_REQUEST_ID = "openticker-models"
@@ -42,8 +44,13 @@ def claude_models(lines: Iterable[str]) -> tuple[tuple[ModelOption, ...], ModelO
         entries = answer.get("models") if isinstance(answer, dict) else None
         options = [_claude_option(entry) for entry in entries or []]
         found = [option for option in options if option is not None]
+        listed = tuple(o for o in found if o.id != CLAUDE_DEFAULT)
         default = next((o for o in found if o.id == CLAUDE_DEFAULT), None)
-        return tuple(o for o in found if o.id != CLAUDE_DEFAULT), default
+        # Named for the model it runs ("Opus 5.5"), not "Default (recommended)".
+        runs = next((o for o in listed if default and o.resolves_to == default.resolves_to), None)
+        if default is not None and runs is not None:
+            default = replace(default, name=runs.name)
+        return listed, default
     return (), None
 
 
@@ -60,6 +67,8 @@ def configured_default(configured: str, models: tuple[ModelOption, ...], why: st
         name=listed.name,
         about=f"{listed.name} · {why}",
         resolves_to=listed.resolves_to or (listed.id if listed.id != configured else None),
+        efforts=listed.efforts,
+        default_effort=listed.default_effort,
     )
 
 
@@ -83,6 +92,11 @@ def codex_models(text: str) -> tuple[ModelOption, ...]:
             id=entry["slug"],
             name=_text(entry.get("display_name")) or entry["slug"],
             about=_text(entry.get("description")),
+            efforts=_levels(
+                level.get("effort") if isinstance(level, dict) else level
+                for level in entry.get("supported_reasoning_levels") or []
+            ),
+            default_effort=_level(entry.get("default_reasoning_level")),
         )
         for entry in shown
     )
@@ -98,7 +112,26 @@ def _claude_option(entry: Any) -> ModelOption | None:
         name=_text(entry.get("displayName")) or value,
         about=_text(entry.get("description")),
         resolves_to=resolved if resolved != value else None,
+        efforts=_levels(entry.get("supportedEffortLevels") or [])
+        if entry.get("supportsEffort")
+        else (),
     )
+
+
+def _levels(levels: Iterable[Any]) -> tuple[str, ...]:
+    """The effort levels as listed, in order, leaving out any that isn't a
+    plain level name: it would go on the command line."""
+    found = (_level(level) for level in levels)
+    return tuple(level for level in found if level is not None)
+
+
+def _level(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return check_effort(value.strip().lower())
+    except AgentJobError:
+        return None
 
 
 def _json(text: str) -> dict[str, Any]:

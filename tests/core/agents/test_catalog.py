@@ -37,6 +37,8 @@ def test_claude_lists_what_its_picker_shows_with_the_default_apart() -> None:
                     "displayName": "Opus 5.5",
                     "description": "For complex work and everyday tasks",
                     "resolvedModel": "claude-opus-5-5",
+                    "supportsEffort": True,
+                    "supportedEffortLevels": ["low", "high", "max", "--bad"],
                 },
                 {"value": "claude-opus-4-8", "displayName": "Opus 4.8", "description": "Older"},
                 {"displayName": "no value: left out"},
@@ -47,10 +49,17 @@ def test_claude_lists_what_its_picker_shows_with_the_default_apart() -> None:
     models, default = claude_models(lines)
 
     assert models == (
-        ModelOption("opus", "Opus 5.5", "For complex work and everyday tasks", "claude-opus-5-5"),
-        ModelOption("claude-opus-4-8", "Opus 4.8", "Older"),
+        ModelOption(
+            "opus",
+            "Opus 5.5",
+            "For complex work and everyday tasks",
+            "claude-opus-5-5",
+            ("low", "high", "max"),  # its own levels; one that isn't a plain word left out
+        ),
+        ModelOption("claude-opus-4-8", "Opus 4.8", "Older"),  # takes no effort
     )
     assert default is not None and default.resolves_to == "claude-opus-5-5"
+    assert default.name == "Opus 5.5"  # named for the model it runs
     assert claude_models(["{}"]) == ((), None)  # no answer: any name is typed
     assert json.loads(CLAUDE_INITIALIZE)["request"] == {"subtype": "initialize"}
 
@@ -67,13 +76,17 @@ def test_codex_lists_its_pickers_models_best_first() -> None:
                     "description": "Fast and affordable.",
                     "visibility": "list",
                     "priority": 4,
+                    "default_reasoning_level": "medium",
+                    "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}],
                 },
             ]
         }
     )
 
     assert codex_models(text) == (
-        ModelOption("gpt-6-luna", "GPT-6-Luna", "Fast and affordable."),
+        ModelOption(
+            "gpt-6-luna", "GPT-6-Luna", "Fast and affordable.", None, ("low", "ultra"), "medium"
+        ),
         ModelOption("old", "Old", ""),
     )
     assert codex_models("error: not signed in") == ()

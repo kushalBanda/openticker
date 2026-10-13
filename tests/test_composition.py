@@ -157,8 +157,8 @@ def test_agent_model_and_effort_fall_back_from_the_environment() -> None:
         {"OPENTICKER_AGENT_MODEL": "sonnet", "OPENTICKER_AGENT_EFFORT": "High"}
     )
     assert (settings.model, settings.effort) == ("sonnet", "high")
-    with pytest.raises(AgentConfigError, match="minimal, low, medium, high for codex"):
-        agent_settings({"OPENTICKER_AGENT_HARNESS": "codex", "OPENTICKER_AGENT_EFFORT": "max"})
+    with pytest.raises(AgentConfigError, match="isn't an effort level"):
+        agent_settings({"OPENTICKER_AGENT_HARNESS": "codex", "OPENTICKER_AGENT_EFFORT": "max!"})
 
 
 def test_labs_is_the_checkouts_unless_set(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from openticker.adapters.inbound.daemon.agent_loop import AgentLoop
-from openticker.core.agents.choices import Effort, FolderKind, RunChoice
+from openticker.core.agents.choices import FolderKind, RunChoice
 from openticker.core.agents.jobs import AgentJobEndReason, AgentSettings, Harness
 from openticker.core.agents.threads import Folder
 from openticker.events.types import AgentSettingsChanged
@@ -41,7 +41,7 @@ def _loop(processes: _Processes, tmp_path: Path) -> AgentLoop:
 def test_settings_show_what_is_stored_what_env_gives_and_what_runs() -> None:
     events = _Events()
     set_folder_choice(
-        FolderKind.REVIEWS, RunChoice(model="opus", effort=Effort.HIGH), ENV, "ui", events, NOW
+        FolderKind.REVIEWS, RunChoice(model="opus", effort="high"), ENV, "ui", events, NOW
     )
 
     view = read_settings(ENV)
@@ -52,7 +52,7 @@ def test_settings_show_what_is_stored_what_env_gives_and_what_runs() -> None:
         "sonnet",
         "opus",
     )
-    assert reviews.resolved.effort is Effort.HIGH
+    assert reviews.resolved.effort == "high"
     general = next(f for f in view.folders if f.kind is FolderKind.GENERAL)
     assert general.stored == RunChoice() and general.resolved.model == "sonnet"
     [changed] = events.of(AgentSettingsChanged)
@@ -60,10 +60,8 @@ def test_settings_show_what_is_stored_what_env_gives_and_what_runs() -> None:
 
 
 def test_a_choice_the_harness_doesnt_take_is_refused() -> None:
-    with pytest.raises(AgentSettingsError, match="not minimal"):
-        set_folder_choice(
-            FolderKind.GENERAL, RunChoice(effort=Effort.MINIMAL), ENV, "ui", _Events(), NOW
-        )
+    with pytest.raises(AgentSettingsError, match="isn't an effort level"):
+        set_folder_choice(FolderKind.GENERAL, RunChoice(effort="--yolo"), ENV, "ui", _Events(), NOW)
     set_harness(Harness.CODEX, "ui", _Events(), NOW)
     with pytest.raises(AgentSettingsError, match="no spend cap"):
         set_folder_choice(
@@ -79,7 +77,7 @@ def test_the_daemon_reads_new_settings_without_restart(tmp_path: Path) -> None:
     strategy = create_strategy("straddle", STRADDLE, NOW).id
     set_folder_choice(
         FolderKind.REVIEWS,
-        RunChoice(model="opus", effort=Effort.MAX, max_budget_usd=0.8),
+        RunChoice(model="opus", effort="max", max_budget_usd=0.8),
         ENV,
         "ui",
         _Events(),
@@ -121,7 +119,7 @@ def test_a_folder_time_limit_holds_its_runs(tmp_path: Path) -> None:
 def test_a_chat_takes_its_folders_default_and_the_message_overrides_it() -> None:
     set_folder_choice(
         FolderKind.STRATEGIES,
-        RunChoice(model="opus", effort=Effort.HIGH),
+        RunChoice(model="opus", effort="high"),
         ENV,
         "ui",
         _Events(),
@@ -157,7 +155,7 @@ def test_a_model_chosen_for_claude_is_dropped_once_every_folder_runs_codex() -> 
     events = _Events()
     plain = AgentSettings()  # Claude Code, no model or effort from the environment
     set_folder_choice(
-        FolderKind.REVIEWS, RunChoice(model="opus", effort=Effort.MAX), plain, "ui", events, NOW
+        FolderKind.REVIEWS, RunChoice(model="opus", effort="max"), plain, "ui", events, NOW
     )
     set_folder_choice(
         FolderKind.DEBRIEFS, RunChoice(Harness.CLAUDE, "opus"), plain, "ui", events, NOW

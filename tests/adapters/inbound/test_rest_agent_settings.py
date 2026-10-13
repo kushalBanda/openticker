@@ -61,11 +61,11 @@ def test_settings_show_stored_env_and_resolved(client: TestClient) -> None:
     assert (body["runs_per_day"], body["runs_per_day_env"]) == (None, 7)
 
 
-def test_an_effort_the_harness_doesnt_take_is_422(client: TestClient) -> None:
-    response = client.put("/api/v1/agents/settings/folders/general", json={"effort": "minimal"})
+def test_an_effort_that_isnt_a_level_is_422(client: TestClient) -> None:
+    response = client.put("/api/v1/agents/settings/folders/general", json={"effort": "--yolo"})
 
     assert response.status_code == 422
-    assert "not minimal" in response.json()["detail"]
+    assert "isn't an effort level" in response.json()["detail"]
 
 
 def test_patch_changes_only_what_it_sends_and_delete_resets(client: TestClient) -> None:
@@ -88,7 +88,9 @@ def test_patch_changes_only_what_it_sends_and_delete_resets(client: TestClient) 
 def test_harnesses_say_what_is_installed_with_models_and_efforts(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    opus = ModelOption("opus", "Opus 5.5", "For complex work", "claude-opus-5-5")
+    opus = ModelOption(
+        "opus", "Opus 5.5", "For complex work", "claude-opus-5-5", ("low", "high", "max")
+    )
     default = ModelOption("default", "Default (recommended)", "Opus 5.5", "claude-opus-5-5")
     found = [
         HarnessInfo(Harness.CLAUDE, True, "2.1.296", (opus,), default),
@@ -109,15 +111,13 @@ def test_harnesses_say_what_is_installed_with_models_and_efforts(
             "name": "Opus 5.5",
             "about": "For complex work",
             "resolves_to": "claude-opus-5-5",
+            "efforts": ["low", "high", "max"],
+            "default_effort": None,
         }
     ]
     assert claude["default_model"]["name"] == "Default (recommended)"
-    assert claude["efforts"] == ["low", "medium", "high", "xhigh", "max"]
-    assert (codex["installed"], codex["free_text_model"], codex["efforts"][0]) == (
-        False,
-        True,
-        "minimal",
-    )
+    assert claude["efforts"] == ["low", "high", "max"]  # its models' own, as listed
+    assert (codex["installed"], codex["free_text_model"], codex["efforts"]) == (False, True, [])
 
 
 def test_a_chat_key_cant_read_or_change_settings(client: TestClient) -> None:

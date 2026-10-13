@@ -17,7 +17,14 @@ import {
 import { HarnessLogo } from "../../components/HarnessLogo";
 import { Segmented } from "../../components/Segmented";
 import { Select } from "../../components/Select";
-import { effortLabel, findModel, harnessLabel, modelId, modelName } from "../../lib/agents";
+import {
+  effortLabel,
+  effortsOf,
+  findModel,
+  harnessLabel,
+  modelId,
+  modelName,
+} from "../../lib/agents";
 import { useActions } from "../../shell/actions";
 
 const CHATS: { kind: ChoiceKind; name: string; about: string }[] = [
@@ -390,6 +397,16 @@ function FolderFields({
 
   const models = info?.models ?? [];
   const listed = findModel(models, stored.model);
+  // The levels are the model's own: the one picked, else the one the agent runs.
+  const running = stored.model
+    ? listed
+    : (findModel(models, resolved.model) ?? info?.default_model ?? undefined);
+  const levels = effortsOf(info, running);
+  const pickModel = (model: string | null) => {
+    const next = model ? findModel(models, model) : (info?.default_model ?? undefined);
+    const keeps = stored.effort !== null && effortsOf(info, next).includes(stored.effort);
+    change(keeps ? { model } : { model, effort: null });
+  };
   const unlisted = stored.model !== null && listed === undefined;
   const typing = typingOther || unlisted || (info?.free_text_model ?? false);
   const fallback = info?.default_model;
@@ -420,7 +437,7 @@ function FolderFields({
             ]}
             onChange={(value) => {
               setTypingOther(value === OTHER);
-              if (value !== OTHER) change({ model: value === DEFAULT ? null : value });
+              if (value !== OTHER) pickModel(value === DEFAULT ? null : value);
             }}
           />
         )}
@@ -429,7 +446,7 @@ function FolderFields({
             label={`${name} model name`}
             value={unlisted ? (stored.model ?? "") : ""}
             placeholder={envModel ?? "Model name, as the agent takes it"}
-            onCommit={(text) => change({ model: text.trim() || null })}
+            onCommit={(text) => pickModel(text.trim() || null)}
           />
         )}
         {listed && (
@@ -447,15 +464,26 @@ function FolderFields({
       </div>
       <span className="st-fl">Effort</span>
       <div>
-        <Segmented<Effort | typeof DEFAULT>
-          label={`${name} effort`}
-          value={stored.effort ?? DEFAULT}
-          segments={[
-            { value: DEFAULT, label: "Default" },
-            ...(info?.efforts ?? []).map((level) => ({ value: level, label: effortLabel(level) })),
-          ]}
-          onChange={(value) => change({ effort: value === DEFAULT ? null : value })}
-        />
+        {levels.length > 0 ? (
+          <Segmented<Effort | typeof DEFAULT>
+            label={`${name} effort`}
+            value={stored.effort && levels.includes(stored.effort) ? stored.effort : DEFAULT}
+            segments={[
+              {
+                value: DEFAULT,
+                label: running?.default_effort
+                  ? `Auto (${effortLabel(running.default_effort)})`
+                  : "Auto",
+              },
+              ...levels.map((level) => ({ value: level, label: effortLabel(level) })),
+            ]}
+            onChange={(value) => change({ effort: value === DEFAULT ? null : value })}
+          />
+        ) : (
+          <span className="st-model-about">
+            {running ? `${running.name} has no effort setting.` : "Pick a model to set its effort."}
+          </span>
+        )}
       </div>
       {background && claude && (
         <>

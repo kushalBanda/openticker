@@ -4,7 +4,14 @@ import * as m from "motion/react-m";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Effort, HarnessInfo } from "../../api/queries";
-import { effortLabel, findModel, harnessLabel, modelId, modelName } from "../../lib/agents";
+import {
+  effortLabel,
+  effortsOf,
+  findModel,
+  harnessLabel,
+  modelId,
+  modelName,
+} from "../../lib/agents";
 import { enter, leave } from "../../lib/motion";
 
 /** A message's own model and effort; null keeps the folder's default. */
@@ -45,6 +52,11 @@ export function ChoicePicker({
   const models = info?.models ?? [];
   const custom = model !== null && findModel(models, model) === undefined;
   const shown = model ? modelName(models, model) : null;
+  // Levels are the model's own: what runs now, the agent's default when none is picked.
+  const running = model ? findModel(models, model) : (info?.default_model ?? undefined);
+  const levels = effortsOf(info, running);
+  const level = effort && levels.includes(effort) ? effort : null;
+  const fallback = running?.default_effort ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -84,9 +96,16 @@ export function ChoicePicker({
       close();
     }
   };
-  // The folder's default is chosen by choosing nothing.
-  const pickModel = (name: string | null) =>
-    onChange({ ...value, model: name === folderDefault.model ? null : name });
+  // The folder's default is chosen by choosing nothing. A level the next
+  // model doesn't take is let go, rather than sent to a model that refuses it.
+  const pickModel = (name: string | null) => {
+    const next = name ? findModel(models, name) : (info?.default_model ?? undefined);
+    const takes = effortsOf(info, next);
+    onChange({
+      model: name === folderDefault.model ? null : name,
+      effort: value.effort && takes.includes(value.effort) ? value.effort : null,
+    });
+  };
   const pickEffort = (level: Effort) =>
     onChange({ ...value, effort: level === folderDefault.effort ? null : level });
 
@@ -96,14 +115,18 @@ export function ChoicePicker({
         ref={button}
         type="button"
         className="aw-pick"
-        aria-label={`Model and effort: ${shown ?? "default model"}, ${effortLabel(effort)}`}
+        aria-label={`Model and effort: ${shown ?? "default model"}, ${level || fallback ? effortLabel(level ?? fallback) : "auto effort"}`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
       >
         <span>{shown ?? "Default"}</span>
-        {effort && <span className="aw-lvl">{effortLabel(effort)}</span>}
+        {levels.length > 0 && (
+          <span className="aw-lvl" data-chosen={level !== null}>
+            {level || fallback ? effortLabel(level ?? fallback) : "Auto"}
+          </span>
+        )}
         <ChevronDown aria-hidden />
       </button>
       {createPortal(
@@ -186,17 +209,32 @@ export function ChoicePicker({
                 )}
               </div>
               <div className="aw-menu-col aw-menu-effort">
-                <div className="menu-note">Effort</div>
-                {(info?.efforts ?? []).map((level) => (
-                  <Row
-                    key={level}
-                    checked={effort === level}
-                    hint={folderDefault.effort === level ? "default here" : undefined}
-                    onClick={() => pickEffort(level)}
-                  >
-                    {effortLabel(level)}
-                  </Row>
-                ))}
+                <div className="menu-note">Effort{running ? ` · ${running.name}` : ""}</div>
+                {levels.length === 0 ? (
+                  <p className="aw-menu-none">This model has no effort setting.</p>
+                ) : (
+                  <>
+                    {folderDefault.effort === null && (
+                      <Row
+                        checked={level === null}
+                        hint={fallback ? effortLabel(fallback) : undefined}
+                        onClick={() => onChange({ ...value, effort: null })}
+                      >
+                        Auto
+                      </Row>
+                    )}
+                    {levels.map((option) => (
+                      <Row
+                        key={option}
+                        checked={level === option}
+                        hint={folderDefault.effort === option ? "default here" : undefined}
+                        onClick={() => pickEffort(option)}
+                      >
+                        {effortLabel(option)}
+                      </Row>
+                    ))}
+                  </>
+                )}
               </div>
             </m.div>
           )}

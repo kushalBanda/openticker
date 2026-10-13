@@ -4281,8 +4281,21 @@
     stroke-width: 1.8;
     color: var(--ink-muted);
   }
+  /* The effort, beside the model it belongs to; quieter until one is picked. */
   .aw-lvl {
+    padding-left: 7px;
+    border-left: 1px solid var(--line-strong);
     color: var(--ink-muted);
+    line-height: 14px;
+  }
+  .aw-lvl[data-chosen="true"] {
+    color: var(--ink);
+  }
+  .aw-menu-none {
+    margin: 4px 10px;
+    color: var(--ink-muted);
+    font-size: 12px;
+    line-height: 16px;
   }
   /* The model and effort picker opens upward, over the thread. */
   /* The composer's menus open over the thread's text: solid, so it can't show through. */

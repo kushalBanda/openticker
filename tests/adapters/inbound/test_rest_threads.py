@@ -96,14 +96,12 @@ def test_a_chat_whose_first_turn_never_ran_is_409(client: TestClient) -> None:
 
 def test_bad_effort_is_422_and_an_unknown_chat_404(client: TestClient) -> None:
     assert (
-        client.post(
-            "/api/v1/agent-threads", json={"message": "hi", "effort": "minimal"}
-        ).status_code
+        client.post("/api/v1/agent-threads", json={"message": "hi", "effort": "--yolo"}).status_code
         == 422
     )
     assert (
         client.post(
-            "/api/v1/agent-threads", json={"message": "hi", "effort": "ludicrous"}
+            "/api/v1/agent-threads", json={"message": "hi", "effort": "High; rm -rf"}
         ).status_code
         == 422
     )

@@ -161,7 +161,7 @@ def _describe(choice: RunChoice) -> str:
     parts = [
         harness_name(choice.harness) if choice.harness else None,
         choice.model or "default model",
-        choice.effort.value if choice.effort else "default effort",
+        choice.effort or "default effort",
         f"${choice.max_budget_usd:.2f} cap" if choice.max_budget_usd is not None else None,
         f"{int(choice.timeout.total_seconds() // 60)} min" if choice.timeout else None,
     ]

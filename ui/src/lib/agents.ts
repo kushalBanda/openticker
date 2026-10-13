@@ -43,18 +43,23 @@ export function modelId(model: ModelInfo): string {
   return model.resolves_to ?? model.id;
 }
 
-const EFFORTS: Record<string, string> = {
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
-
-/** "Extra high" for xhigh; the harness's own default when none is chosen. */
+/** "Extra high" for xhigh, "Ultra" for ultra: levels are the harness's, named as it names them. */
 export function effortLabel(effort: string | null | undefined): string {
-  return effort ? (EFFORTS[effort] ?? effort) : "Default";
+  if (!effort) return "Default";
+  if (effort === "xhigh") return "Extra high";
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+/**
+ * The effort levels a model takes, as its harness lists them with it. A
+ * model the harness doesn't list (typed by name) gets every level the
+ * harness's models take; a listed one that takes none gets none.
+ */
+export function effortsOf(
+  info: { models: ModelInfo[]; efforts: string[] } | undefined,
+  model: ModelInfo | undefined,
+): string[] {
+  return model ? model.efforts : (info?.efforts ?? []);
 }
 
 export type JobState =
