@@ -6,10 +6,11 @@ table until something prunes them (nothing does yet).
 """
 
 import re
+from collections.abc import Collection
 from dataclasses import asdict
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,18 @@ def get_instrument(symbol: str, exchange: str) -> Instrument | None:
             )
         )
     return _to_instrument(row) if row is not None else None
+
+
+def instrument_types(keys: Collection[tuple[str, str]]) -> dict[tuple[str, str], InstrumentType]:
+    """Each known (symbol, exchange)'s type, in one read; unknown ones are left out."""
+    if not keys:
+        return {}
+    statement = select(InstrumentRow.symbol, InstrumentRow.exchange, InstrumentRow.instrument_type)
+    with Session(get_engine()) as session:
+        rows = session.execute(
+            statement.where(tuple_(InstrumentRow.symbol, InstrumentRow.exchange).in_(list(keys)))
+        ).all()
+    return {(symbol, exchange): InstrumentType(kind) for symbol, exchange, kind in rows}
 
 
 def search_instruments(

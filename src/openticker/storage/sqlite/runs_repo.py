@@ -107,6 +107,16 @@ def pending_commands_of(session: Session, strategy_id: str) -> list[Command]:
     return [_command(row) for row in session.scalars(statement).all()]
 
 
+def all_pending_commands(session: Session) -> list[Command]:
+    """Every strategy's commands the daemon hasn't carried out, oldest first."""
+    statement = (
+        select(StrategyCommandRow)
+        .where(StrategyCommandRow.status == CommandStatus.PENDING.value)
+        .order_by(StrategyCommandRow.id)
+    )
+    return [_command(row) for row in session.scalars(statement).all()]
+
+
 def scheduled_start_since(session: Session, strategy_id: str, since: datetime) -> bool:
     """Whether the schedule already sent a start at or after `since`."""
     statement = select(StrategyCommandRow.id).where(
@@ -224,6 +234,13 @@ def list_runs(strategy_id: str, limit: int) -> list[Run]:
         .order_by(StrategyRunRow.started_at.desc())
         .limit(limit)
     )
+    with Session(get_engine()) as session:
+        return [_run(row) for row in session.scalars(statement).all()]
+
+
+def list_all_runs() -> list[Run]:
+    """Every strategy's runs, newest first: one read for the whole board."""
+    statement = select(StrategyRunRow).order_by(StrategyRunRow.started_at.desc())
     with Session(get_engine()) as session:
         return [_run(row) for row in session.scalars(statement).all()]
 

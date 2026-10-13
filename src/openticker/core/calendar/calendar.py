@@ -68,6 +68,18 @@ def next_session(after: datetime, exchange: Exchange, calendar: MarketCalendar) 
     raise CalendarError(f"no {exchange} session in the {_LOOKAHEAD_DAYS} days after {after}")
 
 
+def last_session(
+    now: datetime, exchange: Exchange, calendar: MarketCalendar
+) -> SessionHours | None:
+    """The session in progress at `now`, or the latest to have opened before it."""
+    day = now.astimezone(EXCHANGE_TIMEZONE).date()
+    for offset in range(_LOOKAHEAD_DAYS):
+        hours = session_hours(day - timedelta(days=offset), exchange, calendar)
+        if hours is not None and hours.opens_at <= now:
+            return hours
+    return None
+
+
 def square_off_at(hours: SessionHours) -> datetime:
     """When intraday (MIS) positions are closed: 15 minutes before the close,
     as brokers do, so they exit while the market is still liquid."""

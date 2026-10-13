@@ -24,7 +24,7 @@ from openticker.storage.sqlite import (
 )
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
-from openticker.use_cases.strategies.ledger import ledger_runs
+from openticker.use_cases.strategies.ledger import every_ledger
 
 
 class StrategyState(StrEnum):
@@ -61,25 +61,35 @@ class BoardRow:
 
 
 def strategy_board(calendar: MarketCalendar, now: datetime) -> list[BoardRow]:
-    """By name, as list_strategies has always listed them."""
+    """By name, as list_strategies has always listed them. Each kind of
+    thing is read once for every strategy, not once a strategy."""
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
     reviews = agent_jobs_repo.latest_answers()
+    ledgers = every_ledger()
+    pending_of = _pending()
+    webhooks = signals_repo.strategies_with_webhooks()
+    strategies = strategies_repo.list_strategies()
+    kinds = instruments_repo.instrument_types(
+        {
+            (leg.symbol, leg.exchange.value)
+            for stored in strategies
+            if isinstance(stored.spec, SignalStrategySpec)
+            for leg in stored.spec.legs
+        }
+    )
     rows = []
-    for stored in strategies_repo.list_strategies():
-        runs = ledger_runs(stored.id)
+    for stored in strategies:
+        runs = ledgers.get(stored.id, [])
         active = next((r.run for r in runs if r.run.status is not RunStatus.ENDED), None)
-        pending = _pending(stored.id)
+        pending = pending_of.get(stored.id)
         starting = active is None and pending is CommandKind.START
-        alert_url = (
-            isinstance(stored.spec, SignalStrategySpec)
-            and signals_repo.find_webhook(stored.id) is not None
-        )
+        alert_url = isinstance(stored.spec, SignalStrategySpec) and stored.id in webhooks
         totals = ledger_totals(runs)
         rows.append(
             BoardRow(
                 strategy=stored,
                 state=_state(stored, active is not None or starting, alert_url),
-                segments=_segments(stored),
+                segments=_segments(stored, kinds),
                 active_run=active,
                 pending=pending,
                 next_entry=next_entry(stored.spec.schedule, stored.spec.exchange, calendar, now)
@@ -119,24 +129,29 @@ def _state(stored: StoredStrategy, running: bool, alert_url: bool) -> StrategySt
     return StrategyState.STOPPED
 
 
-def _pending(strategy_id: str) -> CommandKind | None:
-    """Start, stop, kill or close_leg; an alert's own commands are left out."""
+def _pending() -> dict[str, CommandKind]:
+    """Each strategy's oldest start, stop, kill or close_leg; an alert's own
+    commands are left out."""
     with Session(get_engine()) as session:
-        pending = runs_repo.pending_commands_of(session, strategy_id)
-    return next((c.kind for c in pending if c.kind is not CommandKind.SIGNAL), None)
+        pending = runs_repo.all_pending_commands(session)
+    oldest: dict[str, CommandKind] = {}
+    for command in pending:
+        if command.kind is not CommandKind.SIGNAL:
+            oldest.setdefault(command.strategy_id, command.kind)
+    return oldest
 
 
-def _segments(stored: StoredStrategy) -> tuple[Segment, ...]:
+def _segments(
+    stored: StoredStrategy, kinds: dict[tuple[str, str], InstrumentType]
+) -> tuple[Segment, ...]:
+    """`kinds`: every signal leg's instrument type, read once for the board."""
     found: set[Segment] = set()
     if isinstance(stored.spec, OptionsStrategySpec):
         for leg in stored.spec.legs:
             found.add(Segment.FUT if leg.option_type is InstrumentType.FUT else Segment.OPT)
     else:
         for signal_leg in stored.spec.legs:
-            instrument = instruments_repo.get_instrument(
-                signal_leg.symbol, signal_leg.exchange.value
-            )
-            kind = instrument.instrument_type if instrument else None
+            kind = kinds.get((signal_leg.symbol, signal_leg.exchange.value))
             found.add(
                 Segment.FUT
                 if kind is InstrumentType.FUT

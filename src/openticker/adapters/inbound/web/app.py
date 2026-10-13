@@ -192,7 +192,12 @@ def mount_web(
         and, for a browser, what happened since its previous visit today."""
         visit = caller.session.previous_visit_at if caller.session else None
         return TodayResult.of(
-            today(order_broker(require_broker(broker), env, clock), visit, load_calendar(), clock())
+            today(
+                order_broker(require_broker(broker), env, clock, hub.marks()),
+                visit,
+                load_calendar(),
+                clock(),
+            )
         )
 
     @api.get("/setup")

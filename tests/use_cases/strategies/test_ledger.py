@@ -10,7 +10,7 @@ from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import SandboxTradeRow
 from openticker.use_cases.strategies.control import request_start, request_stop
 from openticker.use_cases.strategies.define import UnknownStrategyError
-from openticker.use_cases.strategies.ledger import get_strategy_ledger
+from openticker.use_cases.strategies.ledger import every_ledger, get_strategy_ledger, ledger_runs
 from openticker.use_cases.strategies.runner import process_commands
 from tests.fixtures.strategy_desk import LOT, Desk
 
@@ -68,6 +68,21 @@ def test_totals_leave_out_open_and_uncharged_runs(desk: Desk) -> None:
     assert (ledger.total_runs, ledger.uncharged, ledger.open_runs) == (3, 1, 1)
     assert ledger.totals.runs == 1
     assert [r.run.status for r in ledger.runs] == ["open", "ended"]  # newest first, 2 asked
+
+
+def test_every_ledger_is_each_strategys_ledger_read_at_once(desk: Desk) -> None:
+    first = desk.start()
+    _stop(desk, first)
+    _restart(desk, first)  # left open
+    second = desk.start(name="second")
+    desk.tick(ce=90.0, pe=95.0)
+    _stop(desk, second)
+
+    ledgers = every_ledger()
+
+    assert set(ledgers) == {first, second}
+    assert ledgers[first] == ledger_runs(first) and len(ledgers[first]) == 2
+    assert ledgers[second] == ledger_runs(second) and len(ledgers[second][0].fills) == 4
 
 
 def test_an_unknown_strategy_says_where_to_look() -> None:

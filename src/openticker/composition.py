@@ -21,7 +21,7 @@ from openticker.core.strategies.prices import PriceTimeouts
 from openticker.events.bus import EventBus
 from openticker.events.subscribers.audit_log import record_event
 from openticker.events.subscribers.notifications import NOTIFIED_EVENTS, notifier
-from openticker.ports.models import Exchange
+from openticker.ports.models import Exchange, Instrument
 from openticker.ports.notification_port import NotificationPort
 
 # NOTIFY_EMAIL_FROM has no default: for Resend and Amazon SES the SMTP username
@@ -118,10 +118,12 @@ def order_broker(
     broker: str,
     env: Mapping[str, str],
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    marks: Callable[[Instrument], float | None] | None = None,
 ) -> SandboxBroker:
     """The sandbox, pricing through the named broker (ADR 11 in docs/adr).
-    `clock` stamps its orders; entry points pass the one they were given."""
-    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(env), clock)
+    `clock` stamps its orders; entry points pass the one they were given.
+    `marks`: live prices it marks positions with before asking the broker."""
+    return SandboxBroker(broker, get_adapter(broker), sandbox_settings(env), clock, marks)
 
 
 def capital_cap(env: Mapping[str, str]) -> float | None:
