@@ -4404,12 +4404,12 @@ export interface components {
         ModelResult: {
             /**
              * Id
-             * @description What is passed to the harness: an alias ("opus") or a full name.
+             * @description What is passed to the harness: an alias or a full name.
              */
             id: string;
             /**
              * Name
-             * @description The name the harness shows: "Opus 5.5".
+             * @description The name the harness shows for it.
              */
             name: string;
             /**

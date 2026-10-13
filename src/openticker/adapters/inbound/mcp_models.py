@@ -2387,8 +2387,8 @@ class AgentSettingsResult(BaseModel):
 
 
 class ModelResult(BaseModel):
-    id: str = Field(description='What is passed to the harness: an alias ("opus") or a full name.')
-    name: str = Field(description='The name the harness shows: "Opus 5.5".')
+    id: str = Field(description="What is passed to the harness: an alias or a full name.")
+    name: str = Field(description="The name the harness shows for it.")
     about: str = Field(description="What the harness says it's for.")
     resolves_to: str | None = Field(description="The full name an alias runs today, if told.")
 

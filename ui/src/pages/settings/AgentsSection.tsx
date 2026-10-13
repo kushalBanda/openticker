@@ -438,8 +438,8 @@ function FolderFields({
             {listed.resolves_to && (
               <>
                 {" "}
-                Runs <code>{listed.resolves_to}</code> today, and the newest{" "}
-                {listed.name.split(" ")[0]} as it ships.
+                Runs <code>{listed.resolves_to}</code> today, and newer releases as the agent ships
+                them.
               </>
             )}
           </span>

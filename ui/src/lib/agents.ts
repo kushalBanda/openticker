@@ -33,12 +33,12 @@ export function findModel(
   return models?.find((m) => m.id === id) ?? models?.find((m) => m.resolves_to === id);
 }
 
-/** "Opus 5.5" for opus; a model the harness doesn't list, as named. */
+/** A model's name as the harness shows it; one it doesn't list, as named. */
 export function modelName(models: ModelInfo[] | undefined, id: string): string {
   return findModel(models, id)?.name ?? id;
 }
 
-/** What actually runs: claude-opus-5-5 for opus; the id itself otherwise. */
+/** What actually runs: the full name an alias resolves to, else the id itself. */
 export function modelId(model: ModelInfo): string {
   return model.resolves_to ?? model.id;
 }
