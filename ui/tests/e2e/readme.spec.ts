@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import { nextLink } from "./links";
 
-// The README's screenshots (docs/images/), in light, from the e2e server's
+// The README's screenshots (docs/images/), in dark, from the e2e server's
 // example account. Only when asked, since they are committed:
 //   README_SCREENS=1 pnpm e2e --project=app readme
 
@@ -19,8 +19,10 @@ async function open(page: Page, path: string) {
 
 test("README screenshots", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 900 });
+  // The Dashboard's day as candles, the way the README describes it.
+  await page.addInitScript(() => localStorage.setItem("ot.today.chart", "candles"));
   await page.goto(nextLink());
 
   await open(page, "/");
@@ -47,7 +49,7 @@ test("README screenshots", async ({ page }) => {
 });
 
 test("README screenshot: the Agents workspace", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(nextLink());
   await open(page, "/agents/thr_e2e"); // the seeded chat, in the straddle's folder
