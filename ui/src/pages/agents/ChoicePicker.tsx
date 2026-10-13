@@ -111,7 +111,7 @@ export function ChoicePicker({
           {open && at && (
             <m.div
               ref={menu}
-              className="menu aw-menu"
+              className="menu aw-menu aw-choice-menu"
               role="menu"
               aria-label="Model and effort"
               style={{ bottom: at.bottom, right: at.right, maxHeight: at.height }}
@@ -119,77 +119,85 @@ export function ChoicePicker({
               {...enter}
               exit={leave}
             >
-              <div className="menu-note">Model · {harnessLabel(harness)}</div>
-              {folderDefault.model === null && (
-                <Row
-                  checked={model === null}
-                  detail={info?.default_model?.about}
-                  onClick={() => pickModel(null)}
-                >
-                  Agent's default
-                </Row>
-              )}
-              {models.map((option) => (
-                <Row
-                  key={option.id}
-                  checked={findModel(models, model)?.id === option.id}
-                  hint={
-                    findModel(models, folderDefault.model)?.id === option.id
-                      ? "default here"
-                      : undefined
-                  }
-                  detail={[option.about, modelId(option)].filter(Boolean).join(" · ")}
-                  onClick={() => pickModel(option.id)}
-                >
-                  {option.name}
-                </Row>
-              ))}
-              {typing || (info?.free_text_model ?? false) ? (
-                <form
-                  className="aw-menu-model"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const typed = new FormData(event.currentTarget).get("model");
-                    const name = typeof typed === "string" ? typed.trim() : "";
-                    if (name) pickModel(name);
-                    setTyping(false);
-                  }}
-                >
-                  <input
-                    name="model"
-                    className="input"
-                    aria-label="Model name"
-                    placeholder="Model name"
-                    defaultValue={custom ? (model ?? "") : ""}
-                    // biome-ignore lint/a11y/noAutofocus: opened by asking to type one
-                    autoFocus={typing}
-                  />
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="menu-row"
-                  onClick={() => setTyping(true)}
-                >
-                  <span className="aw-menu-check" aria-hidden>
-                    {custom && <Check size={14} />}
-                  </span>
-                  <span className="flex-1">{custom ? <code>{model}</code> : "Other model…"}</span>
-                </button>
-              )}
-              <hr className="aw-menu-rule" />
-              <div className="menu-note">Effort</div>
-              {(info?.efforts ?? []).map((level) => (
-                <Row
-                  key={level}
-                  checked={effort === level}
-                  hint={folderDefault.effort === level ? "default here" : undefined}
-                  onClick={() => pickEffort(level)}
-                >
-                  {effortLabel(level)}
-                </Row>
-              ))}
+              <div className="aw-menu-col">
+                <div className="menu-note">Model · {harnessLabel(harness)}</div>
+                {folderDefault.model === null && (
+                  <Row
+                    checked={model === null}
+                    detail={info?.default_model?.about}
+                    onClick={() => pickModel(null)}
+                  >
+                    Agent's default
+                  </Row>
+                )}
+                {models.map((option) => (
+                  <Row
+                    key={option.id}
+                    checked={findModel(models, model)?.id === option.id}
+                    hint={
+                      findModel(models, folderDefault.model)?.id === option.id
+                        ? "default here"
+                        : undefined
+                    }
+                    detail={
+                      <>
+                        {option.about}
+                        <span className="aw-menu-id">{modelId(option)}</span>
+                      </>
+                    }
+                    onClick={() => pickModel(option.id)}
+                  >
+                    {option.name}
+                  </Row>
+                ))}
+                {typing || (info?.free_text_model ?? false) ? (
+                  <form
+                    className="aw-menu-model"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const typed = new FormData(event.currentTarget).get("model");
+                      const name = typeof typed === "string" ? typed.trim() : "";
+                      if (name) pickModel(name);
+                      setTyping(false);
+                    }}
+                  >
+                    <input
+                      name="model"
+                      className="input"
+                      aria-label="Model name"
+                      placeholder="Model name"
+                      defaultValue={custom ? (model ?? "") : ""}
+                      // biome-ignore lint/a11y/noAutofocus: opened by asking to type one
+                      autoFocus={typing}
+                    />
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-row"
+                    onClick={() => setTyping(true)}
+                  >
+                    <span className="aw-menu-check" aria-hidden>
+                      {custom && <Check size={14} />}
+                    </span>
+                    <span className="flex-1">{custom ? <code>{model}</code> : "Other model…"}</span>
+                  </button>
+                )}
+              </div>
+              <div className="aw-menu-col aw-menu-effort">
+                <div className="menu-note">Effort</div>
+                {(info?.efforts ?? []).map((level) => (
+                  <Row
+                    key={level}
+                    checked={effort === level}
+                    hint={folderDefault.effort === level ? "default here" : undefined}
+                    onClick={() => pickEffort(level)}
+                  >
+                    {effortLabel(level)}
+                  </Row>
+                ))}
+              </div>
             </m.div>
           )}
         </AnimatePresence>,
@@ -209,7 +217,7 @@ function Row({
   checked: boolean;
   hint?: string;
   /** A second line: what it's for, and what runs. */
-  detail?: string;
+  detail?: ReactNode;
   onClick: () => void;
   children: ReactNode;
 }) {

@@ -96,6 +96,10 @@ test("the picker chooses the next message's model and effort, and the turn recor
   const picker = page.getByRole("button", { name: /^Model and effort/ });
   await picker.click();
   const menu = page.getByRole("menu", { name: "Model and effort" });
+  // Effort beside the models, in view without scrolling past them.
+  await expect(menu.getByRole("menuitemradio", { name: "Max" })).toBeInViewport();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: "test-results/screens/agents-choice-picker-1440.png" });
   await menu.getByRole("menuitemradio", { name: /^Haiku 5\.5/ }).click();
   await menu.getByRole("menuitemradio", { name: "Low" }).click();
   await page.keyboard.press("Escape");

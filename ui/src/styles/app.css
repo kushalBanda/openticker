@@ -4301,6 +4301,38 @@
   .aw-menu .menu-row {
     height: 30px;
   }
+  /* Model on the left, scrolling on its own; effort beside it, always in view. */
+  .menu.aw-choice-menu {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 156px;
+    width: min(468px, calc(100vw - 32px));
+    overflow: hidden;
+  }
+  .aw-menu-col {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .aw-menu-effort {
+    margin-left: 6px;
+    padding-left: 6px;
+    border-left: 1px solid var(--line);
+  }
+  @media (max-width: 520px) {
+    .menu.aw-choice-menu {
+      grid-template-columns: minmax(0, 1fr);
+      overflow-y: auto;
+    }
+    .aw-menu-col {
+      overflow: visible;
+    }
+    .aw-menu-effort {
+      margin: 6px 0 0;
+      padding: 6px 0 0;
+      border-left: 0;
+      border-top: 1px solid var(--line);
+    }
+  }
   .menu.aw-access-menu {
     width: 300px;
     transform-origin: bottom left;
@@ -4367,6 +4399,12 @@
     font-size: 11.5px;
     line-height: 15px;
     white-space: normal;
+  }
+  .aw-menu-id {
+    display: block;
+    font-family: var(--font-code);
+    font-size: 11px;
+    white-space: nowrap;
   }
   .aw-menu-rule {
     height: 1px;
