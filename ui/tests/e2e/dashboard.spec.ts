@@ -47,6 +47,23 @@ test("proof: back after a while, the Dashboard says what happened meanwhile", as
   await expect(page.getByTestId("today-net")).toContainText("₹");
   await expect(page.getByTestId("intraday-chart")).toBeVisible();
   await expect(page.locator("#tv-attr-logo")).toHaveCount(0); // credited in Settings instead
+
+  // Line or candles, and this browser remembers which.
+  const chart = page.getByTestId("intraday-chart");
+  await expect(chart).toHaveAttribute("data-style", "line");
+  await page
+    .getByRole("group", { name: "Chart style" })
+    .getByRole("button", { name: "Candles" })
+    .click();
+  await expect(chart).toHaveAttribute("data-style", "candles");
+  await page.screenshot({ path: "test-results/screens/dashboard-candles.png" });
+  await page.reload();
+  await expect(page.getByTestId("intraday-chart")).toHaveAttribute("data-style", "candles");
+  await page
+    .getByRole("group", { name: "Chart style" })
+    .getByRole("button", { name: "Line" })
+    .click();
+  await expect(page.getByTestId("intraday-chart")).toHaveAttribute("data-style", "line");
   await expect(page).toHaveTitle("Dashboard · OpenTicker");
 
   for (const theme of ["light", "dark"] as const) {

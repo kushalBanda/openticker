@@ -1,5 +1,7 @@
 import {
   BaselineSeries,
+  type CandlestickData,
+  CandlestickSeries,
   createChart,
   createSeriesMarkers,
   type IChartApi,
@@ -12,6 +14,9 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
 import { rupees } from "../lib/format";
+import { pnlCandles } from "../lib/today";
+
+export type IntradayStyle = "line" | "candles";
 
 export interface MinutePoint {
   minute: string; // HH:MM, exchange-local
@@ -49,6 +54,9 @@ function sessionMinutes(): string[] {
   return out;
 }
 const SESSION = sessionMinutes();
+const EVERY = 5; // minutes a candle
+const SLOTS = SESSION.filter((_, i) => i % EVERY === 0);
+const slotOf = (minute: string) => SLOTS[Math.floor(SESSION.indexOf(minute) / EVERY)];
 
 function colours() {
   return {
@@ -74,6 +82,19 @@ function colours() {
   };
 }
 
+function candleColours() {
+  const up = token("--up");
+  const down = token("--down");
+  return {
+    upColor: up,
+    borderUpColor: up,
+    wickUpColor: up,
+    downColor: down,
+    borderDownColor: down,
+    wickDownColor: down,
+  };
+}
+
 function seriesColours() {
   return {
     topLineColor: token("--up"),
@@ -89,7 +110,8 @@ function seriesColours() {
  * The day's P&L after charges, a point a minute (DESIGN.md Today Hero): the
  * axis is the whole session, so the line stops at now and the rest of the day
  * is still to come. A dashed zero line; above in `up`, below in `down`; a
- * mark where the user was last here. Drawn left to right once.
+ * mark where the user was last here. Drawn left to right once. As candles,
+ * five minutes each; the one still forming is hollow until its five are up.
  */
 export function IntradayChart({
   day,
@@ -97,6 +119,7 @@ export function IntradayChart({
   now,
   visit,
   height = 150,
+  style = "line",
 }: {
   day: string;
   points: MinutePoint[];
@@ -105,10 +128,11 @@ export function IntradayChart({
   /** HH:MM of the previous visit, marked on the line. */
   visit?: string;
   height?: number;
+  style?: IntradayStyle;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
-  const series = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const series = useRef<ISeriesApi<"Baseline"> | ISeriesApi<"Candlestick"> | null>(null);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const tip = useRef<HTMLDivElement>(null);
 
@@ -128,14 +152,22 @@ export function IntradayChart({
         priceFormatter: (v: number) => Math.round(v).toLocaleString("en-IN"),
       },
     });
-    const line = made.addSeries(BaselineSeries, {
-      baseValue: { type: "price", price: 0 },
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerRadius: 3,
-      ...seriesColours(),
-    });
+    const line =
+      style === "candles"
+        ? made.addSeries(CandlestickSeries, {
+            priceLineVisible: false,
+            lastValueVisible: false,
+            ...candleColours(),
+          })
+        : made.addSeries(BaselineSeries, {
+            baseValue: { type: "price", price: 0 },
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerRadius: 3,
+            ...seriesColours(),
+          });
+    const slots = style === "candles" ? SLOTS : SESSION;
     line.createPriceLine({
       price: 0,
       color: token("--line-strong"),
@@ -147,8 +179,7 @@ export function IntradayChart({
     markers.current = createSeriesMarkers(line, []);
     chart.current = made;
     // Every minute of the session in view, whitespace included, at any width.
-    const whole = () =>
-      made.timeScale().setVisibleLogicalRange({ from: 0, to: SESSION.length - 1 });
+    const whole = () => made.timeScale().setVisibleLogicalRange({ from: 0, to: slots.length - 1 });
     const size = new ResizeObserver(whole);
     size.observe(box.current);
     // The figure under the pointer: the axes are hidden, so the crosshair
@@ -157,23 +188,33 @@ export function IntradayChart({
       const el = tip.current;
       const width = box.current?.clientWidth ?? 0;
       const point = move.time !== undefined ? move.seriesData.get(line) : undefined;
-      if (!el || !move.point || !point || !("value" in point) || typeof point.value !== "number") {
+      const value =
+        point && "close" in point
+          ? point.close
+          : point && "value" in point
+            ? point.value
+            : undefined;
+      if (!el || !move.point || !point || typeof value !== "number") {
         if (el) el.hidden = true;
         return;
       }
-      const value = point.value;
       el.hidden = false;
       el.dataset.tone = value < 0 ? "down" : value > 0 ? "up" : "";
       const figure = el.querySelector(".intraday-tip-value");
       const time = el.querySelector(".intraday-tip-time");
       if (figure) figure.textContent = rupees(value, { sign: true });
-      if (time) time.textContent = clock(point.time);
+      if (time) {
+        time.textContent =
+          style === "candles"
+            ? `${clock(point.time)}–${clock(((point.time as number) + EVERY * 60) as Time)}`
+            : clock(point.time);
+      }
       const half = el.offsetWidth / 2;
       el.style.left = `${Math.min(Math.max(move.point.x, half), width - half)}px`;
     });
     const theme = new MutationObserver(() => {
       made.applyOptions(colours());
-      series.current?.applyOptions(seriesColours());
+      series.current?.applyOptions(style === "candles" ? candleColours() : seriesColours());
     });
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
@@ -184,7 +225,7 @@ export function IntradayChart({
       series.current = null;
       markers.current = null;
     };
-  }, [height]);
+  }, [height, style]);
 
   const nowMinute = now?.minute;
   const nowNet = now?.net_pnl;
@@ -200,44 +241,67 @@ export function IntradayChart({
     ];
   }, [recorded, nowMinute, nowNet]);
 
+  const live = nowMinute !== undefined && points.at(-1)?.minute === nowMinute;
+
   useEffect(() => {
-    const byMinute = new Map(points.map((p) => [p.minute, p.net_pnl]));
-    const data: ({ time: UTCTimestamp; value: number } | WhitespaceData<UTCTimestamp>)[] =
-      SESSION.map((minute) => {
-        const value = byMinute.get(minute);
-        return value === undefined ? { time: at(day, minute) } : { time: at(day, minute), value };
-      });
-    series.current?.setData(data);
     const last = points.at(-1);
     const seen = visit ? points.filter((p) => p.minute <= visit).at(-1) : undefined;
-    markers.current?.setMarkers([
-      ...(seen
-        ? [
-            {
-              time: at(day, seen.minute),
-              position: "aboveBar" as const,
-              shape: "arrowDown" as const,
-              color: token("--ink-muted"),
-              text: `you were here ${visit}`,
-              size: 0.6,
-            },
-          ]
-        : []),
-      ...(last
-        ? [
-            {
-              time: at(day, last.minute),
-              position: "atPriceMiddle" as const,
-              price: last.net_pnl,
-              shape: "circle" as const,
-              color: token(last.net_pnl < 0 ? "--down" : "--up"),
-              size: 0.8,
-            },
-          ]
-        : []),
-    ]);
-    chart.current?.timeScale().setVisibleLogicalRange({ from: 0, to: SESSION.length - 1 }); // the whole session
-  }, [day, points, visit]);
+    const visitMark = seen
+      ? [
+          {
+            time: at(day, style === "candles" ? (slotOf(seen.minute) ?? seen.minute) : seen.minute),
+            position: "aboveBar" as const,
+            shape: "arrowDown" as const,
+            color: token("--ink-muted"),
+            text: `you were here ${visit}`,
+            size: 0.6,
+          },
+        ]
+      : [];
+    if (style === "candles") {
+      const candles = pnlCandles(points, EVERY);
+      const bySlot = new Map(candles.map((c) => [c.slot, c]));
+      const forming = live ? candles.at(-1)?.slot : undefined;
+      const data: (CandlestickData<UTCTimestamp> | WhitespaceData<UTCTimestamp>)[] = SLOTS.map(
+        (slot) => {
+          const candle = bySlot.get(slot);
+          if (!candle) return { time: at(day, slot) };
+          const { open, high, low, close } = candle;
+          const bar = { time: at(day, slot), open, high, low, close };
+          if (slot !== forming) return bar;
+          const tone = token(close < open ? "--down" : "--up");
+          return { ...bar, color: "transparent", borderColor: tone, wickColor: tone };
+        },
+      );
+      (series.current as ISeriesApi<"Candlestick"> | null)?.setData(data);
+      markers.current?.setMarkers(visitMark);
+    } else {
+      const byMinute = new Map(points.map((p) => [p.minute, p.net_pnl]));
+      const data: ({ time: UTCTimestamp; value: number } | WhitespaceData<UTCTimestamp>)[] =
+        SESSION.map((minute) => {
+          const value = byMinute.get(minute);
+          return value === undefined ? { time: at(day, minute) } : { time: at(day, minute), value };
+        });
+      (series.current as ISeriesApi<"Baseline"> | null)?.setData(data);
+      markers.current?.setMarkers([
+        ...visitMark,
+        ...(last
+          ? [
+              {
+                time: at(day, last.minute),
+                position: "atPriceMiddle" as const,
+                price: last.net_pnl,
+                shape: "circle" as const,
+                color: token(last.net_pnl < 0 ? "--down" : "--up"),
+                size: 0.8,
+              },
+            ]
+          : []),
+      ]);
+    }
+    const slots = style === "candles" ? SLOTS : SESSION;
+    chart.current?.timeScale().setVisibleLogicalRange({ from: 0, to: slots.length - 1 }); // the whole session
+  }, [day, points, visit, style, live]);
 
   return (
     <div className="intraday">
@@ -250,10 +314,11 @@ export function IntradayChart({
         className="chart intraday-chart"
         style={{ height }}
         data-testid="intraday-chart"
+        data-style={style}
         role="img"
         aria-label={
           points.length
-            ? `Today's P&L after charges from ${points[0]?.minute} to ${points.at(-1)?.minute}`
+            ? `Today's P&L after charges${style === "candles" ? ", in five-minute candles," : ""} from ${points[0]?.minute} to ${points.at(-1)?.minute}`
             : "No P&L points yet today"
         }
       />
