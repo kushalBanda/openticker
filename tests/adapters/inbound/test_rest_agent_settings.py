@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from openticker.adapters.inbound.rest_api import create_app
 from openticker.composition import build_event_bus
+from openticker.core.agents.choices import ModelOption
 from openticker.core.agents.jobs import Harness
 from openticker.events.bus import EventBus
 from openticker.ports.agent_job_port import HarnessInfo
@@ -87,16 +88,30 @@ def test_patch_changes_only_what_it_sends_and_delete_resets(client: TestClient) 
 def test_harnesses_say_what_is_installed_with_models_and_efforts(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    found = [HarnessInfo(Harness.CLAUDE, True, "2.1.296"), HarnessInfo(Harness.CODEX, False)]
+    opus = ModelOption("opus", "Opus 5.5", "For complex work", "claude-opus-5-5")
+    default = ModelOption("default", "Default (recommended)", "Opus 5.5", "claude-opus-5-5")
+    found = [
+        HarnessInfo(Harness.CLAUDE, True, "2.1.296", (opus,), default),
+        HarnessInfo(Harness.CODEX, False),
+    ]
     monkeypatch.setattr("openticker.adapters.inbound.rest_api.detect", lambda env: found)
 
     claude, codex = client.get("/api/v1/agents/harnesses").json()["harnesses"]
 
-    assert (claude["installed"], claude["version"], claude["models"][0]) == (
+    assert (claude["installed"], claude["version"], claude["free_text_model"]) == (
         True,
         "2.1.296",
-        "opus",
+        False,
     )
+    assert claude["models"] == [
+        {
+            "id": "opus",
+            "name": "Opus 5.5",
+            "about": "For complex work",
+            "resolves_to": "claude-opus-5-5",
+        }
+    ]
+    assert claude["default_model"]["name"] == "Default (recommended)"
     assert claude["efforts"] == ["low", "medium", "high", "xhigh", "max"]
     assert (codex["installed"], codex["free_text_model"], codex["efforts"][0]) == (
         False,

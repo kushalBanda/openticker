@@ -331,3 +331,25 @@ def test_a_codex_chat_turn_writes_its_events_and_answers_from_them(tmp_path: Pat
     assert (outcome.summary, outcome.session_id) == ("why?", "thr-9")
     assert (outcome.input_tokens, outcome.output_tokens) == (10, 2)
     assert "progress" in launch.log_path.read_text()
+
+
+def test_detect_lists_models_from_the_harness_itself(tmp_path: Path) -> None:
+    from openticker.adapters.agents.harness import detect
+
+    codex = tmp_path / "codex"
+    catalog = {
+        "models": [
+            {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "visibility": "list"},
+        ]
+    }
+    codex.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = debug ]; then echo \'' + json.dumps(catalog) + "'; "
+        "else echo 'codex-cli 0.162.1'; fi\n"
+    )
+    codex.chmod(0o755)
+
+    _, found = detect({"PATH": str(tmp_path), "HOME": str(tmp_path)}, fresh=True)
+
+    assert found.version == "0.162.1"
+    assert [(m.id, m.name) for m in found.models] == [("gpt-6-luna", "GPT-6-Luna")]

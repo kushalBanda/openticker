@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from openticker.core.agents.choices import ModelOption
 from openticker.core.agents.jobs import Harness
 from openticker.ports.script_process_port import Exited
 
@@ -44,11 +45,14 @@ class AgentOutcome:
 
 @dataclass(frozen=True)
 class HarnessInfo:
-    """Whether a harness's CLI is on this machine, and its version."""
+    """Whether a harness's CLI is on this machine, its version, and the
+    models it lists: () when it lists none, and any name is typed."""
 
     harness: Harness
     installed: bool
     version: str | None = None
+    models: tuple[ModelOption, ...] = ()
+    default_model: ModelOption | None = None  # what runs when none is named, if it says
 
 
 class AgentProcesses(Protocol):

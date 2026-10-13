@@ -1,4 +1,4 @@
-import { ArrowUp, Folder, Lock, Plus, Square, SquareTerminal } from "lucide-react";
+import { ArrowUp, Folder, Lock, Plus, Square } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 import { useNavigate } from "react-router";
 import {
@@ -9,6 +9,7 @@ import {
   useSendMessage,
   useStopThread,
 } from "../../api/queries";
+import { HarnessLogo } from "../../components/HarnessLogo";
 import { harnessLabel } from "../../lib/agents";
 import {
   activeTurn,
@@ -77,7 +78,7 @@ export function Composer({ thread }: { thread: AgentThread }) {
           </span>
           <span className="aw-chip" title="Fixed after the first message">
             <Lock aria-hidden />
-            <SquareTerminal aria-hidden />
+            <HarnessLogo harness={thread.harness} size={14} />
             {harnessLabel(thread.harness)}
           </span>
           <AccessChip access={thread.access ?? "trade"} />

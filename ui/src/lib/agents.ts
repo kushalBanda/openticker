@@ -22,6 +22,27 @@ export function harnessLabel(harness: string): string {
   return harness === "codex" ? "Codex" : "Claude Code";
 }
 
+type ModelInfo = Schemas["ModelResult"];
+
+/** The listed model a choice names, by its id or the full name an alias runs. */
+export function findModel(
+  models: ModelInfo[] | undefined,
+  id: string | null | undefined,
+): ModelInfo | undefined {
+  if (!id) return undefined;
+  return models?.find((m) => m.id === id) ?? models?.find((m) => m.resolves_to === id);
+}
+
+/** "Opus 5.5" for opus; a model the harness doesn't list, as named. */
+export function modelName(models: ModelInfo[] | undefined, id: string): string {
+  return findModel(models, id)?.name ?? id;
+}
+
+/** What actually runs: claude-opus-5-5 for opus; the id itself otherwise. */
+export function modelId(model: ModelInfo): string {
+  return model.resolves_to ?? model.id;
+}
+
 const EFFORTS: Record<string, string> = {
   minimal: "Minimal",
   low: "Low",

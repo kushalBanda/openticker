@@ -22,6 +22,18 @@ def main() -> None:
     if argv == ["--version"]:
         print("codex-cli 0.48.0")
         return
+    if argv == ["debug", "models"]:  # its catalog (core/agents/catalog.py)
+        catalog = [
+            ("gpt-6-luna", "GPT-6-Luna", "Fast and affordable model for easier tasks.", "list"),
+            ("gpt-5.6-terra", "GPT-5.6-Terra", "Older balanced model.", "list"),
+            ("codex-auto-review", "Codex Auto Review", "Approval reviews.", "hide"),
+        ]
+        models = [
+            {"slug": s, "display_name": n, "description": d, "visibility": v, "priority": i}
+            for i, (s, n, d, v) in enumerate(catalog)
+        ]
+        print(json.dumps({"models": models}))
+        return
     message = sys.stdin.read().strip()
     resumed = argv[argv.index("resume") + 1] if "resume" in argv else None
     session = resumed or str(uuid.uuid4())

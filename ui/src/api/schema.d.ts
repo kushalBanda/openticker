@@ -3710,9 +3710,11 @@ export interface components {
             version: string | null;
             /**
              * Models
-             * @description Names to pick from; empty when any name is taken.
+             * @description The models the harness lists on this machine, as its own picker orders them; empty when it lists none and any name is typed.
              */
-            models: string[];
+            models: components["schemas"]["ModelResult"][];
+            /** @description What the harness runs when no model is named, when it says. */
+            default_model: components["schemas"]["ModelResult"] | null;
             /**
              * Free Text Model
              * @description True when the model is typed, not picked.
@@ -4397,6 +4399,29 @@ export interface components {
             exchange: string;
             /** Reason */
             reason: string;
+        };
+        /** ModelResult */
+        ModelResult: {
+            /**
+             * Id
+             * @description What is passed to the harness: an alias ("opus") or a full name.
+             */
+            id: string;
+            /**
+             * Name
+             * @description The name the harness shows: "Opus 5.5".
+             */
+            name: string;
+            /**
+             * About
+             * @description What the harness says it's for.
+             */
+            about: string;
+            /**
+             * Resolves To
+             * @description The full name an alias runs today, if told.
+             */
+            resolves_to: string | null;
         };
         /** ModifyOrderBody */
         ModifyOrderBody: {

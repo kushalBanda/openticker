@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from openticker.core.agents.choices import EFFORTS, MODELS, Effort, FolderKind, RunChoice
+from openticker.core.agents.choices import EFFORTS, Effort, FolderKind, ModelOption, RunChoice
 from openticker.core.agents.jobs import (
     AgentJob,
     AgentJobEndReason,
@@ -2386,11 +2386,30 @@ class AgentSettingsResult(BaseModel):
         )
 
 
+class ModelResult(BaseModel):
+    id: str = Field(description='What is passed to the harness: an alias ("opus") or a full name.')
+    name: str = Field(description='The name the harness shows: "Opus 5.5".')
+    about: str = Field(description="What the harness says it's for.")
+    resolves_to: str | None = Field(description="The full name an alias runs today, if told.")
+
+    @classmethod
+    def of(cls, option: ModelOption) -> "ModelResult":
+        return cls(
+            id=option.id, name=option.name, about=option.about, resolves_to=option.resolves_to
+        )
+
+
 class HarnessResult(BaseModel):
     harness: Harness
     installed: bool
     version: str | None
-    models: list[str] = Field(description="Names to pick from; empty when any name is taken.")
+    models: list[ModelResult] = Field(
+        description="The models the harness lists on this machine, as its own picker orders "
+        "them; empty when it lists none and any name is typed."
+    )
+    default_model: ModelResult | None = Field(
+        description="What the harness runs when no model is named, when it says."
+    )
     free_text_model: bool = Field(description="True when the model is typed, not picked.")
     efforts: list[Effort] = Field(description="The efforts it offers, lowest first.")
 
@@ -2400,8 +2419,9 @@ class HarnessResult(BaseModel):
             harness=info.harness,
             installed=info.installed,
             version=info.version,
-            models=list(MODELS[info.harness]),
-            free_text_model=not MODELS[info.harness],
+            models=[ModelResult.of(option) for option in info.models],
+            default_model=ModelResult.of(info.default_model) if info.default_model else None,
+            free_text_model=not info.models,
             efforts=list(EFFORTS[info.harness]),
         )
 

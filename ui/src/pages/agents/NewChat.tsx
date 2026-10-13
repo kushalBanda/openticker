@@ -10,6 +10,7 @@ import {
   useStartChat,
   useStrategies,
 } from "../../api/queries";
+import { HarnessLogo } from "../../components/HarnessLogo";
 import { harnessLabel } from "../../lib/agents";
 import { choiceKind, type Suggestion, suggestions } from "../../lib/threads";
 import { AccessPicker } from "./AccessPicker";
@@ -119,12 +120,12 @@ export function NewChat() {
                   setChoice({ model: null, effort: null });
                 }}
               >
-                <SquareTerminal aria-hidden />
+                <HarnessLogo harness={harness} size={14} />
                 {harnessLabel(harness)}
               </button>
             ) : (
               <span className="aw-chip">
-                <SquareTerminal aria-hidden />
+                <HarnessLogo harness={harness} size={14} />
                 {harnessLabel(harness)}
               </span>
             )}

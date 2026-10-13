@@ -4,7 +4,7 @@ import * as m from "motion/react-m";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Effort, HarnessInfo } from "../../api/queries";
-import { effortLabel, harnessLabel } from "../../lib/agents";
+import { effortLabel, findModel, harnessLabel, modelId, modelName } from "../../lib/agents";
 import { enter, leave } from "../../lib/motion";
 
 /** A message's own model and effort; null keeps the folder's default. */
@@ -43,7 +43,8 @@ export function ChoicePicker({
   const model = value.model ?? folderDefault.model;
   const effort = value.effort ?? folderDefault.effort;
   const models = info?.models ?? [];
-  const custom = model !== null && !models.includes(model);
+  const custom = model !== null && findModel(models, model) === undefined;
+  const shown = model ? modelName(models, model) : null;
 
   useEffect(() => {
     if (!open) return;
@@ -95,13 +96,13 @@ export function ChoicePicker({
         ref={button}
         type="button"
         className="aw-pick"
-        aria-label={`Model and effort: ${model ?? "default model"}, ${effortLabel(effort)}`}
+        aria-label={`Model and effort: ${shown ?? "default model"}, ${effortLabel(effort)}`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
       >
-        {model ? <code>{model}</code> : <span>Default</span>}
+        <span>{shown ?? "Default"}</span>
         {effort && <span className="aw-lvl">{effortLabel(effort)}</span>}
         <ChevronDown aria-hidden />
       </button>
@@ -120,18 +121,28 @@ export function ChoicePicker({
             >
               <div className="menu-note">Model · {harnessLabel(harness)}</div>
               {folderDefault.model === null && (
-                <Row checked={model === null} hint="default here" onClick={() => pickModel(null)}>
+                <Row
+                  checked={model === null}
+                  hint="default here"
+                  detail={info?.default_model?.about}
+                  onClick={() => pickModel(null)}
+                >
                   Agent's default
                 </Row>
               )}
-              {models.map((name) => (
+              {models.map((option) => (
                 <Row
-                  key={name}
-                  checked={model === name}
-                  hint={folderDefault.model === name ? "default here" : undefined}
-                  onClick={() => pickModel(name)}
+                  key={option.id}
+                  checked={findModel(models, model)?.id === option.id}
+                  hint={
+                    findModel(models, folderDefault.model)?.id === option.id
+                      ? "default here"
+                      : undefined
+                  }
+                  detail={[option.about, modelId(option)].filter(Boolean).join(" · ")}
+                  onClick={() => pickModel(option.id)}
                 >
-                  <code>{name}</code>
+                  {option.name}
                 </Row>
               ))}
               {typing || (info?.free_text_model ?? false) ? (
@@ -192,11 +203,14 @@ export function ChoicePicker({
 function Row({
   checked,
   hint,
+  detail,
   onClick,
   children,
 }: {
   checked: boolean;
   hint?: string;
+  /** A second line: what it's for, and what runs. */
+  detail?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -206,13 +220,26 @@ function Row({
       role="menuitemradio"
       aria-checked={checked}
       className="menu-row"
+      data-detail={detail ? true : undefined}
       onClick={onClick}
     >
       <span className="aw-menu-check" aria-hidden>
         {checked && <Check size={14} />}
       </span>
-      <span className="flex-1">{children}</span>
-      {hint && <span className="aw-menu-hint">{hint}</span>}
+      {detail ? (
+        <span className="aw-menu-label">
+          <span className="aw-menu-title">
+            <span className="flex-1">{children}</span>
+            {hint && <span className="aw-menu-hint">{hint}</span>}
+          </span>
+          <span className="aw-menu-detail">{detail}</span>
+        </span>
+      ) : (
+        <>
+          <span className="flex-1">{children}</span>
+          {hint && <span className="aw-menu-hint">{hint}</span>}
+        </>
+      )}
     </button>
   );
 }

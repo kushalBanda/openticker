@@ -31,10 +31,20 @@ EFFORTS: Mapping[Harness, tuple[Effort, ...]] = {
     Harness.CODEX: (Effort.MINIMAL, Effort.LOW, Effort.MEDIUM, Effort.HIGH),
 }
 
-# Claude Code's model aliases: each names the latest model of its family.
-CLAUDE_MODELS = ("opus", "sonnet", "haiku", "fable")
-# Codex takes any model name its account offers.
-MODELS: Mapping[Harness, tuple[str, ...]] = {Harness.CLAUDE: CLAUDE_MODELS, Harness.CODEX: ()}
+
+@dataclass(frozen=True)
+class ModelOption:
+    """A model a harness offers, as the harness itself lists it on this
+    machine (adapters/agents/harness.py): never a list kept here, since both
+    ship new models often. `id` is what goes to `--model`: an alias like
+    "opus" or a full name; `resolves_to` is the full name an alias runs
+    today, when the harness says."""
+
+    id: str
+    name: str  # "Opus 5.5", "GPT-6-Luna"
+    about: str  # what the harness says it's for
+    resolves_to: str | None = None
+
 
 MAX_RUNS_PER_DAY = 500
 
