@@ -123,7 +123,6 @@ export function ChoicePicker({
               {folderDefault.model === null && (
                 <Row
                   checked={model === null}
-                  hint="default here"
                   detail={info?.default_model?.about}
                   onClick={() => pickModel(null)}
                 >
