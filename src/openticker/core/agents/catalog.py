@@ -47,6 +47,22 @@ def claude_models(lines: Iterable[str]) -> tuple[tuple[ModelOption, ...], ModelO
     return (), None
 
 
+def configured_default(configured: str, models: tuple[ModelOption, ...], why: str) -> ModelOption:
+    """The default a user's own settings name, shown as its listed model
+    when it is one: by id, or by the full name an alias runs."""
+    listed = next((m for m in models if m.id == configured), None) or next(
+        (m for m in models if m.resolves_to == configured), None
+    )
+    if listed is None:
+        return ModelOption(id=configured, name=configured, about=f"{configured} · {why}")
+    return ModelOption(
+        id=configured,
+        name=listed.name,
+        about=f"{listed.name} · {why}",
+        resolves_to=listed.resolves_to or (listed.id if listed.id != configured else None),
+    )
+
+
 def codex_models(text: str) -> tuple[ModelOption, ...]:
     """The models Codex shows in its own picker, best first. () when the
     catalog can't be read."""

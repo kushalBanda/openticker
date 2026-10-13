@@ -353,3 +353,45 @@ def test_detect_lists_models_from_the_harness_itself(tmp_path: Path) -> None:
 
     assert found.version == "0.162.1"
     assert [(m.id, m.name) for m in found.models] == [("gpt-6-luna", "GPT-6-Luna")]
+
+
+def test_claudes_default_is_the_model_the_users_settings_name(tmp_path: Path) -> None:
+    from openticker.adapters.agents.harness import detect
+
+    claude = tmp_path / "claude"
+    answer = {
+        "type": "control_response",
+        "response": {
+            "request_id": "openticker-models",
+            "response": {
+                "models": [
+                    {"value": "default", "displayName": "Default", "description": "Sonnet 5.5"},
+                    {
+                        "value": "opus",
+                        "displayName": "Opus 5.5",
+                        "resolvedModel": "claude-opus-5-5",
+                    },
+                ]
+            },
+        },
+    }
+    claude.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = --version ]; then echo "2.1.296 (Claude Code)"; '
+        "else echo '" + json.dumps(answer) + "'; fi\n"
+    )
+    claude.chmod(0o755)
+    config = tmp_path / "config"
+    config.mkdir()
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path), "CLAUDE_CONFIG_DIR": str(config)}
+
+    plain, _ = detect(env, fresh=True)
+    (config / "settings.json").write_text('{"model": "opus"}')
+    configured, _ = detect(env, fresh=True)
+
+    assert plain.default_model is not None and plain.default_model.about == "Sonnet 5.5"
+    assert configured.default_model is not None
+    assert (configured.default_model.name, configured.default_model.resolves_to) == (
+        "Opus 5.5",
+        "claude-opus-5-5",
+    )

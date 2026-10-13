@@ -5,6 +5,7 @@ from openticker.core.agents.catalog import (
     CLAUDE_REQUEST_ID,
     claude_models,
     codex_models,
+    configured_default,
 )
 from openticker.core.agents.choices import ModelOption
 
@@ -76,3 +77,14 @@ def test_codex_lists_its_pickers_models_best_first() -> None:
         ModelOption("old", "Old", ""),
     )
     assert codex_models("error: not signed in") == ()
+
+
+def test_a_default_set_in_the_users_settings_shows_as_its_listed_model() -> None:
+    opus = ModelOption("opus", "Opus 5.5", "For complex work", "claude-opus-5-5")
+    why = "Set in your Claude Code settings"
+
+    assert configured_default("opus", (opus,), why) == ModelOption(
+        "opus", "Opus 5.5", "Opus 5.5 · Set in your Claude Code settings", "claude-opus-5-5"
+    )
+    assert configured_default("claude-opus-5-5", (opus,), why).name == "Opus 5.5"
+    assert configured_default("my-model", (opus,), why).about == f"my-model · {why}"

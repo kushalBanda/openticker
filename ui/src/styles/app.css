@@ -4285,11 +4285,15 @@
     color: var(--ink-muted);
   }
   /* The model and effort picker opens upward, over the thread. */
+  /* The composer's menus open over the thread's text: solid, so it can't show through. */
   .menu.aw-menu {
     position: fixed;
     top: auto;
     z-index: 90; /* as a dropdown list */
     width: 300px;
+    background: var(--surface-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     overflow-y: auto;
     transform-origin: bottom right;
     font-size: 13px;

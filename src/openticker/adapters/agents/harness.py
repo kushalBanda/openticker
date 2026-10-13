@@ -259,9 +259,31 @@ def _detect_one(harness: Harness, env: Mapping[str, str], fresh: bool) -> Harnes
     match = _VERSION.search(done.stdout or "")
     version = match.group(0) if match else None
     models, default = _models(harness, executable, version, env, fresh)
+    if harness is Harness.CLAUDE:
+        configured = _claude_configured_model(env)
+        if configured is not None:
+            default = catalog.configured_default(configured, models, CLAUDE_SETTINGS_SAY)
     return HarnessInfo(
         harness, installed=True, version=version, models=models, default_model=default
     )
+
+
+CLAUDE_SETTINGS_SAY = "Set in your Claude Code settings"
+
+
+def _claude_configured_model(env: Mapping[str, str]) -> str | None:
+    """The model the user's own Claude Code settings run when none is named:
+    `model` in their settings.json. Claude Code's own list says only what
+    the account would run without it, so a run would otherwise show one
+    model and run another. Read each detection, not kept with the list:
+    the user may change it any time."""
+    folder = env.get("CLAUDE_CONFIG_DIR") or str(Path(env.get("HOME", "")) / ".claude")
+    try:
+        settings = json.loads((Path(folder) / "settings.json").read_text())
+    except (OSError, ValueError):
+        return None
+    model = settings.get("model") if isinstance(settings, dict) else None
+    return model.strip() if isinstance(model, str) and model.strip() else None
 
 
 MODELS_EVERY = 3600.0  # seconds a harness's model list is kept, per version
