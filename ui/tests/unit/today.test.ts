@@ -89,5 +89,24 @@ test("day stats count only days with a figure", () => {
       { date: "2026-09-23", net: -200, estimated: true },
       { date: "2026-09-24", net: null, estimated: false },
     ]),
-  ).toEqual({ best: 500, worst: -200, winning: 1, days: 2 });
+  ).toEqual({
+    best: 500,
+    worst: -200,
+    winning: 1,
+    days: 2,
+    total: 300,
+    average: 150,
+    month: 300,
+    streak: -1,
+  });
+  expect(
+    dayStats([
+      { date: "2026-09-29", net: -50, estimated: false },
+      { date: "2026-09-30", net: 100, estimated: false },
+      { date: "2026-10-01", net: 40, estimated: false },
+    ]),
+  ).toMatchObject({ month: 40, streak: 2 });
+  expect(dayStats([{ date: "2026-10-01", net: 0, estimated: false }])).toMatchObject({
+    streak: 0,
+  });
 });

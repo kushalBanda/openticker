@@ -11,6 +11,7 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
+import { rupees } from "../lib/format";
 
 export interface MinutePoint {
   minute: string; // HH:MM, exchange-local
@@ -109,6 +110,7 @@ export function IntradayChart({
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Baseline"> | null>(null);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const tip = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!box.current) return;
@@ -149,6 +151,26 @@ export function IntradayChart({
       made.timeScale().setVisibleLogicalRange({ from: 0, to: SESSION.length - 1 });
     const size = new ResizeObserver(whole);
     size.observe(box.current);
+    // The figure under the pointer: the axes are hidden, so the crosshair
+    // alone would say where without saying what.
+    made.subscribeCrosshairMove((move) => {
+      const el = tip.current;
+      const width = box.current?.clientWidth ?? 0;
+      const point = move.time !== undefined ? move.seriesData.get(line) : undefined;
+      if (!el || !move.point || !point || !("value" in point) || typeof point.value !== "number") {
+        if (el) el.hidden = true;
+        return;
+      }
+      const value = point.value;
+      el.hidden = false;
+      el.dataset.tone = value < 0 ? "down" : value > 0 ? "up" : "";
+      const figure = el.querySelector(".intraday-tip-value");
+      const time = el.querySelector(".intraday-tip-time");
+      if (figure) figure.textContent = rupees(value, { sign: true });
+      if (time) time.textContent = clock(point.time);
+      const half = el.offsetWidth / 2;
+      el.style.left = `${Math.min(Math.max(move.point.x, half), width - half)}px`;
+    });
     const theme = new MutationObserver(() => {
       made.applyOptions(colours());
       series.current?.applyOptions(seriesColours());
@@ -219,6 +241,10 @@ export function IntradayChart({
 
   return (
     <div className="intraday">
+      <div ref={tip} className="intraday-tip" hidden aria-hidden data-testid="intraday-tip">
+        <span className="intraday-tip-value tabular" />
+        <span className="intraday-tip-time" />
+      </div>
       <div
         ref={box}
         className="chart intraday-chart"

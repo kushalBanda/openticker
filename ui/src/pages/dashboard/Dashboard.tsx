@@ -148,34 +148,39 @@ export function Dashboard() {
             />
           </div>
 
+          {/* Two columns that stack on their own, so a short tile leaves no gap beside a tall one. */}
           <div className="dash-grid">
-            <Reveal>
-              <OpenPositionsTile rows={rows} loading={loading} failed={failureOf(positions)} />
-            </Reveal>
-            <Reveal>
-              <MarginTile funds={funds.data} failed={failureOf(funds)} />
-            </Reveal>
-            <Reveal>
-              <DailyCalendar
-                days={history.data?.days ?? []}
-                from={from}
-                to={to}
-                failed={failureOf(history)}
-              />
-            </Reveal>
-            <Reveal>
-              <ChargesTile summary={charges.data} failed={failureOf(charges)} />
-            </Reveal>
-            <Reveal>
-              <StrategiesTile strategies={list} failed={failureOf(strategies)} />
-            </Reveal>
-            <Reveal>
-              <RecentEventsTile
-                entries={recent.data?.entries}
-                names={names}
-                failed={failureOf(recent)}
-              />
-            </Reveal>
+            <div className="dash-col">
+              <Reveal>
+                <OpenPositionsTile rows={rows} loading={loading} failed={failureOf(positions)} />
+              </Reveal>
+              <Reveal>
+                <DailyCalendar
+                  days={history.data?.days ?? []}
+                  from={from}
+                  to={to}
+                  failed={failureOf(history)}
+                />
+              </Reveal>
+              <Reveal>
+                <StrategiesTile strategies={list} failed={failureOf(strategies)} />
+              </Reveal>
+            </div>
+            <div className="dash-col">
+              <Reveal>
+                <MarginTile funds={funds.data} failed={failureOf(funds)} />
+              </Reveal>
+              <Reveal>
+                <ChargesTile summary={charges.data} failed={failureOf(charges)} />
+              </Reveal>
+              <Reveal>
+                <RecentEventsTile
+                  entries={recent.data?.entries}
+                  names={names}
+                  failed={failureOf(recent)}
+                />
+              </Reveal>
+            </div>
           </div>
         </>
       )}
