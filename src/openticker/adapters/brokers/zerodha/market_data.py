@@ -61,8 +61,14 @@ MAX_QUOTES_PER_REQUEST = 500
 # turns here rather than be answered 429. A little over a second, for the
 # clocks not quite agreeing.
 _SECONDS_BETWEEN_QUOTES = 1.05
+# A quote fetched this recently answers again without asking Kite: the web
+# app's Dashboard asks for its positions' prices twice at once, and the
+# second would otherwise wait out the second for the same prices.
+_QUOTE_FRESH_FOR = 1.0
+_KEEP_QUOTES_FOR = 60.0
 _quote_turn = threading.Lock()
 _last_quote = float("-inf")
+_recent: dict[str, tuple[float, dict[str, Any]]] = {}  # key: (fetched at, Kite's quote)
 
 
 def fetch_quote(api_key: str, access_token: str, instrument: Instrument) -> Quote:
@@ -77,8 +83,7 @@ def fetch_depth(api_key: str, access_token: str, instrument: Instrument) -> Mark
 
 def _full_quote(api_key: str, access_token: str, instrument: Instrument) -> dict[str, Any]:
     key = _quote_key(instrument)
-    payload = _get(api_key, access_token, "/quote", params={"i": key})
-    data: dict[str, Any] | None = payload["data"].get(key)
+    data = _quotes(api_key, access_token, [key]).get(key)
     if data is None:
         raise KiteApiError(f"Kite returned no quote for {key}")
     return data
@@ -87,16 +92,35 @@ def _full_quote(api_key: str, access_token: str, instrument: Instrument) -> dict
 def fetch_quotes(api_key: str, access_token: str, instruments: Sequence[Instrument]) -> list[Quote]:
     """Quotes for many instruments, batched. Instruments Kite has no quote for
     (untraded or unknown) are left out."""
-    # Each contract asked for once, however many legs or positions hold it.
-    keys = list(dict.fromkeys(_quote_key(item) for item in instruments))
-    data: dict[str, dict[str, Any]] = {}
-    for start in range(0, len(keys), MAX_QUOTES_PER_REQUEST):
-        batch = keys[start : start + MAX_QUOTES_PER_REQUEST]
-        payload = _get(api_key, access_token, "/quote", params=tuple(("i", key) for key in batch))
-        data.update(payload["data"])
+    data = _quotes(api_key, access_token, [_quote_key(item) for item in instruments])
     return [
         _to_quote(item, data[_quote_key(item)]) for item in instruments if _quote_key(item) in data
     ]
+
+
+def _quotes(api_key: str, access_token: str, keys: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """Kite's quotes for these keys, each asked for once, in turns a second
+    apart. One asked for while it waited its turn is answered by the request
+    before it."""
+    global _last_quote
+    asked = time.monotonic()
+    with _quote_turn:
+        fresh_since = asked - _QUOTE_FRESH_FOR
+        wanted = [k for k in dict.fromkeys(keys) if _recent.get(k, (-1.0, {}))[0] < fresh_since]
+        for start in range(0, len(wanted), MAX_QUOTES_PER_REQUEST):
+            wait = _last_quote + _SECONDS_BETWEEN_QUOTES - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            _last_quote = time.monotonic()
+            batch = wanted[start : start + MAX_QUOTES_PER_REQUEST]
+            payload = _get(api_key, access_token, "/quote", params=tuple(("i", k) for k in batch))
+            fetched = time.monotonic()
+            for key, data in payload["data"].items():
+                _recent[key] = (fetched, data)
+        if wanted:
+            for key in [k for k, (at, _) in _recent.items() if at < asked - _KEEP_QUOTES_FOR]:
+                del _recent[key]
+        return {k: _recent[k][1] for k in keys if _recent.get(k, (-1.0, {}))[0] >= fresh_since}
 
 
 def _quote_key(instrument: Instrument) -> str:
@@ -246,20 +270,9 @@ def _get(
     path: str,
     params: dict[str, str] | tuple[tuple[str, str], ...],
 ) -> dict[str, Any]:
-    if path.startswith("/quote"):
-        _wait_for_quote_turn()
     with httpx.Client(base_url=KITE_BASE_URL, timeout=30.0) as client:
         response = client.get(path, params=params, headers=kite_headers(api_key, access_token))
     return kite_payload(path, response)
-
-
-def _wait_for_quote_turn() -> None:
-    global _last_quote
-    with _quote_turn:
-        wait = _last_quote + _SECONDS_BETWEEN_QUOTES - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        _last_quote = time.monotonic()
 
 
 def kite_headers(api_key: str, access_token: str) -> dict[str, str]:

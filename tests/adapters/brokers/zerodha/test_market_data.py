@@ -46,6 +46,12 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("time.sleep", lambda seconds: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_recent_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_data, "_recent", {})
+    monkeypatch.setattr(market_data, "_last_quote", float("-inf"))
+
+
 def _install(monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]) -> _FakeClient:
     client = _FakeClient(responses)
     monkeypatch.setattr(httpx, "Client", client)
@@ -65,7 +71,7 @@ def test_fetch_quote_maps_price_and_converts_ist_trade_time_to_utc(
     assert quote.last_price == 1374.6
     assert quote.as_of == datetime(2026, 9, 18, 9, 59, 59, tzinfo=UTC)
     path, params, headers = client.requests[0]
-    assert (path, params) == ("/quote", {"i": "NSE:RELIANCE"})
+    assert (path, params) == ("/quote", (("i", "NSE:RELIANCE"),))  # type: ignore[comparison-overlap]
     assert headers["Authorization"] == "token key:token"
 
 
@@ -199,7 +205,8 @@ def test_fetch_quotes_asks_for_a_contract_once_however_many_hold_it(
     assert [quote.last_price for quote in quotes] == [10.0, 10.0]
 
 
-def test_quote_calls_take_turns_a_second_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clock(monkeypatch: pytest.MonkeyPatch) -> tuple[list[float], list[float]]:
+    """A monotonic clock the test moves, and the sleeps it was asked for."""
     now = [100.0]
     slept: list[float] = []
 
@@ -209,19 +216,51 @@ def test_quote_calls_take_turns_a_second_apart(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("time.monotonic", lambda: now[0])
     monkeypatch.setattr("time.sleep", sleep)
-    monkeypatch.setattr(market_data, "_last_quote", float("-inf"))
-    quote = {"NSE:RELIANCE": {"last_price": 10.0, "timestamp": "2026-09-18 15:30:00"}}
-    _install(monkeypatch, [_ok(quote), _ok(quote), _ok({"candles": []})])
+    return now, slept
+
+
+def _priced(*symbols: str) -> httpx.Response:
+    return _ok(
+        {f"NSE:{s}": {"last_price": 10.0, "timestamp": "2026-09-18 15:30:00"} for s in symbols}
+    )
+
+
+def test_quote_calls_take_turns_a_second_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    now, slept = _clock(monkeypatch)
+    _install(monkeypatch, [_priced("RELIANCE"), _priced("INFY"), _ok({"candles": []})])
+    infy = replace(FAKE_INSTRUMENT, symbol="INFY", broker_symbol="INFY")
 
     market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
     now[0] += 0.25
-    market_data.fetch_quotes("key", "token", [FAKE_INSTRUMENT])
+    market_data.fetch_quotes("key", "token", [infy])
     market_data.fetch_candles(
         "key", "token", FAKE_INSTRUMENT, "day", date(2026, 9, 18), date(2026, 9, 18)
     )
 
     # The second quote waits out the rest of the second; candles aren't quotes.
     assert slept == [pytest.approx(market_data._SECONDS_BETWEEN_QUOTES - 0.25)]
+
+
+def test_a_quote_asked_for_again_within_a_second_is_not_asked_of_kite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    now, _ = _clock(monkeypatch)
+    client = _install(monkeypatch, [_priced("RELIANCE"), _priced("INFY"), _priced("RELIANCE")])
+    infy = replace(FAKE_INSTRUMENT, symbol="INFY", broker_symbol="INFY")
+
+    market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+    now[0] += 0.5
+    quotes = market_data.fetch_quotes("key", "token", [FAKE_INSTRUMENT, infy])
+    now[0] += 1.5  # RELIANCE's quote is now too old
+    market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+
+    assert [q.instrument.symbol for q in quotes] == ["RELIANCE", "INFY"]
+    asked: list[Any] = [params for _, params, _ in client.requests]
+    assert asked == [(("i", "NSE:RELIANCE"),), (("i", "NSE:INFY"),), (("i", "NSE:RELIANCE"),)]
 
 
 def test_fetch_quote_carries_the_day_range(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -323,7 +362,7 @@ def test_fetch_depth_drops_empty_levels_and_keeps_the_whole_book_totals(
         5_120_334,
     )
     assert depth.open_interest is None  # equities carry no OI
-    assert client.requests[0][:2] == ("/quote", {"i": "NSE:RELIANCE"})
+    assert client.requests[0][:2] == ("/quote", (("i", "NSE:RELIANCE"),))  # type: ignore[comparison-overlap]
 
 
 def test_depth_reads_five_levels_a_side_and_quote_reads_the_same_best(
