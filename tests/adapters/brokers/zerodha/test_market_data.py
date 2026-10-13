@@ -184,6 +184,46 @@ def test_fetch_quotes_batches_and_skips_instruments_kite_did_not_return(
     assert quotes[-1].open_interest is None
 
 
+def test_fetch_quotes_asks_for_a_contract_once_however_many_hold_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _install(
+        monkeypatch,
+        [_ok({"NSE:RELIANCE": {"last_price": 10.0, "timestamp": "2026-09-18 15:30:00"}})],
+    )
+
+    quotes = market_data.fetch_quotes("key", "token", [FAKE_INSTRUMENT, FAKE_INSTRUMENT])
+
+    asked: Any = client.requests[0][1]  # quotes pass Kite's repeated `i` as pairs
+    assert asked == (("i", "NSE:RELIANCE"),)
+    assert [quote.last_price for quote in quotes] == [10.0, 10.0]
+
+
+def test_quote_calls_take_turns_a_second_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
+    monkeypatch.setattr("time.sleep", sleep)
+    monkeypatch.setattr(market_data, "_last_quote", float("-inf"))
+    quote = {"NSE:RELIANCE": {"last_price": 10.0, "timestamp": "2026-09-18 15:30:00"}}
+    _install(monkeypatch, [_ok(quote), _ok(quote), _ok({"candles": []})])
+
+    market_data.fetch_quote("key", "token", FAKE_INSTRUMENT)
+    now[0] += 0.25
+    market_data.fetch_quotes("key", "token", [FAKE_INSTRUMENT])
+    market_data.fetch_candles(
+        "key", "token", FAKE_INSTRUMENT, "day", date(2026, 9, 18), date(2026, 9, 18)
+    )
+
+    # The second quote waits out the rest of the second; candles aren't quotes.
+    assert slept == [pytest.approx(market_data._SECONDS_BETWEEN_QUOTES - 0.25)]
+
+
 def test_fetch_quote_carries_the_day_range(monkeypatch: pytest.MonkeyPatch) -> None:
     _install(
         monkeypatch,
