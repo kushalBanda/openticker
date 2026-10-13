@@ -159,7 +159,7 @@ export function ChoicePicker({
                     checked={findModel(models, model)?.id === option.id}
                     hint={
                       findModel(models, folderDefault.model)?.id === option.id
-                        ? "default here"
+                        ? "default"
                         : undefined
                     }
                     detail={
@@ -227,7 +227,7 @@ export function ChoicePicker({
                       <Row
                         key={option}
                         checked={level === option}
-                        hint={folderDefault.effort === option ? "default here" : undefined}
+                        hint={folderDefault.effort === option ? "default" : undefined}
                         onClick={() => pickEffort(option)}
                       >
                         {effortLabel(option)}
