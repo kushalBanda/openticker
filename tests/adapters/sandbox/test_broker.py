@@ -1,4 +1,5 @@
 import threading
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -6,7 +7,7 @@ import pytest
 
 from openticker.adapters.sandbox.broker import SandboxBroker
 from openticker.core.orders.models import Order, OrderRequest, OrderStatus, OrderType
-from openticker.ports.models import Product, Side
+from openticker.ports.models import Instrument, Product, Quote, Side
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT
 from tests.fixtures.priced_broker import PricedBroker
@@ -72,6 +73,32 @@ def test_open_position_is_valued_at_the_live_price() -> None:
 
     [position] = sandbox.get_positions()
     assert (position.quantity, position.unrealized_pnl) == (-10, 100.0)
+
+
+def test_positions_are_marked_by_live_prices_and_quoted_only_without_one() -> None:
+    other = replace(FAKE_INSTRUMENT, symbol="INFY", broker_symbol="INFY")
+    upsert_instruments([other])
+    market = PricedBroker(price=1000.0)
+    sandbox = _sandbox(market)
+    sandbox.place_order(_order(Side.BUY, 10))
+    sandbox.place_order(replace(_order(Side.BUY, 5), instrument=other))
+    quoted: list[str] = []
+    real = market.get_quotes
+
+    def get_quotes(instruments: Sequence[Instrument]) -> list[Quote]:
+        quoted.extend(i.symbol for i in instruments)
+        return real(instruments)
+
+    market.get_quotes = get_quotes  # type: ignore[method-assign]
+    live = {FAKE_INSTRUMENT.symbol: 1010.0}
+    marked = SandboxBroker(
+        "fake", market, frictionless(100_000.0), marks=lambda i: live.get(i.symbol)
+    )
+
+    pnl = {p.instrument.symbol: p.unrealized_pnl for p in marked.get_positions()}
+
+    assert quoted == ["INFY"]
+    assert pnl == {FAKE_INSTRUMENT.symbol: 100.0, "INFY": 0.0}
 
 
 def test_delivery_cannot_be_sold_short() -> None:

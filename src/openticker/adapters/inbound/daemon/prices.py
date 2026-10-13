@@ -5,7 +5,9 @@ import threading
 from collections.abc import Iterable
 from datetime import datetime
 
+from openticker.core.calendar.models import SessionHours
 from openticker.ports.models import Instrument, Tick
+from openticker.use_cases.feed_status import QUIET_AFTER
 
 
 class LatestPrices:
@@ -36,6 +38,30 @@ class LatestPrices:
         """The newest price, from either source."""
         with self._lock:
             return self._ticks.get(_key(instrument))
+
+    def current(
+        self, instrument: Instrument, now: datetime, session: SessionHours | None
+    ) -> float | None:
+        """Its price now, if the newest one known still is; None when only a
+        quote would say. While the feed streams, an instrument that hasn't
+        ticked hasn't traded elsewhere. Once `session` (the latest to open)
+        has closed, a price from after the close is final, and so is one from
+        during it if the feed was still streaming at the close."""
+        with self._lock:
+            tick = self._ticks.get(_key(instrument))
+            last = max(self._streamed_at.values(), default=None)
+        if tick is None:
+            return None
+        if last is not None and now - last < QUIET_AFTER:
+            return tick.last_price
+        if session is None or now < session.closes_at:
+            return None
+        if tick.received_at >= session.closes_at:
+            return tick.last_price
+        streamed_to_close = last is not None and last >= session.closes_at - QUIET_AFTER
+        return (
+            tick.last_price if streamed_to_close and tick.received_at >= session.opens_at else None
+        )
 
     def streamed_at(self, instrument: Instrument) -> datetime | None:
         """When the live feed last priced it."""

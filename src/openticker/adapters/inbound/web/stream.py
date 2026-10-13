@@ -47,8 +47,10 @@ from openticker.adapters.inbound.web.models import (
     WatchThread,
 )
 from openticker.adapters.inbound.web.thread_watch import ThreadWatch
+from openticker.core.calendar.calendar import last_session
 from openticker.ports.errors import BrokerError
-from openticker.ports.models import EXCHANGE_TIMEZONE, Instrument, Quote, Tick
+from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Instrument, Quote, Tick
+from openticker.storage.calendar_file import load_calendar
 from openticker.use_cases.feed_status import FeedStatus
 from openticker.use_cases.get_audit_log import latest_audit_id, new_audit_entries
 from openticker.use_cases.resolve_instrument import UnknownInstrumentError, resolve_instrument
@@ -106,6 +108,13 @@ class StreamHub:
         self._connections: set[_Connection] = set()
         self._last_event: int | None = None  # the tail's cursor while any page is open
         self._tail_task: asyncio.Task[None] | None = None
+
+    def marks(self) -> Callable[[Instrument], float | None]:
+        """Prices from the live feed that are still current, for marking
+        positions without asking the broker; None for any that aren't."""
+        now = self._clock()
+        session = last_session(now, Exchange.NSE, load_calendar())
+        return lambda instrument: self._prices.current(instrument, now, session)
 
     def watched(self) -> list[Instrument]:
         """Every instrument an open page wants streamed. Thread-safe."""

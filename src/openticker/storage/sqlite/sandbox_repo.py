@@ -375,6 +375,18 @@ def list_strategy_trades(strategy_id: str) -> list[StoredTrade]:
     return _trades(rows)
 
 
+def list_all_strategy_trades() -> list[StoredTrade]:
+    """Every strategy's fills, oldest first: one read for the whole board."""
+    with Session(get_engine()) as session:
+        rows = session.execute(
+            select(SandboxTradeRow, SandboxOrderRow.triggered_by)
+            .join(SandboxOrderRow, SandboxOrderRow.order_id == SandboxTradeRow.order_id)
+            .where(SandboxTradeRow.strategy_id.is_not(None))
+            .order_by(SandboxTradeRow.filled_at, SandboxTradeRow.id)
+        ).all()
+    return _trades(rows)
+
+
 def _trades(rows: Sequence[Row[SandboxTradeRow, str]]) -> list[StoredTrade]:
     return [
         StoredTrade(

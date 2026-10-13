@@ -14,6 +14,7 @@ from openticker.core.strategies.ledger import (
 )
 from openticker.core.strategies.runs import RunStatus
 from openticker.storage.sqlite import runs_repo, sandbox_repo, strategies_repo
+from openticker.storage.sqlite.sandbox_repo import StoredTrade
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.use_cases.strategies.define import UnknownStrategyError
 
@@ -55,8 +56,28 @@ def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
 
 def ledger_runs(strategy_id: str) -> list[LedgerRun]:
     """Every run it has had, newest first, each with its fills."""
+    fills = _fills_by_run(sandbox_repo.list_strategy_trades(strategy_id))
+    return [
+        LedgerRun(run, tuple(fills.get(run.id, ())))
+        for run in runs_repo.list_runs(strategy_id, LEDGER_HISTORY)
+    ]
+
+
+def every_ledger() -> dict[str, list[LedgerRun]]:
+    """`ledger_runs` for every strategy at once, in two reads rather than two
+    a strategy: the strategies list asks for all of them on every load."""
+    fills = _fills_by_run(sandbox_repo.list_all_strategy_trades())
+    ledgers: dict[str, list[LedgerRun]] = defaultdict(list)
+    for run in runs_repo.list_all_runs():
+        ledger = ledgers[run.strategy_id]
+        if len(ledger) < LEDGER_HISTORY:
+            ledger.append(LedgerRun(run, tuple(fills.get(run.id, ()))))
+    return ledgers
+
+
+def _fills_by_run(trades: list[StoredTrade]) -> dict[str, list[LedgerFill]]:
     fills: dict[str, list[LedgerFill]] = defaultdict(list)
-    for trade in sandbox_repo.list_strategy_trades(strategy_id):
+    for trade in trades:
         if trade.run_id is not None:
             fills[trade.run_id].append(
                 LedgerFill(
@@ -70,7 +91,4 @@ def ledger_runs(strategy_id: str) -> list[LedgerRun]:
                     charges=trade.charges,
                 )
             )
-    return [
-        LedgerRun(run, tuple(fills.get(run.id, ())))
-        for run in runs_repo.list_runs(strategy_id, LEDGER_HISTORY)
-    ]
+    return fills

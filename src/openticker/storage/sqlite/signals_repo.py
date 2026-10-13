@@ -68,6 +68,11 @@ def find_webhook(strategy_id: str) -> StoredWebhook | None:
         return _webhook(row) if row else None
 
 
+def strategies_with_webhooks() -> set[str]:
+    with Session(get_engine()) as session:
+        return set(session.scalars(select(StrategyWebhookRow.strategy_id)).all())
+
+
 def webhook_by_hash(token_hash: str) -> StoredWebhook | None:
     statement = select(StrategyWebhookRow).where(StrategyWebhookRow.token_hash == token_hash)
     with Session(get_engine()) as session:

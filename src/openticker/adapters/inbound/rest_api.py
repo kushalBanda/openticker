@@ -1274,7 +1274,8 @@ def create_app(
     @api.get("/positions")
     def positions(broker: Broker, include_closed: bool = False) -> PositionsResult:
         """Each with the running strategies holding part of it."""
-        held = get_positions(order_broker(broker, env, clock))
+        marks = hub.marks() if hub is not None else None
+        held = get_positions(order_broker(broker, env, clock, marks))
         return PositionsResult.of(held, include_closed, holders(held))
 
     @api.get("/funds")

@@ -89,11 +89,16 @@ class SandboxBroker:
         market: BrokerPort,
         settings: SandboxSettings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        marks: Callable[[Instrument], float | None] | None = None,
     ) -> None:
+        """`marks`: a current price for an instrument, when one is known
+        without asking the broker (the server's live feed); positions are
+        marked with it, and quoted only where it has none."""
         self._name = name
         self._market = market
         self._settings = settings
         self._clock = clock
+        self._marks = marks
         self._charges = settings.charges if settings.charges is not None else load_charge_book()
 
     # Market data and login pass straight through to the real broker.
@@ -423,11 +428,17 @@ class SandboxBroker:
             if (instrument := get_instrument(item.symbol, item.exchange)) is not None
         ]
         open_instruments = [instrument for item, instrument in stored if item.position.quantity]
-        prices = {
-            quote.instrument.symbol: quote.last_price
-            for quote in (self._market.get_quotes(open_instruments) if open_instruments else [])
+        prices: dict[str, float] = {}
+        if self._marks is not None:
+            for instrument in open_instruments:
+                if (mark := self._marks(instrument)) is not None:
+                    prices[instrument.symbol] = mark
+        unmarked = [i for i in open_instruments if i.symbol not in prices]
+        prices.update(
+            (quote.instrument.symbol, quote.last_price)
+            for quote in (self._market.get_quotes(unmarked) if unmarked else [])
             if quote_is_fillable(quote)
-        }
+        )
         positions: list[Position] = []
         for item, instrument in stored:
             held = item.position

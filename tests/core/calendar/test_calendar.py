@@ -4,6 +4,7 @@ import pytest
 
 from openticker.core.calendar.calendar import (
     CalendarError,
+    last_session,
     market_status,
     next_session,
     parse_calendar,
@@ -64,6 +65,20 @@ def test_next_session_skips_holiday_and_weekend() -> None:
 
     assert next_session(after_close, Exchange.NSE, CALENDAR).day == date(2026, 10, 5)
     assert next_session(ist(2026, 9, 22, 10, 0), Exchange.NSE, CALENDAR).day == date(2026, 9, 22)
+
+
+def _last_day(now: datetime) -> date | None:
+    hours = last_session(now, Exchange.NSE, CALENDAR)
+    return hours.day if hours else None
+
+
+def test_last_session_is_the_one_in_progress_or_the_latest_to_open() -> None:
+    assert _last_day(ist(2026, 9, 22, 10, 0)) == date(2026, 9, 22)
+    assert _last_day(ist(2026, 9, 22, 20, 0)) == date(2026, 9, 22)
+    # Before Tuesday's open, Monday's.
+    assert _last_day(ist(2026, 9, 22, 8, 0)) == date(2026, 9, 21)
+    # Monday morning, past the weekend and Friday's holiday: Thursday's.
+    assert _last_day(ist(2026, 10, 5, 8, 0)) == date(2026, 10, 1)
 
 
 @pytest.mark.parametrize(
