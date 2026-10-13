@@ -4,6 +4,7 @@ responses into `Quote` / `Bar`. Both calls need a session access token
 `exchange:tradingsymbol` (quotes) or `instrument_token` (candles).
 """
 
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
@@ -55,6 +56,14 @@ class InvalidCandleRequestError(BrokerError, ValueError):
 # Kite answers at most this many instruments per /quote call.
 MAX_QUOTES_PER_REQUEST = 500
 
+# Kite allows one quote request a second, whichever /quote endpoint. Strategy
+# legs, positions, scripts and the web app all ask, often at once: they take
+# turns here rather than be answered 429. A little over a second, for the
+# clocks not quite agreeing.
+_SECONDS_BETWEEN_QUOTES = 1.05
+_quote_turn = threading.Lock()
+_last_quote = float("-inf")
+
 
 def fetch_quote(api_key: str, access_token: str, instrument: Instrument) -> Quote:
     return _to_quote(instrument, _full_quote(api_key, access_token, instrument))
@@ -78,17 +87,16 @@ def _full_quote(api_key: str, access_token: str, instrument: Instrument) -> dict
 def fetch_quotes(api_key: str, access_token: str, instruments: Sequence[Instrument]) -> list[Quote]:
     """Quotes for many instruments, batched. Instruments Kite has no quote for
     (untraded or unknown) are left out."""
-    quotes: list[Quote] = []
-    for start in range(0, len(instruments), MAX_QUOTES_PER_REQUEST):
-        batch = instruments[start : start + MAX_QUOTES_PER_REQUEST]
-        payload = _get(
-            api_key, access_token, "/quote", params=tuple(("i", _quote_key(item)) for item in batch)
-        )
-        data: dict[str, dict[str, Any]] = payload["data"]
-        quotes.extend(
-            _to_quote(item, data[_quote_key(item)]) for item in batch if _quote_key(item) in data
-        )
-    return quotes
+    # Each contract asked for once, however many legs or positions hold it.
+    keys = list(dict.fromkeys(_quote_key(item) for item in instruments))
+    data: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(keys), MAX_QUOTES_PER_REQUEST):
+        batch = keys[start : start + MAX_QUOTES_PER_REQUEST]
+        payload = _get(api_key, access_token, "/quote", params=tuple(("i", key) for key in batch))
+        data.update(payload["data"])
+    return [
+        _to_quote(item, data[_quote_key(item)]) for item in instruments if _quote_key(item) in data
+    ]
 
 
 def _quote_key(instrument: Instrument) -> str:
@@ -238,9 +246,20 @@ def _get(
     path: str,
     params: dict[str, str] | tuple[tuple[str, str], ...],
 ) -> dict[str, Any]:
+    if path.startswith("/quote"):
+        _wait_for_quote_turn()
     with httpx.Client(base_url=KITE_BASE_URL, timeout=30.0) as client:
         response = client.get(path, params=params, headers=kite_headers(api_key, access_token))
     return kite_payload(path, response)
+
+
+def _wait_for_quote_turn() -> None:
+    global _last_quote
+    with _quote_turn:
+        wait = _last_quote + _SECONDS_BETWEEN_QUOTES - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_quote = time.monotonic()
 
 
 def kite_headers(api_key: str, access_token: str) -> dict[str, str]:
