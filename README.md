@@ -1,4 +1,10 @@
-<h1><img src="assets/profile.png" alt="OpenTicker" width="360"></h1>
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/profile-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/profile-light.png">
+    <img src="assets/profile-light.png" alt="OpenTicker" width="360">
+  </picture>
+</h1>
 
 **A trading desk for Indian markets that you watch and your coding agent runs.**
 
@@ -6,11 +12,11 @@ OpenTicker runs on your machine with your own Zerodha keys. Claude Code, Codex, 
 
 > **Status: early development.** Market data works end to end with Zerodha. Every order is a paper trade in a local sandbox that pays the real bid or ask and real Indian charges. Nothing is sent to the broker. See [Roadmap](#roadmap).
 
-![The Dashboard: today's P&L after charges, the day's minute line, and what happened since your last visit](docs/images/web-dashboard.png)
+![The Dashboard: today's P&L after charges, the day in five-minute candles, and what happened since your last visit](docs/images/web-dashboard.png)
 
 ## The web app
 
-Open it and you see today: P&L after charges, the shape of the day, and what changed since you last looked. Everything after that is live over one WebSocket.
+Open it and you see today: P&L after charges, the shape of the day as a line or five-minute candles, and what changed since you last looked. Everything after that is live over one WebSocket.
 
 - **Every line says who did it.** You, Claude, Codex, a strategy, a TradingView alert, or one of your scripts. Agents show up by name.
 - **Paper fills cost what real ones would.** A buy pays the ask, a sell gets the bid, and each fill keeps its brokerage, STT, fees, stamp duty and GST line by line.
@@ -170,6 +176,8 @@ api = httpx.Client(base_url=os.environ["OPENTICKER_URL"],
 api.post("/api/v1/orders", json={"broker": "zerodha", "symbol": "SBIN", "exchange": "NSE",
                                  "side": "BUY", "quantity": 10, "product": "MIS"})
 ```
+
+Kite answers one quote request a second, so the server spaces out its own. A script watching several symbols should ask for them together (`POST /api/v1/quotes`, up to 50) rather than one at a time.
 
 Scripts are your own trusted code: they run as your user and could read your files. The clean environment keeps secrets from reaching them by accident; it is not a sandbox for code from strangers (ADR 25).
 
