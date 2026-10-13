@@ -1,4 +1,5 @@
-import { Link } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
 import type { DayPnl } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
@@ -6,6 +7,7 @@ import { Instrument, useOpenSymbol } from "../../components/Instrument";
 import { type Failure, TableEmpty, TableFailed } from "../../components/TableStates";
 import { byLabel, describe } from "../../lib/events";
 import {
+  dayMonth,
   direction,
   istClock,
   MISSING,
@@ -201,6 +203,20 @@ export function DailyCalendar({
   const stats = dayStats(calendar);
   const scale = Math.max(1, ...calendar.map((d) => Math.abs(d.net ?? 0)));
   const first = days[0]?.trading_date;
+  // A month's name over the week it starts in, as a calendar heads its columns.
+  const monthLabels = grid.map((week, w) => {
+    const month = week.find((d) => d !== null)?.date.slice(0, 7);
+    const before = grid[w - 1]?.find((d) => d !== null)?.date.slice(0, 7);
+    return month && month !== before ? MONTHS[Number(month.slice(5)) - 1] : "";
+  });
+  // A name too close to the next one (a month's last few days) gives way to it.
+  monthLabels.forEach((label, w) => {
+    if (label && monthLabels[w + 1]) monthLabels[w] = "";
+  });
+  const [picked, pick] = useState<string>();
+  // The day read out beside the grid: the one pointed at, else the latest recorded.
+  const shown =
+    calendar.find((d) => d.date === picked) ?? calendar.filter((d) => d.net !== null).at(-1);
 
   return (
     <section className="tile" aria-labelledby="daily-title">
@@ -210,68 +226,106 @@ export function DailyCalendar({
         </h2>
         <span className="flex-1" />
         <span className="note">
-          {first ? `Recorded since ${first} · after charges` : "After charges"}
+          {first ? `Since ${dayMonth(first)} ${first.slice(0, 4)}, after charges` : "After charges"}
         </span>
       </div>
-      <div
-        className="heatmap"
-        role="img"
-        aria-label={
-          stats
-            ? `Daily P&L after charges: ${stats.winning} winning days of ${stats.days} recorded`
-            : "Daily P&L after charges: no days recorded yet"
-        }
-      >
-        {grid.map((week, w) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: weeks are fixed columns
-          <div className="heatmap-week" key={w}>
-            {week.map((day, i) =>
-              day === null ? (
-                // biome-ignore lint/suspicious/noArrayIndexKey: an empty weekday slot
-                <span key={i} className="heatmap-day" data-empty="true" />
-              ) : (
-                <span
-                  key={day.date}
-                  className="heatmap-day"
-                  data-tone={
-                    day.net === null
-                      ? undefined
-                      : day.net > 0
-                        ? "up"
-                        : day.net < 0
-                          ? "down"
-                          : undefined
-                  }
-                  data-level={shade(day.net, scale)}
-                  title={`${day.date}: ${day.net === null ? "no record" : rupees(day.net, { sign: true })}${day.estimated ? " (est.)" : ""}`}
-                />
-              ),
+      <div className="calendar-body">
+        <div className="calendar-grid">
+          <div className="heatmap-months" aria-hidden>
+            {monthLabels.map((label, w) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: weeks are fixed columns
+              <span key={w} className="heatmap-month">
+                {label}
+              </span>
+            ))}
+          </div>
+          <fieldset
+            className="heatmap"
+            aria-label={
+              stats
+                ? `Daily P&L after charges: ${stats.winning} winning days of ${stats.days} recorded`
+                : "Daily P&L after charges: no days recorded yet"
+            }
+            onMouseLeave={() => pick(undefined)}
+          >
+            {grid.map((week, w) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: weeks are fixed columns
+              <div className="heatmap-week" key={w}>
+                {week.map((day, i) =>
+                  day === null ? (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: an empty weekday slot
+                    <span key={i} className="heatmap-day" data-empty="true" />
+                  ) : day.net === null ? (
+                    <span key={day.date} className="heatmap-day" />
+                  ) : (
+                    <button
+                      type="button"
+                      key={day.date}
+                      className="heatmap-day"
+                      data-tone={day.net > 0 ? "up" : day.net < 0 ? "down" : undefined}
+                      data-level={shade(day.net, scale)}
+                      aria-pressed={day.date === shown?.date}
+                      aria-label={`${dayMonth(day.date)}: ${rupees(day.net, { sign: true })}${day.estimated ? " (estimated)" : ""}`}
+                      onMouseEnter={() => pick(day.date)}
+                      onFocus={() => pick(day.date)}
+                      onClick={() => pick(day.date)}
+                    />
+                  ),
+                )}
+              </div>
+            ))}
+          </fieldset>
+        </div>
+        {failed ? null : (
+          <div className="calendar-day">
+            {shown && shown.net !== null ? (
+              <>
+                <div className="note">
+                  {dayMonth(shown.date)} {shown.date.slice(0, 4)}
+                  {shown.estimated ? ", estimated" : ""}
+                </div>
+                <div className={`calendar-figure tabular ${direction(shown.net) ?? ""}`}>
+                  {rupees(shown.net, { sign: true })}
+                </div>
+              </>
+            ) : (
+              <p className="note settings-note">
+                A day is recorded after each close while openticker-serve runs.
+              </p>
             )}
           </div>
-        ))}
+        )}
       </div>
       {failed ? (
         <TableFailed what="Daily P&L" failure={failed} />
       ) : stats ? (
-        <div className="calendar-stats">
-          <span className="note">
-            Best day <span className="up tabular">{rupees(stats.best, { sign: true })}</span>
-          </span>
-          <span className="note">
-            Worst day <span className="down tabular">{rupees(stats.worst, { sign: true })}</span>
-          </span>
-          <span className="note">
-            Winning days{" "}
-            <span className="tabular">
-              {stats.winning} of {stats.days}
-            </span>
-          </span>
-        </div>
-      ) : (
-        <p className="note settings-note">
-          A day is recorded after each close while openticker-serve runs.
-        </p>
-      )}
+        <dl className="calendar-stats">
+          {[
+            ["Net, all days", rupees(stats.total, { sign: true }), direction(stats.total)],
+            ["This month", rupees(stats.month, { sign: true }), direction(stats.month)],
+            ["Average day", rupees(stats.average, { sign: true }), direction(stats.average)],
+            [
+              "Win rate",
+              `${Math.round((stats.winning / stats.days) * 100)}% (${stats.winning} of ${stats.days})`,
+            ],
+            ["Best day", rupees(stats.best, { sign: true }), direction(stats.best)],
+            ["Worst day", rupees(stats.worst, { sign: true }), direction(stats.worst)],
+            [
+              "Streak",
+              stats.streak === 0
+                ? "Flat"
+                : `${Math.abs(stats.streak)} ${stats.streak > 0 ? "winning" : "losing"}`,
+              direction(stats.streak),
+            ],
+            ["Days recorded", String(stats.days)],
+          ].map(([label, value, tone]) => (
+            <div key={label} className="calendar-stat">
+              <dt className="calendar-label">{label}</dt>
+              <dd className={`calendar-value tabular ${tone ?? ""}`}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
     </section>
   );
 }
@@ -296,12 +350,9 @@ export function ChargesTile({
 }) {
   const months = summary?.months ?? [];
   const top = Math.max(1, ...months.map((m) => m.total));
-  const byType: Record<string, number> = {};
-  for (const month of months) {
-    for (const [name, amount] of Object.entries(month.by_type)) {
-      byType[name] = (byType[name] ?? 0) + amount;
-    }
-  }
+  const [picked, pick] = useState<string>();
+  // The month whose charges are broken down: the one pointed at, else the latest.
+  const shown = months.find((m) => m.month === picked) ?? months.at(-1);
   return (
     <section className="tile" aria-labelledby="charges-month-title">
       <div className="settings-head">
@@ -317,26 +368,65 @@ export function ChargesTile({
         <p className="note settings-note">No fills yet, so no charges.</p>
       ) : (
         <>
-          <ul className="bars" aria-label="Charges by month">
+          <ul className="bars" aria-label="Charges by month" onMouseLeave={() => pick(undefined)}>
             {months.map((m) => (
-              <li className="bar" key={m.month} title={`${m.month}: ${rupees(m.total)}`}>
-                <span className="bar-fill" style={{ height: `${(m.total / top) * 100}%` }} />
-                <span className="bar-label">{MONTHS[Number(m.month.slice(5)) - 1]}</span>
+              <li key={m.month}>
+                <button
+                  type="button"
+                  className="bar"
+                  aria-pressed={m.month === shown?.month}
+                  aria-label={`${monthName(m.month)}: ${rupees(m.total)}`}
+                  onMouseEnter={() => pick(m.month)}
+                  onFocus={() => pick(m.month)}
+                  onClick={() => pick(m.month)}
+                >
+                  <span className="bar-value tabular">{rupees(m.total, { decimals: 0 })}</span>
+                  <span className="bar-fill" style={{ height: `${(m.total / top) * 100}%` }} />
+                  <span className="bar-label">{MONTHS[Number(m.month.slice(5)) - 1]}</span>
+                </button>
               </li>
             ))}
           </ul>
-          <p className="note settings-note">
-            {Object.entries(byType)
-              .map(
-                ([name, amount]) =>
-                  `${CHARGE_NAMES[name] ?? name} ${rupees(amount, { decimals: 0 })}`,
-              )
-              .join(" · ")}
-          </p>
+          {shown ? (
+            <div className="charge-split">
+              <div className="tile-readout">
+                <span>{monthName(shown.month)}</span>
+                <span className="tabular">{rupees(shown.total)}</span>
+              </div>
+              <dl className="charge-split-list">
+                {Object.entries(mergeNames(shown.by_type)).map(([name, amount]) => (
+                  <div key={name}>
+                    <dt className="charge-name">{name}</dt>
+                    <dd className="charge-amount tabular" data-zero={amount === 0 || undefined}>
+                      {rupees(amount)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
         </>
       )}
     </section>
   );
+}
+
+const monthName = (month: string) => `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`;
+
+/**
+ * One row per charge as the user knows it (both exchange charges are
+ * "Exchange"), every charge always listed, at zero when a month had none, so
+ * the breakdown keeps its size from month to month.
+ */
+function mergeNames(byType: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = Object.fromEntries(
+    Object.values(CHARGE_NAMES).map((shown) => [shown, 0]),
+  );
+  for (const [name, amount] of Object.entries(byType)) {
+    const shown = CHARGE_NAMES[name] ?? name;
+    out[shown] = (out[shown] ?? 0) + amount;
+  }
+  return out;
 }
 
 export function StrategiesTile({
@@ -348,6 +438,7 @@ export function StrategiesTile({
 }) {
   const order = { killed: 0, running: 1, listening: 2, scheduled: 3, stopped: 4 } as const;
   const shown = [...(strategies ?? [])].sort((a, b) => order[a.state] - order[b.state]).slice(0, 5);
+  const navigate = useNavigate();
   return (
     <section className="tile" data-flush="true" aria-labelledby="dash-strategies">
       <div className="tile-head">
@@ -362,30 +453,55 @@ export function StrategiesTile({
       ) : strategies && shown.length === 0 ? (
         <TableEmpty>No strategies yet. Ask your agent to create one.</TableEmpty>
       ) : (
-        <ul className="dash-list">
-          {shown.map((s) => {
-            const badge = stateBadge(s.state);
-            return (
-              <li key={s.strategy_id}>
-                <Link to={`/strategies/${s.strategy_id}`} className="row-link">
-                  {s.name}
-                </Link>
-                <span className="note">{s.kind === "options" ? "Options" : "Signal"}</span>
-                <span className="flex-1" />
-                <span className="badge" data-tone={badge.tone}>
-                  {badge.label}
-                </span>
-                <span className={`tabular dash-amount ${direction(s.today_pnl) ?? ""}`}>
-                  {s.today_pnl ? signed(s.today_pnl) : MISSING}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+        <DataTable
+          label="Strategies"
+          columns={STRATEGY_COLUMNS}
+          rows={shown}
+          rowKey={(s) => s.strategy_id}
+          onSelect={(id) => navigate(`/strategies/${id}`)}
+        />
       )}
     </section>
   );
 }
+
+const STRATEGY_COLUMNS: Column<Strategy>[] = [
+  {
+    key: "strategy",
+    head: "Strategy",
+    align: "left",
+    cell: (s) => (
+      <>
+        <Link to={`/strategies/${s.strategy_id}`} className="row-link">
+          {s.name}
+        </Link>{" "}
+        <span className="note">{s.kind === "options" ? "Options" : "Signal"}</span>
+      </>
+    ),
+  },
+  {
+    key: "state",
+    head: "State",
+    align: "left",
+    cell: (s) => {
+      const badge = stateBadge(s.state);
+      return (
+        <span className="badge" data-tone={badge.tone}>
+          {badge.label}
+        </span>
+      );
+    },
+  },
+  {
+    key: "today",
+    head: "Today",
+    cell: (s) => (
+      <span className={direction(s.today_pnl) ?? undefined}>
+        {s.today_pnl ? signed(s.today_pnl) : MISSING}
+      </span>
+    ),
+  },
+];
 
 export function RecentEventsTile({
   entries,

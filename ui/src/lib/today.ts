@@ -104,15 +104,33 @@ export function weeks(days: CalendarDay[], from: string, to: string): (CalendarD
   return out;
 }
 
-/** Best, worst, and winning days out of those with a figure. */
+/**
+ * What the recorded days add up to: best, worst and winning days, the net
+ * over all of them and on average, the latest month's net, and the run of
+ * winning or losing days the latest day belongs to (a flat day ends a run).
+ */
 export function dayStats(days: CalendarDay[]) {
   const known = days.filter((d): d is CalendarDay & { net: number } => d.net !== null);
   if (!known.length) return null;
   const nets = known.map((d) => d.net);
+  const total = nets.reduce((sum, n) => sum + n, 0);
+  const latest = known.at(-1) as CalendarDay & { net: number };
+  const month = latest.date.slice(0, 7);
+  let streak = 0;
+  for (let i = known.length - 1; i >= 0; i--) {
+    const net = known[i]?.net ?? 0;
+    if (net === 0 || Math.sign(net) !== Math.sign(latest.net)) break;
+    streak++;
+  }
   return {
     best: Math.max(...nets),
     worst: Math.min(...nets),
     winning: nets.filter((n) => n > 0).length,
     days: known.length,
+    total,
+    average: total / known.length,
+    month: known.filter((d) => d.date.startsWith(month)).reduce((sum, d) => sum + d.net, 0),
+    /** Days in the latest run: positive for winning days, negative for losing ones. */
+    streak: Math.sign(latest.net) * streak,
   };
 }
