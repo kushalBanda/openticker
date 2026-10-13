@@ -4275,6 +4275,9 @@
   .aw-pick:disabled {
     cursor: default;
   }
+  .aw-pick-skeleton {
+    width: 112px;
+  }
   .aw-pick svg {
     width: 13px;
     height: 13px;

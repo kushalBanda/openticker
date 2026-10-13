@@ -30,6 +30,7 @@ const TOP_CLEAR = 64; // the status bar, and a little air
 export function ChoicePicker({
   harness,
   info,
+  loading,
   folderDefault,
   value,
   onChange,
@@ -37,6 +38,8 @@ export function ChoicePicker({
 }: {
   harness: string;
   info: HarnessInfo | undefined;
+  /** The models or the folder's default aren't known yet. */
+  loading?: boolean;
   folderDefault: Default;
   value: Choice;
   onChange: (choice: Choice) => void;
@@ -115,14 +118,23 @@ export function ChoicePicker({
         ref={button}
         type="button"
         className="aw-pick"
-        aria-label={`Model and effort: ${shown ?? "default model"}, ${level || fallback ? effortLabel(level ?? fallback) : "auto effort"}`}
+        aria-label={
+          loading
+            ? "Model and effort: loading"
+            : `Model and effort: ${shown ?? "default model"}, ${level || fallback ? effortLabel(level ?? fallback) : "auto effort"}`
+        }
         aria-haspopup="menu"
         aria-expanded={open}
-        disabled={disabled}
+        aria-busy={loading}
+        disabled={disabled || loading}
         onClick={() => (open ? setOpen(false) : show())}
       >
-        <span>{shown ?? "Default"}</span>
-        {levels.length > 0 && (
+        {loading ? (
+          <span className="skeleton aw-pick-skeleton" aria-hidden />
+        ) : (
+          <span>{shown ?? "Default"}</span>
+        )}
+        {!loading && levels.length > 0 && (
           <span className="aw-lvl" data-chosen={level !== null}>
             {level || fallback ? effortLabel(level ?? fallback) : "Auto"}
           </span>

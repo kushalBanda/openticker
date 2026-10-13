@@ -25,12 +25,16 @@ import { type Choice, ChoicePicker } from "./ChoicePicker";
 /** What a message in `folder` runs with unless it picks: the folder's
  * default from Settings, when that default is for this harness. */
 export function useFolderDefault(harness: string, folder: string) {
-  const settings = useAgentSettings().data;
-  const info = useHarnesses().data?.harnesses.find((h) => h.harness === harness);
+  const settingsQuery = useAgentSettings();
+  const harnesses = useHarnesses();
+  const settings = settingsQuery.data;
+  const info = harnesses.data?.harnesses.find((h) => h.harness === harness);
   const resolved = settings?.folders.find((f) => f.kind === choiceKind(folder))?.resolved;
   const mine = resolved?.harness === harness;
   return {
     info,
+    // Until both answer, a model would show as its bare id ("sonnet").
+    loading: settingsQuery.isPending || harnesses.isPending,
     folderDefault: {
       model: mine ? (resolved?.model ?? null) : null,
       effort: mine ? ((resolved?.effort ?? null) as Effort | null) : null,
@@ -44,7 +48,7 @@ export function Composer({ thread }: { thread: AgentThread }) {
   const stop = useStopThread(thread.thread_id);
   const [text, setText] = useState("");
   const [choice, setChoice] = useState<Choice>({ model: null, effort: null });
-  const { info, folderDefault } = useFolderDefault(thread.harness, thread.folder);
+  const { info, loading, folderDefault } = useFolderDefault(thread.harness, thread.folder);
   const active = activeTurn(thread.turns)?.job;
   const queued = queuedTurn(thread.turns);
   const last = active ?? thread.turns.at(-1)?.job;
@@ -145,6 +149,7 @@ export function Composer({ thread }: { thread: AgentThread }) {
             <ChoicePicker
               harness={thread.harness}
               info={info}
+              loading={loading}
               folderDefault={folderDefault}
               value={choice}
               onChange={setChoice}
