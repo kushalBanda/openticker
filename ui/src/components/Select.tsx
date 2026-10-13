@@ -18,10 +18,14 @@ export interface Option<T extends string> {
   label: string;
   /** Quieter, on the right: "29 d", "running". */
   hint?: string;
+  /** A second line under the label, in the list only: what the option is for. */
+  detail?: string;
 }
 
 const GAP = 6;
 const MAX_HEIGHT = 320;
+const MIN_WIDTH = 200;
+const DETAIL_WIDTH = 340; // room for a line saying what each option is for
 
 /**
  * Every dropdown in the app (DESIGN.md): a pill with a chevron that opens an
@@ -54,6 +58,7 @@ export function Select<T extends string>({
   const [active, setActive] = useState(0);
   const [at, setAt] = useState<{ top: number; left: number; width: number; up: boolean }>();
   const chosen = options.find((o) => o.value === value);
+  const minWidth = options.some((o) => o.detail) ? DETAIL_WIDTH : MIN_WIDTH;
 
   const place = useCallback(() => {
     const rect = button.current?.getBoundingClientRect();
@@ -62,11 +67,14 @@ export function Select<T extends string>({
     const up = below < Math.min(MAX_HEIGHT, options.length * 34 + 12) && rect.top > below;
     setAt({
       top: up ? rect.top - GAP : rect.bottom + GAP,
-      left: Math.min(rect.left, window.innerWidth - Math.max(rect.width, 200) - 8),
+      left: Math.max(
+        8,
+        Math.min(rect.left, window.innerWidth - Math.max(rect.width, minWidth) - 8),
+      ),
       width: rect.width,
       up,
     });
-  }, [options.length]);
+  }, [options.length, minWidth]);
 
   const show = (start?: "first" | "last") => {
     const index = options.findIndex((o) => o.value === value);
@@ -183,7 +191,7 @@ export function Select<T extends string>({
               data-up={at.up}
               style={{
                 left: at.left,
-                minWidth: Math.max(at.width, 200),
+                minWidth: Math.min(Math.max(at.width, minWidth), window.innerWidth - 16),
                 maxHeight: MAX_HEIGHT,
                 ...(at.up ? { bottom: window.innerHeight - at.top } : { top: at.top }),
               }}
@@ -209,14 +217,27 @@ export function Select<T extends string>({
                   data-index={index}
                   data-active={index === active}
                   className="select-option"
+                  data-detail={option.detail ? true : undefined}
                   onPointerMove={() => setActive(index)}
                   onClick={() => choose(index)}
                 >
                   <span className="select-check" aria-hidden>
                     {option.value === value && <Check size={14} />}
                   </span>
-                  <span className="flex-1">{option.label}</span>
-                  {option.hint && <span className="select-hint">{option.hint}</span>}
+                  {option.detail ? (
+                    <span className="select-label">
+                      <span className="select-title">
+                        <span className="flex-1">{option.label}</span>
+                        {option.hint && <span className="select-hint">{option.hint}</span>}
+                      </span>
+                      <span className="select-detail">{option.detail}</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="flex-1">{option.label}</span>
+                      {option.hint && <span className="select-hint">{option.hint}</span>}
+                    </>
+                  )}
                 </div>
               ))}
             </m.div>

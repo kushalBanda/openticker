@@ -50,7 +50,7 @@ The Agents page is a chat with your own Claude Code or Codex, signed in as you, 
 - **Chats live where they belong.** File a chat in General, under a strategy or a script. A strategy's folder also holds its reviews.
 - **See it work.** Each step shows as it happens: the tools it calls, the files it changes. When it's done, the steps fold away behind "Worked for 41s".
 - **Know what ran.** Each answer ends with the harness, model, effort, tokens and cost.
-- **Pick the model and effort.** Choose them for any message, or set a default for each folder in Settings.
+- **Pick the model and effort.** Choose them for any message, or set a default for each folder in Settings. The models come from your installed Claude Code or Codex, so a new one shows up as soon as the harness offers it, with the effort levels that model takes.
 - **Ask a review why.** A review or a debrief opens as a chat. When it ends, you can ask it a follow-up in the same conversation.
 
 ## Built for coding agents

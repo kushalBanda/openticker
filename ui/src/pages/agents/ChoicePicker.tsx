@@ -4,7 +4,14 @@ import * as m from "motion/react-m";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Effort, HarnessInfo } from "../../api/queries";
-import { effortLabel, harnessLabel } from "../../lib/agents";
+import {
+  effortLabel,
+  effortsOf,
+  findModel,
+  harnessLabel,
+  modelId,
+  modelName,
+} from "../../lib/agents";
 import { enter, leave } from "../../lib/motion";
 
 /** A message's own model and effort; null keeps the folder's default. */
@@ -43,7 +50,13 @@ export function ChoicePicker({
   const model = value.model ?? folderDefault.model;
   const effort = value.effort ?? folderDefault.effort;
   const models = info?.models ?? [];
-  const custom = model !== null && !models.includes(model);
+  const custom = model !== null && findModel(models, model) === undefined;
+  const shown = model ? modelName(models, model) : null;
+  // Levels are the model's own: what runs now, the agent's default when none is picked.
+  const running = model ? findModel(models, model) : (info?.default_model ?? undefined);
+  const levels = effortsOf(info, running);
+  const level = effort && levels.includes(effort) ? effort : null;
+  const fallback = running?.default_effort ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -83,9 +96,16 @@ export function ChoicePicker({
       close();
     }
   };
-  // The folder's default is chosen by choosing nothing.
-  const pickModel = (name: string | null) =>
-    onChange({ ...value, model: name === folderDefault.model ? null : name });
+  // The folder's default is chosen by choosing nothing. A level the next
+  // model doesn't take is let go, rather than sent to a model that refuses it.
+  const pickModel = (name: string | null) => {
+    const next = name ? findModel(models, name) : (info?.default_model ?? undefined);
+    const takes = effortsOf(info, next);
+    onChange({
+      model: name === folderDefault.model ? null : name,
+      effort: value.effort && takes.includes(value.effort) ? value.effort : null,
+    });
+  };
   const pickEffort = (level: Effort) =>
     onChange({ ...value, effort: level === folderDefault.effort ? null : level });
 
@@ -95,14 +115,18 @@ export function ChoicePicker({
         ref={button}
         type="button"
         className="aw-pick"
-        aria-label={`Model and effort: ${model ?? "default model"}, ${effortLabel(effort)}`}
+        aria-label={`Model and effort: ${shown ?? "default model"}, ${level || fallback ? effortLabel(level ?? fallback) : "auto effort"}`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
       >
-        {model ? <code>{model}</code> : <span>Default</span>}
-        {effort && <span className="aw-lvl">{effortLabel(effort)}</span>}
+        <span>{shown ?? "Default"}</span>
+        {levels.length > 0 && (
+          <span className="aw-lvl" data-chosen={level !== null}>
+            {level || fallback ? effortLabel(level ?? fallback) : "Auto"}
+          </span>
+        )}
         <ChevronDown aria-hidden />
       </button>
       {createPortal(
@@ -110,7 +134,7 @@ export function ChoicePicker({
           {open && at && (
             <m.div
               ref={menu}
-              className="menu aw-menu"
+              className="menu aw-menu aw-choice-menu"
               role="menu"
               aria-label="Model and effort"
               style={{ bottom: at.bottom, right: at.right, maxHeight: at.height }}
@@ -118,68 +142,100 @@ export function ChoicePicker({
               {...enter}
               exit={leave}
             >
-              <div className="menu-note">Model · {harnessLabel(harness)}</div>
-              {folderDefault.model === null && (
-                <Row checked={model === null} hint="default here" onClick={() => pickModel(null)}>
-                  Agent's default
-                </Row>
-              )}
-              {models.map((name) => (
-                <Row
-                  key={name}
-                  checked={model === name}
-                  hint={folderDefault.model === name ? "default here" : undefined}
-                  onClick={() => pickModel(name)}
-                >
-                  <code>{name}</code>
-                </Row>
-              ))}
-              {typing || (info?.free_text_model ?? false) ? (
-                <form
-                  className="aw-menu-model"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const typed = new FormData(event.currentTarget).get("model");
-                    const name = typeof typed === "string" ? typed.trim() : "";
-                    if (name) pickModel(name);
-                    setTyping(false);
-                  }}
-                >
-                  <input
-                    name="model"
-                    className="input"
-                    aria-label="Model name"
-                    placeholder="Model name"
-                    defaultValue={custom ? (model ?? "") : ""}
-                    // biome-ignore lint/a11y/noAutofocus: opened by asking to type one
-                    autoFocus={typing}
-                  />
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="menu-row"
-                  onClick={() => setTyping(true)}
-                >
-                  <span className="aw-menu-check" aria-hidden>
-                    {custom && <Check size={14} />}
-                  </span>
-                  <span className="flex-1">{custom ? <code>{model}</code> : "Other model…"}</span>
-                </button>
-              )}
-              <hr className="aw-menu-rule" />
-              <div className="menu-note">Effort</div>
-              {(info?.efforts ?? []).map((level) => (
-                <Row
-                  key={level}
-                  checked={effort === level}
-                  hint={folderDefault.effort === level ? "default here" : undefined}
-                  onClick={() => pickEffort(level)}
-                >
-                  {effortLabel(level)}
-                </Row>
-              ))}
+              <div className="aw-menu-col">
+                <div className="menu-note">Model · {harnessLabel(harness)}</div>
+                {folderDefault.model === null && (
+                  <Row
+                    checked={model === null}
+                    detail={info?.default_model?.about}
+                    onClick={() => pickModel(null)}
+                  >
+                    Agent's default
+                  </Row>
+                )}
+                {models.map((option) => (
+                  <Row
+                    key={option.id}
+                    checked={findModel(models, model)?.id === option.id}
+                    hint={
+                      findModel(models, folderDefault.model)?.id === option.id
+                        ? "default"
+                        : undefined
+                    }
+                    detail={
+                      <>
+                        {option.about}
+                        <span className="aw-menu-id">{modelId(option)}</span>
+                      </>
+                    }
+                    onClick={() => pickModel(option.id)}
+                  >
+                    {option.name}
+                  </Row>
+                ))}
+                {typing || (info?.free_text_model ?? false) ? (
+                  <form
+                    className="aw-menu-model"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const typed = new FormData(event.currentTarget).get("model");
+                      const name = typeof typed === "string" ? typed.trim() : "";
+                      if (name) pickModel(name);
+                      setTyping(false);
+                    }}
+                  >
+                    <input
+                      name="model"
+                      className="input"
+                      aria-label="Model name"
+                      placeholder="Model name"
+                      defaultValue={custom ? (model ?? "") : ""}
+                      // biome-ignore lint/a11y/noAutofocus: opened by asking to type one
+                      autoFocus={typing}
+                    />
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-row"
+                    onClick={() => setTyping(true)}
+                  >
+                    <span className="aw-menu-check" aria-hidden>
+                      {custom && <Check size={14} />}
+                    </span>
+                    <span className="flex-1">{custom ? <code>{model}</code> : "Other model…"}</span>
+                  </button>
+                )}
+              </div>
+              <div className="aw-menu-col aw-menu-effort">
+                <div className="menu-note">Effort{running ? ` · ${running.name}` : ""}</div>
+                {levels.length === 0 ? (
+                  <p className="aw-menu-none">This model has no effort setting.</p>
+                ) : (
+                  <>
+                    {folderDefault.effort === null && (
+                      <Row
+                        checked={level === null}
+                        hint={fallback ? effortLabel(fallback) : undefined}
+                        onClick={() => onChange({ ...value, effort: null })}
+                      >
+                        Auto
+                      </Row>
+                    )}
+                    {levels.map((option) => (
+                      <Row
+                        key={option}
+                        checked={level === option}
+                        hint={folderDefault.effort === option ? "default" : undefined}
+                        onClick={() => pickEffort(option)}
+                      >
+                        {effortLabel(option)}
+                      </Row>
+                    ))}
+                  </>
+                )}
+              </div>
             </m.div>
           )}
         </AnimatePresence>,
@@ -192,11 +248,14 @@ export function ChoicePicker({
 function Row({
   checked,
   hint,
+  detail,
   onClick,
   children,
 }: {
   checked: boolean;
   hint?: string;
+  /** A second line: what it's for, and what runs. */
+  detail?: ReactNode;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -206,13 +265,26 @@ function Row({
       role="menuitemradio"
       aria-checked={checked}
       className="menu-row"
+      data-detail={detail ? true : undefined}
       onClick={onClick}
     >
       <span className="aw-menu-check" aria-hidden>
         {checked && <Check size={14} />}
       </span>
-      <span className="flex-1">{children}</span>
-      {hint && <span className="aw-menu-hint">{hint}</span>}
+      {detail ? (
+        <span className="aw-menu-label">
+          <span className="aw-menu-title">
+            <span className="flex-1">{children}</span>
+            {hint && <span className="aw-menu-hint">{hint}</span>}
+          </span>
+          <span className="aw-menu-detail">{detail}</span>
+        </span>
+      ) : (
+        <>
+          <span className="flex-1">{children}</span>
+          {hint && <span className="aw-menu-hint">{hint}</span>}
+        </>
+      )}
     </button>
   );
 }

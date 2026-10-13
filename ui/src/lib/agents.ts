@@ -22,18 +22,44 @@ export function harnessLabel(harness: string): string {
   return harness === "codex" ? "Codex" : "Claude Code";
 }
 
-const EFFORTS: Record<string, string> = {
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
+type ModelInfo = Schemas["ModelResult"];
 
-/** "Extra high" for xhigh; the harness's own default when none is chosen. */
+/** The listed model a choice names, by its id or the full name an alias runs. */
+export function findModel(
+  models: ModelInfo[] | undefined,
+  id: string | null | undefined,
+): ModelInfo | undefined {
+  if (!id) return undefined;
+  return models?.find((m) => m.id === id) ?? models?.find((m) => m.resolves_to === id);
+}
+
+/** A model's name as the harness shows it; one it doesn't list, as named. */
+export function modelName(models: ModelInfo[] | undefined, id: string): string {
+  return findModel(models, id)?.name ?? id;
+}
+
+/** What actually runs: the full name an alias resolves to, else the id itself. */
+export function modelId(model: ModelInfo): string {
+  return model.resolves_to ?? model.id;
+}
+
+/** "Extra high" for xhigh, "Ultra" for ultra: levels are the harness's, named as it names them. */
 export function effortLabel(effort: string | null | undefined): string {
-  return effort ? (EFFORTS[effort] ?? effort) : "Default";
+  if (!effort) return "Default";
+  if (effort === "xhigh") return "Extra high";
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+/**
+ * The effort levels a model takes, as its harness lists them with it. A
+ * model the harness doesn't list (typed by name) gets every level the
+ * harness's models take; a listed one that takes none gets none.
+ */
+export function effortsOf(
+  info: { models: ModelInfo[]; efforts: string[] } | undefined,
+  model: ModelInfo | undefined,
+): string[] {
+  return model ? model.efforts : (info?.efforts ?? []);
 }
 
 export type JobState =

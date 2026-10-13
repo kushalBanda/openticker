@@ -47,6 +47,12 @@ test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to 
     "Ready · 2.1.296",
   );
   await expect(agents.locator("label", { hasText: "Codex" })).toContainText("Ready · 0.48.0");
+  // Each agent by its own mark, not a radio dot.
+  for (const name of ["Claude Code", "Codex"]) {
+    await expect(
+      agents.locator("label", { hasText: name }).locator("img.harness-logo"),
+    ).toBeVisible();
+  }
 
   const reviews = agents.getByRole("button", { name: /Reviews/ });
   await expect(reviews).toContainText("Agent's default");
@@ -59,8 +65,15 @@ test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to 
   await expect(toast(page, "Saved")).toBeVisible();
   await expect(reviews).toContainText("Default model · High");
   await agents.getByRole("combobox", { name: "Reviews model" }).click();
-  await page.getByRole("option", { name: "opus" }).click();
-  await expect(reviews).toContainText("opus · High");
+  // Named as Claude Code lists them, with what each is for and what it runs.
+  const opus = page.getByRole("option", { name: /^Opus 5\.5/ });
+  await expect(opus).toContainText("claude-opus-5-5");
+  await expect(opus).toContainText("For complex work and everyday tasks");
+  await page.screenshot({ path: "test-results/screens/settings-agents-models-1440.png" });
+  await opus.click();
+  await expect(reviews).toContainText("Opus 5.5 · High");
+  await expect(agents.getByText(/Runs claude-opus-5-5 today/)).toBeVisible();
+  await agents.screenshot({ path: "test-results/screens/settings-agents-1440.png" });
 
   const runs = agents.locator(".st-count");
   const before = Number(await runs.textContent());

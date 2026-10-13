@@ -21,7 +21,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from openticker.adapters.scripts.supervisor import alive, ps
-from openticker.core.agents import transcript
+from openticker.core.agents import catalog, transcript
+from openticker.core.agents.choices import ModelOption
 from openticker.core.agents.jobs import Harness
 from openticker.ports.agent_job_port import AgentLaunch, AgentOutcome, HarnessInfo
 from openticker.ports.script_process_port import Exited
@@ -221,21 +222,25 @@ def read_outcome(harness: Harness, events_path: Path, result_path: Path) -> Agen
 DETECT_EVERY = 60.0  # seconds a detection is kept
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?")
 _detected: tuple[float, list[HarnessInfo]] | None = None
+Listed = tuple[tuple[ModelOption, ...], ModelOption | None]
 
 
 def detect(parent: Mapping[str, str] | None = None, *, fresh: bool = False) -> list[HarnessInfo]:
-    """Which harnesses are on the PATH jobs get, and their versions: each
-    `<cli> --version`, five seconds at most. Kept a minute."""
+    """Which harnesses are on the PATH jobs get, their versions, and the
+    models each lists (core/agents/catalog.py): `<cli> --version`, five
+    seconds at most, kept a minute; the models kept an hour per version."""
     global _detected
     if not fresh and _detected is not None and time.monotonic() - _detected[0] < DETECT_EVERY:
         return _detected[1]
-    path = job_env("", parent if parent is not None else os.environ)["PATH"]
-    found = [_detect_one(harness, path) for harness in Harness]
+    env = job_env("", parent if parent is not None else os.environ)
+    del env[KEY_VARIABLE]
+    found = [_detect_one(harness, env, fresh) for harness in Harness]
     _detected = (time.monotonic(), found)
     return found
 
 
-def _detect_one(harness: Harness, path: str) -> HarnessInfo:
+def _detect_one(harness: Harness, env: Mapping[str, str], fresh: bool) -> HarnessInfo:
+    path = env["PATH"]
     executable = shutil.which(harness.value, path=path)
     if executable is None:
         return HarnessInfo(harness, installed=False)
@@ -251,5 +256,92 @@ def _detect_one(harness: Harness, path: str) -> HarnessInfo:
         )
     except (OSError, subprocess.TimeoutExpired):
         return HarnessInfo(harness, installed=True)
-    version = _VERSION.search(done.stdout or "")
-    return HarnessInfo(harness, installed=True, version=version.group(0) if version else None)
+    match = _VERSION.search(done.stdout or "")
+    version = match.group(0) if match else None
+    models, default = _models(harness, executable, version, env, fresh)
+    if harness is Harness.CLAUDE:
+        configured = _claude_configured_model(env)
+        if configured is not None:
+            default = catalog.configured_default(configured, models, CLAUDE_SETTINGS_SAY)
+    return HarnessInfo(
+        harness, installed=True, version=version, models=models, default_model=default
+    )
+
+
+CLAUDE_SETTINGS_SAY = "Set in your Claude Code settings"
+
+
+def _claude_configured_model(env: Mapping[str, str]) -> str | None:
+    """The model the user's own Claude Code settings run when none is named:
+    `model` in their settings.json. Claude Code's own list says only what
+    the account would run without it, so a run would otherwise show one
+    model and run another. Read each detection, not kept with the list:
+    the user may change it any time."""
+    folder = env.get("CLAUDE_CONFIG_DIR") or str(Path(env.get("HOME", "")) / ".claude")
+    try:
+        settings = json.loads((Path(folder) / "settings.json").read_text())
+    except (OSError, ValueError):
+        return None
+    model = settings.get("model") if isinstance(settings, dict) else None
+    return model.strip() if isinstance(model, str) and model.strip() else None
+
+
+MODELS_EVERY = 3600.0  # seconds a harness's model list is kept, per version
+MODELS_RETRY = 300.0  # and when it couldn't be read
+_listed: dict[tuple[Harness, str | None], tuple[float, Listed]] = {}
+
+
+def _models(
+    harness: Harness,
+    executable: str,
+    version: str | None,
+    env: Mapping[str, str],
+    fresh: bool,
+) -> Listed:
+    """The models the harness lists. A new version lists again at once."""
+    kept = _listed.get((harness, version))
+    if kept is not None and not fresh:
+        at, listed = kept
+        if time.monotonic() - at < (MODELS_EVERY if listed[0] else MODELS_RETRY):
+            return listed
+    listed = _list_models(harness, executable, env)
+    _listed[(harness, version)] = (time.monotonic(), listed)
+    return listed
+
+
+def _list_models(harness: Harness, executable: str, env: Mapping[str, str]) -> Listed:
+    if harness is Harness.CLAUDE:
+        # Only starts up and answers: no prompt is sent, so no model is
+        # called. No hooks or MCP servers of the user's, nothing of a project's.
+        argv = [
+            executable,
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--strict-mcp-config",
+            "--settings",
+            json.dumps({"disableAllHooks": True}),
+        ]
+        stdin = catalog.CLAUDE_INITIALIZE + "\n"
+    else:
+        argv, stdin = [executable, "debug", "models"], ""
+    with tempfile.TemporaryDirectory(prefix="openticker-models-") as folder:
+        try:
+            done = subprocess.run(
+                argv,
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                cwd=folder,
+                env=dict(env),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return (), None
+    if harness is Harness.CLAUDE:
+        return catalog.claude_models(done.stdout.splitlines())
+    return catalog.codex_models(done.stdout), None

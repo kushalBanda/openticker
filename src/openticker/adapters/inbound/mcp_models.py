@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from openticker.core.agents.choices import EFFORTS, MODELS, Effort, FolderKind, RunChoice
+from openticker.core.agents.choices import Effort, FolderKind, ModelOption, RunChoice
 from openticker.core.agents.jobs import (
     AgentJob,
     AgentJobEndReason,
@@ -2386,13 +2386,44 @@ class AgentSettingsResult(BaseModel):
         )
 
 
+class ModelResult(BaseModel):
+    id: str = Field(description="What is passed to the harness: an alias or a full name.")
+    name: str = Field(description="The name the harness shows for it.")
+    about: str = Field(description="What the harness says it's for.")
+    resolves_to: str | None = Field(description="The full name an alias runs today, if told.")
+    efforts: list[Effort] = Field(
+        description="The effort levels it takes, lowest first; empty when it takes none."
+    )
+    default_effort: Effort | None = Field(description="Its level when none is named, if told.")
+
+    @classmethod
+    def of(cls, option: ModelOption) -> "ModelResult":
+        return cls(
+            id=option.id,
+            name=option.name,
+            about=option.about,
+            resolves_to=option.resolves_to,
+            efforts=list(option.efforts),
+            default_effort=option.default_effort,
+        )
+
+
 class HarnessResult(BaseModel):
     harness: Harness
     installed: bool
     version: str | None
-    models: list[str] = Field(description="Names to pick from; empty when any name is taken.")
+    models: list[ModelResult] = Field(
+        description="The models the harness lists on this machine, as its own picker orders "
+        "them; empty when it lists none and any name is typed."
+    )
+    default_model: ModelResult | None = Field(
+        description="What the harness runs when no model is named, when it says."
+    )
     free_text_model: bool = Field(description="True when the model is typed, not picked.")
-    efforts: list[Effort] = Field(description="The efforts it offers, lowest first.")
+    efforts: list[Effort] = Field(
+        description="Every level any of its models takes, lowest first: for a model it "
+        "doesn't list. A listed model's own are on the model."
+    )
 
     @classmethod
     def of(cls, info: HarnessInfo) -> "HarnessResult":
@@ -2400,9 +2431,10 @@ class HarnessResult(BaseModel):
             harness=info.harness,
             installed=info.installed,
             version=info.version,
-            models=list(MODELS[info.harness]),
-            free_text_model=not MODELS[info.harness],
-            efforts=list(EFFORTS[info.harness]),
+            models=[ModelResult.of(option) for option in info.models],
+            default_model=ModelResult.of(info.default_model) if info.default_model else None,
+            free_text_model=not info.models,
+            efforts=list(dict.fromkeys(e for m in info.models for e in m.efforts)),
         )
 
 

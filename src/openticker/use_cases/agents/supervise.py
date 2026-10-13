@@ -153,7 +153,7 @@ def queue_due_debrief(context: AgentContext, now: datetime) -> AgentJob | None:
             now,
             subject=today,
             model=choice.model,
-            effort=choice.effort.value if choice.effort else None,
+            effort=choice.effort or None,
         )
         job = agent_threads_repo.open_job_thread(
             session, job, job_title(job.kind, None, today), now

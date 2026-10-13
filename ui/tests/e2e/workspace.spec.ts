@@ -96,10 +96,21 @@ test("the picker chooses the next message's model and effort, and the turn recor
   const picker = page.getByRole("button", { name: /^Model and effort/ });
   await picker.click();
   const menu = page.getByRole("menu", { name: "Model and effort" });
-  await menu.getByRole("menuitemradio", { name: "haiku" }).click();
+  // Effort beside the models, in view without scrolling past them.
+  await expect(menu.getByRole("menuitemradio", { name: "Max" })).toBeInViewport();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: "test-results/screens/agents-choice-picker-1440.png" });
+  // Max picked on the default model, then a model that doesn't take it: let go.
+  await menu.getByRole("menuitemradio", { name: "Max" }).click();
+  await expect(picker).toContainText("Max");
+  await menu.getByRole("menuitemradio", { name: /^Haiku 5\.5/ }).click();
+  await expect(menu.getByRole("menuitemradio", { name: "Max" })).toHaveCount(0);
+  await expect(menu.getByText("Effort · Haiku 5.5")).toBeVisible();
+  await expect(picker).toContainText("Auto");
   await menu.getByRole("menuitemradio", { name: "Low" }).click();
   await page.keyboard.press("Escape");
-  await expect(picker).toHaveAccessibleName("Model and effort: haiku, Low");
+  await expect(picker).toHaveAccessibleName("Model and effort: Haiku 5.5, Low");
+  await page.screenshot({ path: "test-results/screens/agents-choice-button-1440.png" });
 
   const box = page.getByRole("textbox", { name: "Message" });
   await box.fill("Which model answers?");
@@ -201,7 +212,13 @@ test("a chat with Codex: its effort levels, its events read as steps, and it res
   await picker.click();
   const menu = page.getByRole("menu", { name: "Model and effort" });
   await expect(menu.getByText("Model · Codex")).toBeVisible();
-  await expect(menu.getByRole("textbox", { name: "Model name" })).toBeVisible(); // any model it offers
+  // Its own list (`codex debug models`), what its picker shows; any other name is typed.
+  await expect(menu.getByRole("menuitemradio", { name: /^GPT-6-Luna/ })).toContainText(
+    "Fast and affordable model for easier tasks.",
+  );
+  await expect(menu.getByRole("menuitemradio", { name: /Codex Auto Review/ })).toHaveCount(0);
+  await menu.getByRole("menuitem", { name: "Other model…" }).click();
+  await expect(menu.getByRole("textbox", { name: "Model name" })).toBeVisible();
   await expect(menu.getByRole("menuitemradio", { name: "Extra high" })).toHaveCount(0);
   await menu.getByRole("menuitemradio", { name: "Minimal" }).click();
   await page.keyboard.press("Escape");

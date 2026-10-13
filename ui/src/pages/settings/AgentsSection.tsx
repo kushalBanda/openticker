@@ -14,9 +14,17 @@ import {
   useSetAgentDefaults,
   useSetFolderChoice,
 } from "../../api/queries";
+import { HarnessLogo } from "../../components/HarnessLogo";
 import { Segmented } from "../../components/Segmented";
 import { Select } from "../../components/Select";
-import { effortLabel, harnessLabel } from "../../lib/agents";
+import {
+  effortLabel,
+  effortsOf,
+  findModel,
+  harnessLabel,
+  modelId,
+  modelName,
+} from "../../lib/agents";
 import { useActions } from "../../shell/actions";
 
 const CHATS: { kind: ChoiceKind; name: string; about: string }[] = [
@@ -31,6 +39,7 @@ const BACKGROUND: { kind: ChoiceKind; name: string; about: string }[] = [
 type DefaultsBody = Parameters<ReturnType<typeof useSetAgentDefaults>["mutate"]>[0];
 
 const DEFAULT = "__default";
+const OTHER = "__other";
 const MAX_RUNS = 500;
 
 const failed = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -171,11 +180,12 @@ function AgentsForm({
                 <input
                   type="radio"
                   name="agent-harness"
-                  className="st-radio"
+                  className="sr-only"
                   checked={harness === name}
                   disabled={!data || (info !== undefined && !info.installed) || pending}
                   onChange={() => saveDefaults({ harness: name })}
                 />
+                <HarnessLogo harness={name} size={32} />
                 <span>
                   <b>{harnessLabel(name)}</b>
                   <span>{harnessesLoaded ? installState(info) : <Pending width={96} />}</span>
@@ -307,7 +317,15 @@ function FolderRow({
           <span className="st-about">{about}</span>
         </span>
         <span className="st-sum">
-          {folder ? summary(folder, background) : <Pending width={88} />}
+          {folder ? (
+            summary(
+              folder,
+              harnesses.find((h) => h.harness === folder.resolved.harness),
+              background,
+            )
+          ) : (
+            <Pending width={88} />
+          )}
         </span>
         <ChevronRight className="st-chev" aria-hidden />
       </button>
@@ -324,13 +342,14 @@ function FolderRow({
   );
 }
 
-function summary(folder: FolderSettings, background?: boolean) {
+function summary(folder: FolderSettings, info: HarnessInfo | undefined, background?: boolean) {
   const r = folder.resolved;
   const cap = background && r.max_budget_usd != null ? ` · $${r.max_budget_usd.toFixed(2)}` : "";
-  if (!r.model && !r.effort) return `Agent's default${cap}`;
+  const model = r.model ? modelName(info?.models, r.model) : null;
+  if (!model && !r.effort) return `Agent's default${cap}`;
   return (
     <>
-      {r.model ? <code>{r.model}</code> : "Default model"} · {effortLabel(r.effort)}
+      {model ?? "Default model"} · {effortLabel(r.effort)}
       {cap}
     </>
   );
@@ -351,6 +370,7 @@ function FolderFields({
 }) {
   const save = useSetFolderChoice();
   const { notify } = useActions();
+  const [typingOther, setTypingOther] = useState(false);
   const stored = folder.stored;
   const resolved = folder.resolved;
   const claude = resolved.harness === "claude";
@@ -376,40 +396,94 @@ function FolderFields({
     );
 
   const models = info?.models ?? [];
+  const listed = findModel(models, stored.model);
+  // The levels are the model's own: the one picked, else the one the agent runs.
+  const running = stored.model
+    ? listed
+    : (findModel(models, resolved.model) ?? info?.default_model ?? undefined);
+  const levels = effortsOf(info, running);
+  const pickModel = (model: string | null) => {
+    const next = model ? findModel(models, model) : (info?.default_model ?? undefined);
+    const keeps = stored.effort !== null && effortsOf(info, next).includes(stored.effort);
+    change(keeps ? { model } : { model, effort: null });
+  };
+  const unlisted = stored.model !== null && listed === undefined;
+  const typing = typingOther || unlisted || (info?.free_text_model ?? false);
+  const fallback = info?.default_model;
   return (
     <div className="st-fields" id={id}>
       <span className="st-fl">Model</span>
-      <div>
-        {info?.free_text_model ? (
-          <CommitInput
-            label={`${name} model`}
-            value={stored.model ?? ""}
-            placeholder={envModel ?? "Agent's default"}
-            onCommit={(text) => change({ model: text.trim() || null })}
-          />
-        ) : (
+      <div className="st-model">
+        {models.length > 0 && (
           <Select
             label={`${name} model`}
-            value={stored.model ?? DEFAULT}
+            value={typing ? OTHER : (listed?.id ?? DEFAULT)}
             options={[
-              { value: DEFAULT, label: "Default", hint: envModel ?? "agent's own" },
-              ...models.map((model) => ({ value: model, label: model })),
+              {
+                value: DEFAULT,
+                label: "Default",
+                hint: envModel ? modelName(models, envModel) : (fallback?.resolves_to ?? undefined),
+                detail: envModel
+                  ? "Set by OPENTICKER_AGENT_MODEL"
+                  : (fallback?.about ?? "The agent's own default"),
+              },
+              ...models.map((model) => ({
+                value: model.id,
+                label: model.name,
+                hint: modelId(model),
+                detail: model.about || undefined,
+              })),
+              { value: OTHER, label: "Other model…", detail: "Type any name the agent takes" },
             ]}
-            onChange={(value) => change({ model: value === DEFAULT ? null : value })}
+            onChange={(value) => {
+              setTypingOther(value === OTHER);
+              if (value !== OTHER) pickModel(value === DEFAULT ? null : value);
+            }}
           />
+        )}
+        {typing && (
+          <CommitInput
+            label={`${name} model name`}
+            value={unlisted ? (stored.model ?? "") : ""}
+            placeholder={envModel ?? "Model name, as the agent takes it"}
+            onCommit={(text) => pickModel(text.trim() || null)}
+          />
+        )}
+        {listed && (
+          <span className="st-model-about">
+            {listed.about && `${listed.about.replace(/\.$/, "")}.`}
+            {listed.resolves_to && (
+              <>
+                {" "}
+                Runs <code>{listed.resolves_to}</code> today, and newer releases as the agent ships
+                them.
+              </>
+            )}
+          </span>
         )}
       </div>
       <span className="st-fl">Effort</span>
       <div>
-        <Segmented<Effort | typeof DEFAULT>
-          label={`${name} effort`}
-          value={stored.effort ?? DEFAULT}
-          segments={[
-            { value: DEFAULT, label: "Default" },
-            ...(info?.efforts ?? []).map((level) => ({ value: level, label: effortLabel(level) })),
-          ]}
-          onChange={(value) => change({ effort: value === DEFAULT ? null : value })}
-        />
+        {levels.length > 0 ? (
+          <Segmented<Effort | typeof DEFAULT>
+            label={`${name} effort`}
+            value={stored.effort && levels.includes(stored.effort) ? stored.effort : DEFAULT}
+            segments={[
+              {
+                value: DEFAULT,
+                label: running?.default_effort
+                  ? `Auto (${effortLabel(running.default_effort)})`
+                  : "Auto",
+              },
+              ...levels.map((level) => ({ value: level, label: effortLabel(level) })),
+            ]}
+            onChange={(value) => change({ effort: value === DEFAULT ? null : value })}
+          />
+        ) : (
+          <span className="st-model-about">
+            {running ? `${running.name} has no effort setting.` : "Pick a model to set its effort."}
+          </span>
+        )}
       </div>
       {background && claude && (
         <>

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from openticker.core.agents.choices import Effort, FolderKind, RunChoice, StoredSettings
+from openticker.core.agents.choices import FolderKind, RunChoice, StoredSettings
 from openticker.core.agents.jobs import Harness
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import AgentSettingRow
@@ -38,7 +38,7 @@ def save_choice(
     row.harness = choice.harness.value if choice.harness else None
     row.chosen_for = chosen_for.value
     row.model = choice.model
-    row.effort = choice.effort.value if choice.effort else None
+    row.effort = choice.effort or None
     row.max_budget_usd = choice.max_budget_usd
     row.timeout_minutes = int(choice.timeout.total_seconds() // 60) if choice.timeout else None
 
@@ -71,7 +71,7 @@ def _choice(row: AgentSettingRow) -> RunChoice:
     return RunChoice(
         harness=Harness(row.harness) if row.harness else None,
         model=row.model,
-        effort=Effort(row.effort) if row.effort else None,
+        effort=row.effort or None,
         max_budget_usd=row.max_budget_usd,
         timeout=timedelta(minutes=row.timeout_minutes) if row.timeout_minutes else None,
     )

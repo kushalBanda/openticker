@@ -73,6 +73,47 @@ def _place_order(argv: list[str]) -> tuple[str, bool]:
         return str(json.loads(refused.read())["detail"]), True
 
 
+# What its /model picker lists, as Claude Code answers `initialize` (core/agents/catalog.py).
+MODELS = [
+    ("default", "Default (recommended)", "Opus 5.5 · Best for everyday, complex tasks", "opus"),
+    ("opus", "Opus 5.5", "For complex work and everyday tasks", "opus"),
+    ("sonnet", "Sonnet 5.5", "Most efficient for simpler tasks", "sonnet"),
+    ("haiku", "Haiku 5.5", "Fastest for quick answers", "haiku"),
+    ("fable", "Fable 5.1", "For your toughest challenges", "fable"),
+]
+FULL = {
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5",
+    "fable": "claude-fable-5-1",
+}
+
+
+# Each model's own effort levels, as Claude Code lists them with it.
+LEVELS = {
+    "opus": ["low", "medium", "high", "xhigh", "max"],
+    "sonnet": ["low", "medium", "high", "xhigh", "max"],
+    "haiku": ["low", "medium", "high"],
+    "fable": ["low", "medium", "high", "xhigh", "max"],
+}
+
+
+def _answer_initialize(request: dict[str, object]) -> None:
+    models = [
+        {
+            "value": value,
+            "displayName": name,
+            "description": about,
+            "resolvedModel": FULL[family],
+            "supportsEffort": True,
+            "supportedEffortLevels": LEVELS[family],
+        }
+        for value, name, about, family in MODELS
+    ]
+    response = {"request_id": request["request_id"], "response": {"models": models}}
+    print(json.dumps({"type": "control_response", "response": response}), flush=True)
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if argv == ["--version"]:
@@ -81,11 +122,13 @@ def main() -> None:
     # A review or debrief is asked on the command line; a chat's message comes on stdin.
     agent = _flag(argv, "--agent")
     message = argv[argv.index("-p") + 1] if agent else sys.stdin.read().strip()
+    first = message.splitlines()[0] if message else ""
+    if first.startswith('{"type": "control_request"'):
+        _answer_initialize(json.loads(first))  # OpenTicker asking for the model list
+        return
     resumed = _flag(argv, "--resume")
     session = resumed or str(uuid.uuid4())
-    model = {"sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}.get(
-        _flag(argv, "--model") or "", "claude-opus-5-5"
-    )
+    model = FULL.get(_flag(argv, "--model") or "", "claude-opus-5-5")
     asked_model = _flag(argv, "--model")
     if resumed and resumed.startswith("gone-"):  # a session Claude Code no longer has
         _fail(session, f"No conversation found with session ID: {resumed}")

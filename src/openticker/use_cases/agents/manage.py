@@ -78,7 +78,7 @@ def start_review(
             triggered_by,
             now,
             model=choice.model,
-            effort=choice.effort.value if choice.effort else None,
+            effort=choice.effort or None,
         )
         return agent_threads_repo.open_job_thread(
             session, job, job_title(job.kind, stored.name, None), now

@@ -469,7 +469,7 @@ def _add_turn(
         thread_id=thread.id,
         prompt=message,
         model=choice.model,
-        effort=choice.effort.value if choice.effort else None,
+        effort=choice.effort or None,
     )
 
 

@@ -155,7 +155,7 @@ def start_debrief(
             now,
             subject=day,
             model=choice.model,
-            effort=choice.effort.value if choice.effort else None,
+            effort=choice.effort or None,
         )
         return agent_threads_repo.open_job_thread(session, job, job_title(job.kind, None, day), now)
 
