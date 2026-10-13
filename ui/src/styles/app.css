@@ -4325,6 +4325,10 @@
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
+    /* Room under the last row, and a soft fade at the edge so a row cut by
+       the scroll reads as "more below", not as clipped text. */
+    padding-bottom: 20px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
   }
   .aw-menu-effort {
     margin-left: 6px;
@@ -4338,6 +4342,8 @@
     }
     .aw-menu-col {
       overflow: visible;
+      padding-bottom: 0;
+      mask-image: none;
     }
     .aw-menu-effort {
       margin: 6px 0 0;
