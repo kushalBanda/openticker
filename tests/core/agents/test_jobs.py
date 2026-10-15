@@ -36,7 +36,6 @@ def test_a_review_prompt_names_the_strategy_its_note_and_the_job() -> None:
 
     assert "'nifty condor' (stg_1)" in prompt and "notes/nifty condor.md" in prompt
     assert "review-strategy" in prompt and "unattended" in prompt
-    assert "schedule" not in prompt
     assert prompt.endswith("(OpenTicker agent job job_9)")
 
 

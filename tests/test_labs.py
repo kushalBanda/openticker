@@ -208,7 +208,8 @@ def test_manage_desk_says_when_not_to_run_and_points_to_its_references() -> None
 def test_manage_desk_sets_a_next_look_only_when_needed_and_a_stop_for_every_run() -> None:
     text = (CLAUDE_SKILLS / "manage-desk" / "SKILL.md").read_text()
 
-    assert "End every turn with set_next_wake" not in text
+    assert "Set `set_next_wake` only for something none of those would catch in time" in text
+    assert "Never while nothing is open and nothing will enter" in text
     assert "Every strategy that trades today gets a stop line before it trades" in text
     assert "Explain before you act" in text
 

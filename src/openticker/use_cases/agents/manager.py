@@ -503,21 +503,17 @@ def _check_exists(key: LineKey) -> None:
 
 
 def _views(calendar: MarketCalendar, now: datetime) -> list[LineView]:
-    return _line_views(manager_repo.lines(), today_figures(calendar, now))
-
-
-def today_figures(calendar: MarketCalendar, now: datetime) -> dict[str, DayFigure | None]:
-    """Today's money by line key, market apart from charges (ADR 42): each
-    strategy's (today's fills, whenever their run started) and the desk's
-    (the latest minute recorded, open positions included)."""
-    return _desk_read(calendar, now)[1]
+    return _line_views(manager_repo.lines(), _desk_read(calendar, now)[1])
 
 
 def _desk_read(
     calendar: MarketCalendar, now: datetime
 ) -> tuple[list["DeskRead"], dict[str, DayFigure | None]]:
     """One read of the strategy board and the ledgers: each row with the stop
-    its record gives, and today's figures."""
+    its record gives, and today's money by line key, market apart from
+    charges (ADR 42): each strategy's (today's fills, whenever their run
+    started) and the desk's (the latest minute recorded, open positions
+    included)."""
     ledgers = every_ledger()
     rows = strategy_board(calendar, now, ledgers)
     figures: dict[str, DayFigure | None] = {_strategy_key(row): row.today for row in rows}
