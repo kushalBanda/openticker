@@ -6,7 +6,8 @@
 
 - You can't sign in: it's the user's. Say plainly, first in your answer, that they need to sign in again from Settings.
 - `get_market_status` and a `get_quote` on one contract tell you whether prices flow again.
-- Restart nothing that needs prices until they do. Set a next look only if the user is likely to sign in soon and something should enter then.
+- Restart nothing that needs prices until they do, and unschedule what would enter before then: a strategy entering blind closes for lost prices.
+- When they sign in, a "prices back" wake comes (`undone` lists `blind_plan`): plan again from the desk as it is then.
 
 ## A strategy stopped for lost prices (`tick_stale`)
 
@@ -35,3 +36,11 @@ The desk's figure is the paper account's; the strategies' are their own fills. A
 ## You can't explain something
 
 Say so, say what you looked at, and what would tell you. A short "I can't tell why X; Y would show it" is worth more than a guess.
+
+## `undone` lists something you can't do
+
+Some items can't be done: the strategy has no record and no stop of its own to size a stop from, the user owns the line, or a tool refused twice. Say which, and why, in one line each. The server wakes you once for each new item; an item you explained won't wake you again.
+
+## No suggested stop
+
+`suggested_stop` is null when a strategy has fewer than 10 runs after costs and no combined stop or daily loss limit of its own. Size one from its own leg stops and its lot size (what one bad run would cost), give that as the reason, and say the record is thin. Unscheduling it is also a decision.

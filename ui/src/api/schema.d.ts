@@ -4711,6 +4711,11 @@ export interface components {
              * @description Lines the user set, left as they are: say in your answer that you disagree and why, and don't ask again.
              */
             kept_yours: components["schemas"]["KeptYoursResult"][];
+            /**
+             * Undone
+             * @description The desk's duties still undone after this call: do each before you end the look, or say in your answer why it stays.
+             */
+            undone: components["schemas"]["UndoneResult"][];
         };
         /** ManagerPlanBody */
         ManagerPlanBody: {
@@ -4794,6 +4799,11 @@ export interface components {
             given: number;
             /** @description The desk's money today at the latest recorded minute: closed trades (gross), open positions (open), charges, and net; null before the first minute. */
             desk_today: components["schemas"]["DayFigureResult"] | null;
+            /**
+             * Undone
+             * @description The desk's duties left undone. Do each before you end the look, or say in your answer why it stays.
+             */
+            undone: components["schemas"]["UndoneResult"][];
         };
         /** ManagerSwitchBody */
         ManagerSwitchBody: {
@@ -6649,6 +6659,8 @@ export interface components {
              * @description Cumulative net P&L after costs at the end of each day it ran, oldest first; the latest 750 days.
              */
             equity: components["schemas"]["EquityPointResult"][];
+            /** @description The desk manager's stop line from this record: 1.75x its median losing run with 10 or more runs after costs, never tighter than its own combined stop; with fewer, its own combined stop, else its daily loss limit; null without either. */
+            suggested_stop: components["schemas"]["SuggestedStopResult"] | null;
         };
         /** StrategyPreviewResult */
         StrategyPreviewResult: {
@@ -6944,6 +6956,19 @@ export interface components {
             /** @description The newest review that answered. */
             last_review: components["schemas"]["ReviewBriefResult"] | null;
         };
+        /** SuggestedStopResult */
+        SuggestedStopResult: {
+            /**
+             * Value
+             * @description Rupees, below 0: the stop line its record gives.
+             */
+            value: number;
+            /**
+             * Basis
+             * @description What it rests on; give it as the line's reason.
+             */
+            basis: string;
+        };
         /** SyncResult */
         SyncResult: {
             /** Broker */
@@ -7133,6 +7158,29 @@ export interface components {
              * @description Start of the period (today, this week or this month), exchange-local.
              */
             since: string;
+        };
+        /** UndoneResult */
+        UndoneResult: {
+            /**
+             * Kind
+             * @description unguarded: it trades today (running, listening, or entering later today) with no stop on your line. contradicted: your line gives it capital 0, yet it trades today. blind_plan: today's plan was made while prices were down, and they're back.
+             * @enum {string}
+             */
+            kind: "unguarded" | "contradicted" | "blind_plan";
+            /**
+             * Key
+             * @description The line it is about (strategy:<id>), or plan.
+             */
+            key: string;
+            /** Name */
+            name: string;
+            /**
+             * Text
+             * @description What's undone, and what would do it.
+             */
+            text: string;
+            /** @description The stop line its record gives, as get_strategy_ledger has it. */
+            suggested_stop: components["schemas"]["SuggestedStopResult"] | null;
         };
         /**
          * UpdateThreadBody

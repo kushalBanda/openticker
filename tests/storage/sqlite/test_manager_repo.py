@@ -65,3 +65,15 @@ def test_lines_upsert_and_order() -> None:
     found = manager_repo.lines()
     assert [str(x.key) for x in found] == ["desk", "own", "strategy:a", "strategy:b", "script:s"]
     assert found[2].capital == 5.0 and found[2].set_at == AT
+
+
+def test_undone_told_round_trips_and_null_reads_as_none_told() -> None:
+    with Session(get_engine()) as session:
+        manager_repo.save_state(session, ManagerState(enabled=True))
+        session.commit()
+    assert manager_repo.get_state().undone_told == frozenset()
+    told = frozenset({"unguarded:strategy:stg_a", "blind_plan:plan"})
+    with Session(get_engine()) as session:
+        manager_repo.save_state(session, ManagerState(enabled=True, undone_told=told))
+        session.commit()
+    assert manager_repo.get_state().undone_told == told

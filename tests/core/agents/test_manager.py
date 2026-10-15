@@ -16,6 +16,7 @@ from openticker.core.agents.manager import (
     Crossed,
     DayModel,
     DayUse,
+    DeskRow,
     DigestLine,
     LineChangeAt,
     LineKey,
@@ -26,6 +27,8 @@ from openticker.core.agents.manager import (
     SetBy,
     Stalled,
     Tier,
+    Undone,
+    UndoneKind,
     WakeDecision,
     WakeInputs,
     WakeOutcome,
@@ -44,13 +47,16 @@ from openticker.core.agents.manager import (
     parse_key,
     retry_message,
     stalled,
+    tier_of,
     trailing_failures,
+    undone,
     wake_due,
     wake_message,
     wake_reason,
 )
 from openticker.core.calendar.models import SessionHours
 from openticker.core.pnl import DayFigure, Source, source_of
+from openticker.core.strategies.ledger import SuggestedStop
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 
 AT = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)
@@ -297,9 +303,19 @@ def test_manager_context_names_the_skill_and_the_rules_that_matter_most() -> Non
     context = manager_context(DAY)
     assert DAY.isoformat() in context
     assert "manage-desk" in context and "Paper only" in context
-    assert "explain where today's money came from" in context
-    assert "Every running strategy gets a stop line" in context
+    assert "Explain where today's money came from" in context
+    assert "Every strategy that trades today gets a stop line before it trades" in context
     assert "set_next_wake" not in context  # a next look only when one is needed (ADR 42)
+
+
+def test_manager_context_says_decide_dont_ask_and_finish_the_look() -> None:
+    context = manager_context(DAY)
+    assert "never hand a decision back or ask the user to choose" in context
+    assert "A look is finished when undone is empty" in context
+    assert "capital 0 means you stopped or unscheduled it" in context
+    # one prompt for every model and harness
+    for name in ("Claude", "Codex", "Haiku", "Sonnet", "Opus", "GPT"):
+        assert name not in context
 
 
 def test_the_plan_task_asks_for_no_next_look_it_doesnt_need() -> None:
@@ -361,6 +377,62 @@ def test_broke_beats_line_beats_scheduled_beats_fallback() -> None:
     line = wake_due(WakeInputs(_ist(11), HOURS, state, False, False, 1, (), crossed))
     assert line.reason is WakeReason.LINE
     assert _due(_ist(11), state).reason is WakeReason.SCHEDULED
+
+
+UNGUARDED_A = Undone(UndoneKind.UNGUARDED, "strategy:stg_a", "a", "a: running, no stop line.")
+UNGUARDED_B = replace(UNGUARDED_A, key="strategy:stg_b", name="b")
+
+
+def test_restored_wakes_after_a_blind_plan_before_line_and_scheduled() -> None:
+    state = replace(ON, next_wake_at=_ist(11), last_wake_at=_ist(9))
+    crossed = frozenset({"desk"})
+    back = WakeInputs(_ist(11), HOURS, state, False, False, 1, (), crossed, restored=True)
+    assert wake_due(back) == WakeDecision(WakeOutcome.DUE, WakeReason.RESTORED, crossed)
+    broke = replace(back, broken=BROKEN)
+    assert wake_due(broke).reason is WakeReason.BROKE
+    assert tier_of(WakeReason.RESTORED) is Tier.DECISIVE
+
+
+def test_undone_wakes_once_per_set_and_again_when_it_changes() -> None:
+    state = replace(ON, last_wake_at=_ist(10, 30))
+    left = WakeInputs(_ist(11), HOURS, state, False, False, 1, undone=(UNGUARDED_A,))
+    assert wake_due(left).reason is WakeReason.UNDONE
+    assert tier_of(WakeReason.UNDONE) is Tier.DECISIVE
+    told = replace(state, undone_told=frozenset({UNGUARDED_A.tag}))
+    assert wake_due(replace(left, state=told)).outcome is WakeOutcome.WAIT  # named already
+    grew = replace(left, state=told, undone=(UNGUARDED_A, UNGUARDED_B))
+    assert wake_due(grew).reason is WakeReason.UNDONE  # b is new
+    shrank = replace(
+        left, state=replace(state, undone_told=frozenset({UNGUARDED_A.tag, UNGUARDED_B.tag}))
+    )
+    assert wake_due(shrank).outcome is WakeOutcome.WAIT  # what's left was named
+
+
+def test_undone_waits_while_a_turn_is_open_and_after_the_close() -> None:
+    state = replace(ON, last_wake_at=_ist(10, 30))
+    left = WakeInputs(_ist(11), HOURS, state, False, False, 1, undone=(UNGUARDED_A,))
+    assert wake_due(replace(left, turn_open=True)).outcome is WakeOutcome.WAIT
+    late = replace(left, now=_ist(15, 31), state=replace(state, last_wake_at=_ist(15, 20)))
+    assert wake_due(late).outcome is WakeOutcome.WAIT  # after the close: nothing enters
+    scheduled = replace(left, state=replace(state, next_wake_at=_ist(11)))
+    assert wake_due(scheduled).reason is WakeReason.UNDONE  # before the time it set
+
+
+def test_undone_lists_a_blind_plan_once_prices_are_back() -> None:
+    (plan,) = undone([], {}, (_ist(9, 13), _ist(9, 18)))
+    assert plan.kind is UndoneKind.BLIND_PLAN and plan.tag == "blind_plan:plan"
+    assert plan.text == (
+        "Your plan at 09:13 was made while prices were down; they came back at 09:18. "
+        "Plan again from the desk as it is now."
+    )
+
+
+def test_restored_message_asks_for_a_new_plan_from_the_desk_now() -> None:
+    task = wake_message(WakeReason.RESTORED, DAY).rsplit("\n", 1)[-1]
+    assert task.startswith("Prices are back, Tue 22 Sep 2026, and your plan was made without them.")
+    assert "set_manager_numbers" in task and "set_manager_plan" in task
+    undone_task = wake_message(WakeReason.UNDONE, DAY).rsplit("\n", 1)[-1]
+    assert "Do each now" in undone_task and "say why" in undone_task
 
 
 def test_broke_waits_while_a_turn_is_open_and_after_the_close_wake() -> None:
@@ -459,6 +531,71 @@ def test_wake_message_says_which_line_crossed() -> None:
     )
     assert "<crossed>" in text
     assert "The desk is at -31,000.00 today, at or past your stop -30,000.00." in text
+
+
+def _row(name: str, when: str = "running", trades: bool = True, yours: bool = False) -> DeskRow:
+    return DeskRow(f"strategy:stg_{name}", name, trades, when, yours)
+
+
+def test_undone_lists_a_strategy_trading_today_without_a_stop_line() -> None:
+    rows = [
+        _row("a"),
+        _row("b", "listening"),
+        _row("c", "enters 09:20"),
+        _row("d", "stopped", trades=False),
+        _row("e"),
+    ]
+    lines = {
+        "strategy:stg_a": _line("strategy:stg_a", None),
+        "strategy:stg_e": _line("strategy:stg_e", -5000.0),
+    }
+    found = undone(rows, lines)
+    assert [u.key for u in found] == ["strategy:stg_a", "strategy:stg_b", "strategy:stg_c"]
+    assert {u.kind for u in found} == {UndoneKind.UNGUARDED}
+    assert found[2].text == (
+        "c: enters 09:20, no stop line. It has no record or stop of its own to size one from."
+    )
+
+
+def test_undone_names_the_suggested_stop_and_its_basis() -> None:
+    stop = SuggestedStop(-8750.0, "1.75x its median losing run -₹5,000 over 12 runs after costs")
+    row = replace(_row("a"), suggested=stop)
+    (found,) = undone([row], {})
+    assert found.suggested == stop
+    assert found.text == (
+        "a: running, no stop line. Suggested stop -8,750: "
+        "1.75x its median losing run -₹5,000 over 12 runs after costs."
+    )
+
+
+def test_undone_says_capital_zero_contradicts_a_strategy_that_trades() -> None:
+    zero = replace(_line("strategy:stg_a", -5000.0), capital=0.0)
+    off = replace(_line("strategy:stg_b", None), capital=0.0)
+    rows = [_row("a"), _row("b", "stopped", trades=False)]
+    (found,) = undone(rows, {"strategy:stg_a": zero, "strategy:stg_b": off})
+    assert found.kind is UndoneKind.CONTRADICTED
+    assert found.text.startswith(
+        "a: running, but your line gives it capital 0. Stop or unschedule it, or give it "
+        "capital and a stop."
+    )
+
+
+def test_undone_never_lists_what_the_user_owns() -> None:
+    yours = replace(_line("strategy:stg_a", None), set_by=SetBy.YOU)
+    rows = [_row("a"), _row("b", yours=True)]
+    assert undone(rows, {"strategy:stg_a": yours}) == []
+
+
+def test_every_wake_carries_the_undone_tag_before_the_task() -> None:
+    item = Undone(UndoneKind.UNGUARDED, "strategy:stg_a", "a<b>", "a<b>: running, no stop line.")
+    for reason in WakeReason:
+        text = wake_message(reason, DAY, undone=[item])
+        tag, task = text.split("</wake>")
+        assert "<undone>\n- a‹b›: running, no stop line.\n</undone>" in tag
+        assert reason is WakeReason.UNDONE or task.endswith(
+            "Before you end, do what's undone, or say why it stays."
+        )
+    assert "<undone>" not in wake_message(WakeReason.PLAN, DAY)
 
 
 E = AgentJobEndReason

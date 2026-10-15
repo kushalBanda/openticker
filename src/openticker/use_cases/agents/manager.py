@@ -26,10 +26,12 @@ from openticker.core.agents.manager import (
     MAX_LINES_PER_CALL,
     MAX_REASON_CHARS,
     MAX_WAKES_PER_DAY,
+    PLAN_LEAD,
     Broke,
     CloseNote,
     Crossed,
     DayUse,
+    DeskRow,
     DigestLine,
     LineAtClose,
     LineChangeAt,
@@ -41,6 +43,7 @@ from openticker.core.agents.manager import (
     ManagerState,
     SetBy,
     Stalled,
+    Undone,
     WakeInputs,
     WakeOutcome,
     WakeReason,
@@ -58,6 +61,7 @@ from openticker.core.agents.manager import (
     retry_message,
     stalled,
     trailing_failures,
+    undone,
     wake_due,
     wake_message,
     wake_reason,
@@ -68,7 +72,8 @@ from openticker.core.brain.notes import NoteKind
 from openticker.core.calendar.calendar import last_session, session_hours
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.pnl import DayFigure, Source, source_of
-from openticker.core.strategies.ledger import day_figure
+from openticker.core.risk.models import StrategyStopReason
+from openticker.core.strategies.ledger import SuggestedStop, day_figure, suggest_stop
 from openticker.events.bus import EventPublisher
 from openticker.events.types import (
     ManagerNumbersChanged,
@@ -94,7 +99,7 @@ from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapErr
 from openticker.use_cases.agents.supervise import AgentContext
 from openticker.use_cases.brain.read import UnknownNoteError
 from openticker.use_cases.pnl_history import trading_day
-from openticker.use_cases.strategies.board import strategy_board
+from openticker.use_cases.strategies.board import BoardRow, RunEnd, StrategyState, strategy_board
 from openticker.use_cases.strategies.ledger import every_ledger
 
 log = logging.getLogger(__name__)
@@ -141,12 +146,14 @@ class ManagerView:
     account: float  # the paper account's capital
     given: float  # capital given to strategies, scripts and its own trades
     desk_today: DayFigure | None  # the latest recorded minute's; None before the first
+    undone: list[Undone]  # the desk's duties left undone (ADR 44)
 
 
 def get_manager(starting_capital: float, calendar: MarketCalendar, now: datetime) -> ManagerView:
     state = manager_repo.get_state()
-    figures = today_figures(calendar, now)
-    views = _line_views(manager_repo.lines(), figures)
+    rows, figures = _desk_read(calendar, now)
+    lines = manager_repo.lines()
+    views = _line_views(lines, figures)
     today = _day(now.astimezone(EXCHANGE_TIMEZONE).date())
     return ManagerView(
         state=state,
@@ -159,6 +166,7 @@ def get_manager(starting_capital: float, calendar: MarketCalendar, now: datetime
             sum(v.line.capital or 0.0 for v in views if v.line.key.kind is not LineKind.DESK), 2
         ),
         desk_today=figures.get(LineKind.DESK.value),
+        undone=_undone(rows, lines, _blind(state.plan, now), now),
     )
 
 
@@ -358,11 +366,13 @@ def set_manager_numbers(
     triggered_by: str,
     calendar: MarketCalendar,
     now: datetime,
-) -> tuple[list[LineView], list[KeptYours]]:
+) -> tuple[list[LineView], list[KeptYours], list[Undone]]:
     """Sets lines' capital and stop, both at once. Set by the manager (its
     calls record as "manager:…"), a line the user set keeps the user's
     numbers: the manager's are kept beside them and returned as KeptYours.
-    Set by anyone else, it is the user's, and stands until handed back."""
+    Set by anyone else, it is the user's, and stands until handed back.
+    A stop set at or past today's figure counts as crossed already, so it
+    wakes no one (ADR 44). Returns the desk's undone after the write."""
     if not changes:
         raise ManagerError("give at least one line")
     if len(changes) > MAX_LINES_PER_CALL:
@@ -374,8 +384,10 @@ def set_manager_numbers(
     for key, change in zip(keys, changes, strict=True):
         check_line(change.capital, change.stop, change.reason, by_manager)
         _check_exists(key)
+    read, figures = _desk_read(calendar, now)
     kept: list[KeptYours] = []
     published: list[ManagerNumbersChanged] = []
+    past: set[str] = set()
     with write_transaction() as session:
         for key, change in zip(keys, changes, strict=True):
             current = manager_repo.find_line(session, key)
@@ -423,11 +435,16 @@ def set_manager_numbers(
                     triggered_by=triggered_by,
                 )
             )
+            past |= crossed_lines([line], figures)
+        if past:
+            state = manager_repo.get_state(session)
+            manager_repo.save_state(session, replace(state, crossed=state.crossed | past))
     for event in published:
         events.publish(event)
+    lines = manager_repo.lines()
     wanted_keys = {str(key) for key in keys}
-    views = [v for v in _views(calendar, now) if str(v.line.key) in wanted_keys]
-    return views, kept
+    views = [v for v in _line_views(lines, figures) if str(v.line.key) in wanted_keys]
+    return views, kept, _undone(read, lines, _blind(manager_repo.get_state().plan, now), now)
 
 
 def clear_override(
@@ -493,13 +510,117 @@ def today_figures(calendar: MarketCalendar, now: datetime) -> dict[str, DayFigur
     """Today's money by line key, market apart from charges (ADR 42): each
     strategy's (today's fills, whenever their run started) and the desk's
     (the latest minute recorded, open positions included)."""
-    figures: dict[str, DayFigure | None] = {
-        f"{LineKind.STRATEGY.value}:{row.strategy.id}": row.today
-        for row in strategy_board(calendar, now)
-    }
+    return _desk_read(calendar, now)[1]
+
+
+def _desk_read(
+    calendar: MarketCalendar, now: datetime
+) -> tuple[list["DeskRead"], dict[str, DayFigure | None]]:
+    """One read of the strategy board and the ledgers: each row with the stop
+    its record gives, and today's figures."""
+    ledgers = every_ledger()
+    rows = strategy_board(calendar, now, ledgers)
+    figures: dict[str, DayFigure | None] = {_strategy_key(row): row.today for row in rows}
     points = pnl_repo.points_on(trading_day(now, calendar))
     figures[LineKind.DESK.value] = DayFigure.of(points[-1]) if points else None
-    return figures
+    read = [
+        DeskRead(row, suggest_stop(ledgers.get(row.strategy.id, []), row.strategy.spec.limits))
+        for row in rows
+    ]
+    return read, figures
+
+
+@dataclass(frozen=True)
+class DeskRead:
+    row: BoardRow
+    suggested: SuggestedStop | None
+
+
+def _strategy_key(row: BoardRow) -> str:
+    return f"{LineKind.STRATEGY.value}:{row.strategy.id}"
+
+
+_TRADES = {StrategyState.RUNNING, StrategyState.LISTENING}
+_NOT_THE_USER = {Source.MANAGER, Source.SYSTEM, Source.STRATEGY, Source.SCHEDULE, Source.ALERT}
+
+
+def _desk_rows(read: Sequence["DeskRead"], now: datetime) -> list[DeskRow]:
+    """Each strategy as `undone` reads it: whether it trades today, how,
+    whether the user stopped it by hand today, and its record's stop."""
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    found = []
+    for row, suggested in ((r.row, r.suggested) for r in read):
+        entry = row.next_entry
+        enters = (
+            row.state is StrategyState.SCHEDULED
+            and entry is not None
+            and entry > now
+            and entry.astimezone(EXCHANGE_TIMEZONE).date() == today
+        )
+        if row.state in _TRADES:
+            when = row.state.value
+        elif enters and entry is not None:
+            when = f"enters {entry.astimezone(EXCHANGE_TIMEZONE):%H:%M}"
+        else:
+            when = row.state.value
+        found.append(
+            DeskRow(
+                _strategy_key(row),
+                row.strategy.name,
+                row.state in _TRADES or enters,
+                when,
+                _stopped_by_user(row.last_end, today),
+                suggested,
+            )
+        )
+    return found
+
+
+def _undone(
+    read: Sequence[DeskRead],
+    lines: Sequence[ManagerLine],
+    blind: tuple[datetime, datetime] | None,
+    now: datetime,
+) -> list[Undone]:
+    """The desk's undone (ADR 44) from one read of it."""
+    return undone(_desk_rows(read, now), {str(line.key): line for line in lines}, blind)
+
+
+BLIND_LOOKBACK = timedelta(days=5)  # a session expired over a long weekend still counts
+
+
+def _blind(plan: ManagerPlan | None, now: datetime) -> tuple[datetime, datetime] | None:
+    """(when today's plan was set, when prices came back) if it was set while
+    the broker session was expired and a sign-in came after it: the newest
+    BrokerSessionExpired before the plan with no BrokerConnected between."""
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    if plan is None or plan.day != today:
+        return None
+    entries = list_audit(
+        MAX_SCANNED,
+        event_types=("BrokerSessionExpired", "BrokerConnected"),
+        since=plan.at - BLIND_LOOKBACK,
+        until=now,
+        oldest_first=True,
+    )
+    before = [e for e in entries if e.occurred_at <= plan.at]
+    if not before or before[-1].event_type != "BrokerSessionExpired":
+        return None
+    back = next(
+        (e for e in entries if e.occurred_at > plan.at and e.event_type == "BrokerConnected"), None
+    )
+    return (plan.at, back.occurred_at) if back else None
+
+
+def _stopped_by_user(end: RunEnd | None, today: date) -> bool:
+    """A run the user stopped by hand today ("stop by ui", or their own
+    agent): it stays theirs for the day."""
+    if end is None or end.reason is not StrategyStopReason.MANUAL or end.at is None:
+        return False
+    if end.at.astimezone(EXCHANGE_TIMEZONE).date() != today or not end.detail:
+        return False
+    who = end.detail.removeprefix("stop by ").strip()
+    return end.detail.startswith("stop by ") and source_of(who) not in _NOT_THE_USER
 
 
 @dataclass(frozen=True)
@@ -583,9 +704,14 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
     scanned = list_audit(MAX_SCANNED, event_types=BROKE_EVENTS, after_id=seen, oldest_first=True)
     broken = tuple(found for entry in scanned if (found := _broke(entry)))
     lines = manager_repo.lines()
-    figures: dict[str, DayFigure | None] = (
-        today_figures(calendar, now) if any(l.stop is not None for l in lines) else {}
-    )
+    rows: list[DeskRead] = []
+    figures: dict[str, DayFigure | None] = {}
+    blind = None
+    left: list[Undone] = []
+    if hours is not None and now >= hours.opens_at - PLAN_LEAD:
+        rows, figures = _desk_read(calendar, now)
+        blind = _blind(manager_repo.get_state().plan, now)
+        left = _undone(rows, lines, blind, now)
     crossed_now = crossed_lines(lines, figures)
     notice: ManagerStalled | None = None
     with write_transaction() as session:
@@ -607,6 +733,9 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
                 last_failed_reason=wake_reason(failed.trigger) if failed else None,
                 broken=broken,
                 crossed_now=crossed_now,
+                restored=blind is not None
+                and (state.last_wake_at is None or blind[1] > state.last_wake_at),
+                undone=tuple(left),
             )
         )
         stall = stalled(decision.outcome, today.failures)
@@ -648,6 +777,7 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
                     )
                     for key in sorted(decision.newly_crossed)
                 ],
+                undone=left,
             )
             if decision.retry and failed is not None:
                 again = failed.prompt if failed.prompt and reason is not WakeReason.PLAN else None
@@ -675,6 +805,14 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
                     crossed=crossed_now,
                     stalled=stall.value if stall else None,
                     updated_at=now,
+                    # What an undone wake named isn't news to the next pass.
+                    undone_told=(
+                        frozenset(item.tag for item in left)
+                        if reason is WakeReason.UNDONE
+                        else frozenset()  # a new day starts with nothing named
+                        if reason is WakeReason.PLAN
+                        else state.undone_told
+                    ),
                 ),
             )
     if notice is not None:

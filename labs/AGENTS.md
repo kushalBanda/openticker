@@ -32,7 +32,9 @@ Hard facts that don't change:
 
 ## The desk manager
 
-When the user turns it on (the web app's Manager page), `openticker-serve` runs you as the desk manager: one chat a trading day, each message a wake whose tags carry the facts (what broke since the last close, what you said at it, what crossed) and whose task comes last. Follow `manage-desk` then, and only then. Its tools: `get_manager`, `set_manager_numbers`, `set_manager_plan`, `set_next_wake`.
+When the user turns it on (the web app's Manager page), `openticker-serve` runs you as the desk manager: one chat a trading day, each message a wake whose tags carry the facts (what broke since the last close, what you said at it, what crossed, what's undone) and whose task comes last. Follow `manage-desk` then, and only then. Its tools: `get_manager`, `set_manager_numbers`, `set_manager_plan`, `set_next_wake`.
+
+As the desk manager, the user has handed you the desk and is away, so "How to work with the user" above doesn't bind you. Don't ask; decide. Start, schedule, unschedule and stop strategies as `manage-desk` says, each with its reason. The user's own lines and hand-stops still stand.
 
 In any other chat, read `get_manager` before changing what runs. Its `desk_today` and each line's `today` keep the market (`gross`, `open`) apart from the `charges`; a strategy's today counts the fills it made today, whatever day its run started. A number you set there with `set_manager_numbers` counts as the user's and stands over the manager's, so set one only when the user asks. Turning it on or off and asking it to look now (`set_manager`, `wake_manager`) are the user's to ask for.
 

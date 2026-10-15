@@ -53,6 +53,7 @@ def save_state(session: Session, state: ManagerState) -> None:
     row.plan_lessons = json.dumps(list(plan.lesson_ids)) if plan else None
     row.plan_at = _naive(plan.at) if plan else None
     row.updated_at = _naive(state.updated_at)
+    row.undone_told = json.dumps(sorted(state.undone_told)) if state.undone_told else None
 
 
 def lines(session: Session | None = None) -> list[ManagerLine]:
@@ -109,6 +110,7 @@ def _state(row: ManagerStateRow | None) -> ManagerState:
         stalled=row.stalled,
         plan=plan,
         updated_at=_aware(row.updated_at),
+        undone_told=frozenset(json.loads(row.undone_told or "[]")),
     )
 
 

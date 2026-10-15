@@ -1,5 +1,12 @@
 # Reading the desk
 
+## Contents
+- Today's money; explaining the desk's figure
+- How a run ended
+- Your lines: capital, stops, sizing a stop
+- Who owns what
+- Costs of looking
+
 What the numbers you read mean, how your lines act, and who owns what. Read it before a session's first plan and whenever a figure puzzles you.
 
 ## Today's money
@@ -48,15 +55,21 @@ Say it in one or two sentences: "Desk −₹15,846: −₹7,016 closed (straddle
 
 A line is capital and a stop for one strategy, one script, your own trades (`own`) or the whole desk (`desk`).
 
-- **Capital is your stated allocation.** It is shown to the user, not enforced: a strategy still trades its own definition. Capital 0 says "don't run this today".
+- **Capital is your stated allocation.** It is shown to the user, not enforced: a strategy still trades its own definition, and its schedule still fires. So capital 0 ("doesn't run today") holds only when you also unschedule or stop it in the same look; otherwise `undone` lists it as `contradicted`.
 - **A stop acts only when you look.** When a line's `today.net` is at or past its stop, a `line` wake comes; you decide whether to stop the strategy. Each strategy's own stop loss and daily loss limit act at once, without you. So a stop line protects against a day the strategy's own rules allow but you wouldn't.
-- **Sizing a stop.** From `get_strategy_ledger`: around 1.5 to 2 times its median losing run after costs, never tighter than its own combined stop (it would cross before the strategy's own rules act). A strategy with fewer than 10 runs after costs: its own combined stop, and say the record is thin.
+- **Sizing a stop.** `suggested_stop` (in `get_strategy_ledger` and in each `undone` item) does the arithmetic:
+  - with 10 or more runs after costs, 1.75 times its median losing run, never tighter than its own combined stop (it would cross before the strategy's own rules act);
+  - with fewer, its own combined stop, else its daily loss limit;
+  - with neither, none.
+
+  Its `basis` says which; give it as the line's reason. Go wider only with a reason of your own. With no suggestion, size it from the strategy's own leg stops and lot size, and say the record is thin.
+- **Set it before it trades.** A stop set at or past today's figure is already crossed, so it wakes no one and protects nothing for today.
 - **The desk stop** is the day's loss you'd accept across everything: usually well under the sum of the strategies' stops, since they rarely lose together.
 
 ## Who owns what
 
 - **The user's lines** (`set_by: you`) stand until they hand them back. `kept_yours` tells you when yours lost.
-- **Schedules already set when you were turned on** are the desk you were handed: you may unschedule, schedule or stop them, with a reason in your answer.
+- **Schedules already set when you were turned on** are the desk you were handed. Unschedule, schedule or stop them as your plan needs, with a reason in your answer. You don't need to ask: the user handed you the desk.
 - **A strategy stays the user's** when its line is theirs, or they stopped it by hand today (`last_run_end.detail` is `stop by ui`), or its kill switch is on.
 - **Signing in to the broker** is the user's alone. An expired session stops prices and with them every running strategy; tell the user to sign in again from Settings.
 

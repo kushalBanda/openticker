@@ -510,6 +510,10 @@ def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
     assert client.get("/api/v1/runs/run_missing").status_code == 404
     ledger = client.get(f"{base}/ledger", params={"limit": 1}).json()
     assert (ledger["total_runs"], ledger["uncharged"], len(ledger["runs"])) == (1, 1, 1)
+    assert ledger["suggested_stop"] == {
+        "value": -3000.0,
+        "basis": "its own combined stop -₹3,000; 0 runs after costs, fewer than 10",
+    }
     assert client.get("/api/v1/strategies/stg_nope/ledger").status_code == 404
     [summary] = client.get("/api/v1/strategies").json()["strategies"]
     assert summary["last_run_end"]["reason"] == "manual"
@@ -1068,6 +1072,7 @@ def test_get_manager_over_rest_and_mcp(client: TestClient, monkeypatch: pytest.M
     assert straddle["today"] == {"gross": 0.0, "charges": 0.0, "open": None, "net": 0.0}
     assert found["desk_today"] == {"gross": 400.0, "charges": 80.0, "open": -1500.0, "net": -1180.0}
     assert straddle["crossed"] is False and found["given"] == 600000.0
+    assert found["undone"] == []  # nothing trades today
     assert found == mcp_server.get_manager().model_dump(mode="json")
 
 

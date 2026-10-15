@@ -9,8 +9,10 @@ from openticker.core.strategies.ledger import (
     LedgerFill,
     LedgerRun,
     LedgerTotals,
+    SuggestedStop,
     equity_curve,
     ledger_totals,
+    suggest_stop,
 )
 from openticker.core.strategies.runs import RunStatus
 from openticker.storage.sqlite import runs_repo, sandbox_repo, strategies_repo
@@ -33,6 +35,7 @@ class StrategyLedger:
     open_runs: int  # not ended yet
     totals: LedgerTotals  # over the runs after costs
     equity: list[EquityPoint]  # cumulative net after costs, day by day
+    suggested_stop: SuggestedStop | None  # the desk manager's stop line from it (ADR 44)
 
 
 def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
@@ -51,6 +54,7 @@ def get_strategy_ledger(strategy_id: str, limit: int) -> StrategyLedger:
         open_runs=len(runs) - len(ended),
         totals=ledger_totals(runs),
         equity=equity_curve(runs),
+        suggested_stop=suggest_stop(runs, stored.spec.limits),
     )
 
 
