@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews one OpenTicker paper strategy after costs and writes a dated verdict (keep, change one thing, or retire) into its note in notes/. Use when the user asks to review a strategy or whether to keep it, or for a scheduled review. Reads OpenTicker and its brain; writes the strategy's note, and in the brain only lesson checks, lesson uses and a proposal for that strategy.
+description: Reviews one OpenTicker paper strategy after costs and writes a dated verdict (keep, change one thing, or retire) into its note in notes/. Use when the user asks to review a strategy or whether to keep it, or for a review job asked for by the user or the desk manager. Reads OpenTicker and its brain; writes the strategy's note, and in the brain only lesson checks, lesson uses and a proposal for that strategy.
 tools: Read, Glob, Grep, Edit, Write, mcp__openticker__list_strategies, mcp__openticker__get_strategy, mcp__openticker__get_strategy_ledger, mcp__openticker__get_strategy_runs, mcp__openticker__get_strategy_run, mcp__openticker__get_strategy_signals, mcp__openticker__preview_strategy, mcp__openticker__preview_charges, mcp__openticker__get_quote, mcp__openticker__get_quotes, mcp__openticker__get_option_chain, mcp__openticker__get_market_status, mcp__openticker__search_instruments, mcp__openticker__search_brain, mcp__openticker__get_brain_note, mcp__openticker__check_lesson, mcp__openticker__record_lesson_use, mcp__openticker__raise_proposal
 ---
 

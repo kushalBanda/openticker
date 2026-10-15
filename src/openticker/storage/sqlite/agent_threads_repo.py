@@ -4,10 +4,10 @@ one is an agent job whose `thread_id` names it (agent_jobs_repo)."""
 import secrets
 from collections.abc import Collection
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, literal_column, or_, select
 from sqlalchemy.orm import Session
 
 from openticker.core.agents.jobs import AgentJob, AgentJobKind, Harness
@@ -172,6 +172,24 @@ def counts() -> list[tuple[Folder, str | None, int]]:
         return [
             (Folder(folder), subject, int(n)) for folder, subject, n in session.execute(statement)
         ]
+
+
+def manager_threads(day: date, session: Session | None = None) -> list[AgentThread]:
+    """Every live thread of the desk manager's trading day, oldest first: a
+    day whose first turn left no conversation has a second (ADR 41)."""
+    statement = (
+        select(AgentThreadRow)
+        .where(
+            AgentThreadRow.deleted_at.is_(None),
+            AgentThreadRow.folder == Folder.MANAGER.value,
+            AgentThreadRow.subject == day.isoformat(),
+        )
+        .order_by(AgentThreadRow.created_at, literal_column("rowid"))
+    )
+    if session is not None:
+        return [_thread(row) for row in session.scalars(statement).all()]
+    with Session(get_engine()) as own:
+        return [_thread(row) for row in own.scalars(statement).all()]
 
 
 def live_thread_ids() -> set[str]:

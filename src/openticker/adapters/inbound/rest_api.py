@@ -66,10 +66,18 @@ from openticker.adapters.inbound.mcp_models import (
     HarnessResult,
     HindsightInput,
     InstrumentRef,
+    KeptYoursResult,
     LearningResult,
     LessonCheckedResult,
     LessonUseResult,
     LoginUrlResult,
+    ManagerDayResult,
+    ManagerDaysResult,
+    ManagerLineInput,
+    ManagerLineResult,
+    ManagerNumbersResult,
+    ManagerPlanResult,
+    ManagerResult,
     MarginResult,
     MarketDepthResult,
     MarketStatusesResult,
@@ -88,7 +96,6 @@ from openticker.adapters.inbound.mcp_models import (
     PositionsResult,
     QuoteResult,
     QuotesResult,
-    ReviewScheduleDefinition,
     RiskCheckResult,
     ScriptCommandResult,
     ScriptDetailResult,
@@ -134,12 +141,13 @@ from openticker.composition import (
     agent_settings,
     capital_cap,
     order_broker,
+    sandbox_settings,
     script_limits,
 )
 from openticker.core.agents.choices import MAX_RUNS_PER_DAY, Effort, FolderKind, RunChoice
 from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
 from openticker.core.agents.jobs import AgentSettings, Harness
-from openticker.core.agents.reviews import ReviewScheduleError
+from openticker.core.agents.manager import MAX_LINES_PER_CALL, ManagerError
 from openticker.core.agents.threads import Access, Folder
 from openticker.core.brain.lessons import (
     MAX_APPLIES_TO,
@@ -190,6 +198,7 @@ from openticker.storage.sqlite.watchlists_repo import (
     WatchlistLimitError,
 )
 from openticker.use_cases.agents import manage as agent_jobs
+from openticker.use_cases.agents import manager as desk_manager
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
     AgentJobBusyError,
@@ -329,6 +338,10 @@ from openticker.use_cases.watchlists import (
 # The errors the MCP server turns into agent-facing messages (ADR 7 in docs/adr),
 # here as HTTP statuses carrying the same message.
 _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
+    (ManagerError, 422),
+    (desk_manager.UnknownLineError, 404),
+    (desk_manager.ManagerDayError, 404),
+    (desk_manager.ManagerOffError, 409),
     (UnknownInstrumentError, 404),
     (UnknownBrokerError, 404),
     (UnsupportedUnderlyingError, 404),
@@ -371,7 +384,6 @@ _ERROR_STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ScriptStateError, 409),
     (InvalidStrategyError, 422),
     (HistoryRangeError, 422),
-    (ReviewScheduleError, 422),
     (InvalidScriptError, 422),
     (BatchTooLargeError, 422),
     (PayoffInputError, 422),
@@ -546,6 +558,25 @@ class StartDebriefBody(BaseModel):
 
 class DebriefScheduleBody(BaseModel):
     at: str | None = Field(default=None, description="HH:MM, 15:40 or later; null: off.")
+
+
+class ManagerSwitchBody(BaseModel):
+    enabled: bool
+    wakes_per_day: int | None = Field(default=None, ge=1, le=200)
+
+
+class NextWakeBody(BaseModel):
+    at: datetime = Field(description="Today, with its offset.")
+    reason: str = Field(max_length=500)
+
+
+class ManagerPlanBody(BaseModel):
+    text: str = Field(max_length=4000)
+    lesson_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ManagerNumbersBody(BaseModel):
+    lines: list[ManagerLineInput] = Field(min_length=1, max_length=MAX_LINES_PER_CALL)
 
 
 class WatchlistNameBody(BaseModel):
@@ -1232,6 +1263,86 @@ def create_app(
             *brain_debrief.get_debrief_schedule(clock(), load_calendar())
         )
 
+    @api.get("/manager")
+    def manager() -> ManagerResult:
+        """The desk manager: on or off, its next look, its plan and its lines."""
+        return ManagerResult.of(
+            desk_manager.get_manager(
+                sandbox_settings(env).starting_capital, load_calendar(), clock()
+            )
+        )
+
+    @api.get("/manager/days")
+    def manager_days(start: date, end: date | None = None) -> ManagerDaysResult:
+        """Every trading day from start to end, with whether the manager ran."""
+        now = clock()
+        return ManagerDaysResult.of(
+            desk_manager.list_manager_days(
+                start, end or now.astimezone(EXCHANGE_TIMEZONE).date(), load_calendar(), now
+            )
+        )
+
+    @api.get("/manager/days/{trading_date}")
+    def manager_day(trading_date: date) -> ManagerDayResult:
+        """One trading day of the manager's, read back: today live, a past day as it closed."""
+        return ManagerDayResult.of(
+            desk_manager.get_manager_day(trading_date, load_calendar(), clock())
+        )
+
+    @api.put("/manager")
+    def set_manager(body: ManagerSwitchBody, caller: Caller) -> ManagerResult:
+        """Turns the desk manager on or off."""
+        desk_manager.set_manager(
+            body.enabled, body.wakes_per_day, events, caller.triggered_by, clock()
+        )
+        return manager()
+
+    @api.post("/manager/wake")
+    def wake_manager(caller: Caller) -> AgentJobResult:
+        """Look now: the manager takes a turn at once."""
+        return AgentJobResult.of(
+            desk_manager.wake_manager(
+                resolved_settings(agent_settings(env)), events, caller.triggered_by, clock()
+            ),
+            {},
+        )
+
+    @api.put("/manager/next-wake")
+    def set_next_wake(body: NextWakeBody) -> ManagerResult:
+        """When the manager looks next, today."""
+        desk_manager.set_next_wake(body.at, body.reason, load_calendar(), clock())
+        return manager()
+
+    @api.put("/manager/plan")
+    def set_manager_plan(body: ManagerPlanBody, caller: Caller) -> ManagerPlanResult:
+        """Today's plan, with the lessons it relied on."""
+        return ManagerPlanResult.of(
+            desk_manager.set_plan(body.text, body.lesson_ids, events, caller.triggered_by, clock())
+        )
+
+    @api.put("/manager/numbers")
+    def set_manager_numbers(body: ManagerNumbersBody, caller: Caller) -> ManagerNumbersResult:
+        """Lines' capital and stop. From the web app or a full key, the user's:
+        they stand over the manager's."""
+        views, kept = desk_manager.set_manager_numbers(
+            [desk_manager.LineChange(l.key, l.capital, l.stop, l.reason) for l in body.lines],
+            events,
+            caller.triggered_by,
+            load_calendar(),
+            clock(),
+        )
+        return ManagerNumbersResult(
+            lines=[ManagerLineResult.of(v) for v in views],
+            kept_yours=[KeptYoursResult.of(k) for k in kept],
+        )
+
+    @api.delete("/manager/numbers/{key}/override")
+    def clear_manager_override(key: str, caller: Caller) -> ManagerLineResult:
+        """Hands a line the user set back to the manager."""
+        return ManagerLineResult.of(
+            desk_manager.clear_override(key, events, caller.triggered_by, load_calendar(), clock())
+        )
+
     @api.get("/watchlists")
     def watchlists() -> WatchlistsResult:
         """Every watchlist with its instruments, in the order they were made."""
@@ -1448,19 +1559,6 @@ def create_app(
             strategy_id, resolved_settings(agent_settings(env)), caller.triggered_by, clock()
         )
         return StartReviewResult(job=AgentJobResult.of(job, agent_jobs.strategy_names()))
-
-    @api.post("/strategies/{strategy_id}/review-schedule")
-    def schedule_review(strategy_id: str, body: ReviewScheduleDefinition) -> StrategyResult:
-        """Reviews the strategy without being asked when any trigger is met."""
-        stored = agent_jobs.schedule_review(
-            strategy_id, body.every, body.after_runs, body.drawdown, clock()
-        )
-        return StrategyResult.of(stored)
-
-    @api.delete("/strategies/{strategy_id}/review-schedule")
-    def unschedule_review(strategy_id: str) -> StrategyResult:
-        """Reviewed only on start_review again."""
-        return StrategyResult.of(agent_jobs.unschedule_review(strategy_id))
 
     @api.get("/agent-jobs")
     def jobs(

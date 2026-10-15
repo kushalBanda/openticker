@@ -177,3 +177,27 @@ def test_a_model_chosen_for_claude_is_dropped_once_every_folder_runs_codex() -> 
     set_harness(None, "ui", events, NOW)  # back to the environment's Claude Code
     folders = {f.kind: f for f in read_settings(plain).folders}
     assert folders[FolderKind.REVIEWS].resolved.model == "opus"
+
+
+def test_check_ins_are_set_apart_from_the_decisive_looks_on_the_managers_harness() -> None:
+    events = _Events()
+    set_folder_choice(
+        FolderKind.MANAGER, RunChoice(model="opus", effort="high"), ENV, "ui", events, NOW
+    )
+    set_folder_choice(
+        FolderKind.MANAGER_CHECKS, RunChoice(model="haiku", effort="low"), ENV, "ui", events, NOW
+    )
+
+    folders = {f.kind: f for f in read_settings(ENV).folders}
+
+    assert folders[FolderKind.MANAGER_CHECKS].stored == RunChoice(model="haiku", effort="low")
+    assert folders[FolderKind.MANAGER_CHECKS].resolved.model == "haiku"
+    assert folders[FolderKind.MANAGER].resolved.model == "opus"
+    assert [e.summary for e in events.of(AgentSettingsChanged)] == [  # type: ignore[attr-defined]
+        "Manager: decisive looks: Claude Code, opus, high, 15 min",
+        "Manager: check-ins: Claude Code, haiku, low, 15 min",
+    ]
+    with pytest.raises(AgentSettingsError, match="Manager's harness"):
+        set_folder_choice(
+            FolderKind.MANAGER_CHECKS, RunChoice(harness=Harness.CODEX), ENV, "ui", events, NOW
+        )

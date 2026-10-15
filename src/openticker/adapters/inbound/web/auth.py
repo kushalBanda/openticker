@@ -21,7 +21,7 @@ from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.web import COOKIE_NAME, host_allowed, origin_allowed
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.web_repo import WebSession
-from openticker.use_cases.agents.threads import recorded_as
+from openticker.use_cases.agents.threads import is_manager_key, recorded_as
 from openticker.use_cases.api_keys import FULL_SCOPE, authenticate
 from openticker.use_cases.web_sessions import session_of
 
@@ -124,6 +124,7 @@ def require_scope(request: Request, caller: Caller) -> Principal:
         request.path_params,
         _strategy_of_run,
         whole_call=False,
+        is_manager_key=is_manager_key,
     )
     if why is not None:
         raise HTTPException(status_code=403, detail=why)
@@ -135,7 +136,9 @@ def refuse_outside_scope(caller: Principal, tool: str, arguments: Mapping[str, o
     MCP does with the tool's arguments: a review's brain appends are about
     its own strategy only."""
     method, path = TOOL_ROUTES[tool]
-    why = refusal(caller.scope, method, path, arguments, _strategy_of_run)
+    why = refusal(
+        caller.scope, method, path, arguments, _strategy_of_run, is_manager_key=is_manager_key
+    )
     if why is not None:
         raise HTTPException(status_code=403, detail=why)
 

@@ -1,5 +1,6 @@
 """A NIFTY market of weekly and monthly contracts, and strategy definitions over it."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time
 
 from openticker.core.risk.models import LockMode, ProfitLock, StrategyLimits
@@ -37,6 +38,15 @@ STRADDLE = OptionsStrategySpec(
     horizon=Horizon.INTRADAY,
     schedule=Schedule(entry_time=time(9, 20), exit_time=time(15, 15)),
     limits=StrategyLimits(combined_stop_loss=3000.0, combined_target=5000.0),
+)
+
+# Carried overnight, with nothing to close it but a stop: a run entered one
+# day and closed the next.
+POSITIONAL_STRADDLE = replace(
+    STRADDLE,
+    horizon=Horizon.POSITIONAL,
+    schedule=Schedule(exit_on_expiry=False),
+    limits=StrategyLimits(),
 )
 
 # Every field set, so a storage round trip that drops one fails.

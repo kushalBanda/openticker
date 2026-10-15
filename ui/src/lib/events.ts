@@ -15,6 +15,7 @@ import {
   signed,
   sourceLabel,
 } from "./format";
+import { isWake, wakeLabel } from "./manager";
 import { contractOf } from "./strategies";
 
 export type Tier = "must-act" | "worth-knowing" | "record";
@@ -47,6 +48,10 @@ const RECORDS = new Set([
   "AgentSettingsChanged",
   "AgentChatStarted",
   "AgentChatDeleted",
+  "ManagerNumbersChanged",
+  "ManagerWoke",
+  "ManagerPlanSet",
+  "ManagerSwitched",
 ]);
 
 type Details = Record<string, unknown>;
@@ -61,12 +66,16 @@ const num = (d: Details, key: string): number | null =>
 export function tierOf(entry: AuditEntry): Tier {
   const d = entry.details;
   if (entry.event_type === "BrokerSessionExpired") return "must-act";
+  if (entry.event_type === "ManagerStalled") return "must-act";
   if (entry.event_type === "StrategyStopped" && MUST_ACT_STOPS.has(text(d, "reason"))) {
     return "must-act";
   }
   // A chat's reply is worth a toast: the shell holds it back while that chat is on screen.
+  // The desk manager's own wakes that finished are on its page: a record.
   if (entry.event_type === "AgentJobEnded" && text(d, "kind") === "chat") {
-    return "worth-knowing";
+    return text(d, "reason") === "finished" && isWake(text(d, "trigger"))
+      ? "record"
+      : "worth-knowing";
   }
   // A debrief job's own end already says its debrief is in; a quiet day is a record.
   if (entry.event_type === "DebriefWritten") {
@@ -180,6 +189,31 @@ export function describe(
       };
     case "WatchlistChanged":
       return { kind: "Watchlist", tone: undefined, text: watchlistText(d) };
+    case "ManagerWoke":
+      return {
+        kind: "Manager",
+        tone: undefined,
+        text: `Manager woke: ${wakeLabel(text(d, "reason"))}`,
+      };
+    case "ManagerPlanSet":
+      return { kind: "Manager", tone: "accent", text: `Manager's plan: ${text(d, "text")}` };
+    case "ManagerStalled":
+      return {
+        kind: "Manager",
+        tone: "down",
+        text:
+          text(d, "why") === "capped"
+            ? "Manager used its wakes for today"
+            : "Manager stalled: its turns keep failing",
+      };
+    case "ManagerSwitched":
+      return {
+        kind: "Manager",
+        tone: undefined,
+        text: d.enabled === true ? "Manager turned on" : "Manager turned off",
+      };
+    case "ManagerNumbersChanged":
+      return { kind: "Manager", tone: d.kept_yours ? "warn" : undefined, text: managerLineText(d) };
     case "ChargeRatesDiffer":
       return {
         kind: "Charges",
@@ -406,6 +440,7 @@ export function pageOf(entry: AuditEntry): string | null {
   if (entry.event_type.startsWith("Script") && script) return `/scripts/${script}`;
   if (entry.event_type.startsWith("Order")) return "/orders";
   if (entry.event_type === "WatchlistChanged") return "/watchlist";
+  if (entry.event_type.startsWith("Manager")) return "/manager";
   return null;
 }
 
@@ -438,6 +473,7 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
   if (type === "InstrumentSyncCompleted") return [["instruments-status"]];
   if (type === "ChargeRatesChecked") return [["account"]];
   if (type === "WatchlistChanged") return [["watchlists"]];
+  if (type.startsWith("Manager")) return [["manager"]];
   if (type === "AgentSettingsChanged") return [["agent-settings"]];
   if (type.startsWith("AgentChat")) return [["agent-threads"]];
   if (type.startsWith("Strategy")) {
@@ -459,6 +495,8 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
     const id = strategyOf(entry);
     // Reviews and debriefs are chats too (ADR 40): the rail and the open one.
     const threads = [["agent-threads"]];
+    // The desk manager's wakes are chat turns (ADR 41): its page shows them.
+    if (text(entry.details, "kind") === "chat") threads.push(["manager"]);
     if (dayOf(entry)) return [["agent-jobs"], ["brain"], ...threads];
     return [
       ...threads,
@@ -512,6 +550,11 @@ export const KINDS: Record<Exclude<KindFilter, "all">, string[]> = {
     "AgentChatStarted",
     "AgentChatDeleted",
     "AgentSettingsChanged",
+    "ManagerNumbersChanged",
+    "ManagerWoke",
+    "ManagerPlanSet",
+    "ManagerSwitched",
+    "ManagerStalled",
   ],
   brain: [
     "DebriefWritten",
@@ -537,7 +580,8 @@ export type WhoFilter =
   | "codex"
   | "strategy"
   | "script"
-  | "alert";
+  | "alert"
+  | "manager";
 
 export type Range = "today" | "7d" | "30d";
 
@@ -546,4 +590,23 @@ export function fromDate(range: Range, now: Date): string {
   const back = range === "today" ? 0 : range === "7d" ? 6 : 29;
   const day = new Date(now.getTime() + 5.5 * 3_600_000 - back * 86_400_000);
   return day.toISOString().slice(0, 10);
+}
+
+/** "Manager: Straddle at ₹6,00,000, stop -₹6,000"; a line the user set that
+ * the manager wanted otherwise says so. */
+export function managerLineText(d: Details): string {
+  const key = text(d, "key");
+  const what =
+    key === "desk" ? "the desk" : key === "own" ? "its own trades" : text(d, "name") || key;
+  const capital = num(d, "capital");
+  const stop = num(d, "stop");
+  const numbers = [
+    capital === null ? null : `${rupees(capital, { decimals: 0 })}`,
+    stop === null ? "no stop" : `stop ${rupees(stop, { decimals: 0 })}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  if (d.kept_yours) return `Manager kept your numbers for ${what}; it wanted ${numbers}`;
+  const who = text(d, "set_by") === "you" ? "You set" : "Manager set";
+  return `${who} ${what}: ${numbers}`;
 }

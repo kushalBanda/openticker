@@ -65,6 +65,7 @@ class UsePurpose(StrEnum):
     REVIEW = "review"
     DEBRIEF = "debrief"
     ANSWER = "answer"
+    MANAGE = "manage"  # the desk manager's day (ADR 41)
 
 
 MAX_APPLIES_TO = 20

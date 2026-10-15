@@ -10,6 +10,9 @@ import { nextLink } from "./links";
 
 const STATIC = [
   "/",
+  "/manager",
+  "/manager/2026-09-21", // a past day it ran (ADR 43)
+  "/manager/2026-09-18", // a past day it was off
   "/watchlist",
   "/options",
   "/positions",

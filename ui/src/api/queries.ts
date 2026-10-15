@@ -69,6 +69,8 @@ export const keys = {
   brainSearch: (params: BrainSearch) => ["brain", "search", params] as const,
   brainDay: (broker: string, date: string) => ["brain", "day", broker, date] as const,
   debriefSchedule: ["brain", "debrief-schedule"] as const,
+  // The desk manager (ADR 41).
+  manager: ["manager"] as const,
   brainLearning: (days: number) => ["brain", "learning", days] as const,
 };
 
@@ -493,29 +495,6 @@ export function useStartReview() {
   return useMutation({
     mutationFn: (strategyId: string) =>
       unwrap(api.POST("/api/v1/strategies/{strategy_id}/review", path(strategyId))),
-    onSettled: refresh,
-  });
-}
-
-/** A review schedule, or null to review only when asked. */
-export function useReviewSchedule() {
-  const refresh = useRefreshStrategies();
-  return useMutation({
-    mutationFn: ({
-      strategyId,
-      schedule,
-    }: {
-      strategyId: string;
-      schedule: Schemas["ReviewScheduleDefinition"] | null;
-    }) =>
-      schedule === null
-        ? unwrap(api.DELETE("/api/v1/strategies/{strategy_id}/review-schedule", path(strategyId)))
-        : unwrap(
-            api.POST("/api/v1/strategies/{strategy_id}/review-schedule", {
-              ...path(strategyId),
-              body: schedule,
-            }),
-          ),
     onSettled: refresh,
   });
 }
@@ -1634,5 +1613,80 @@ export function useStartDebrief() {
     mutationFn: (date: string | null) =>
       unwrap(api.POST("/api/v1/brain/debrief", { body: { trading_date: date } })),
     onSettled: () => client.invalidateQueries({ queryKey: keys.agentJobs }),
+  });
+}
+
+export type Manager = Schemas["ManagerResult"];
+
+/** The desk manager: on or off, its next look, its plan and every line it set. */
+export function useManager() {
+  return useQuery({
+    queryKey: keys.manager,
+    queryFn: () => unwrap(api.GET("/api/v1/manager")),
+  });
+}
+
+export type ManagerDay = Schemas["ManagerDayResult"];
+export type ManagerDaySummary = Schemas["ManagerDaySummaryResult"];
+
+/** The manager's trading days from start to end, with whether it ran (ADR 43). */
+export function useManagerDays(start: string, end: string) {
+  return useQuery({
+    queryKey: [...keys.manager, "days", start, end],
+    queryFn: () => unwrap(api.GET("/api/v1/manager/days", { params: { query: { start, end } } })),
+  });
+}
+
+/** One trading day of the manager's, read back: today live, a past day as it closed. */
+export function useManagerDay(day: string) {
+  return useQuery({
+    queryKey: [...keys.manager, "day", day],
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/v1/manager/days/{trading_date}", {
+          params: { path: { trading_date: day } },
+        }),
+      ),
+  });
+}
+
+export type ManagerLineInput = Schemas["ManagerLineInput"];
+
+/** Sets lines' capital and stop as the user's: they stand over the manager's. */
+export function useSetManagerNumbers() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (lines: ManagerLineInput[]) =>
+      unwrap(api.PUT("/api/v1/manager/numbers", { body: { lines } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.manager }),
+  });
+}
+
+/** Hands a line the user set back to the manager. */
+export function useClearManagerOverride() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      unwrap(api.DELETE("/api/v1/manager/numbers/{key}/override", { params: { path: { key } } })),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.manager }),
+  });
+}
+
+/** Turns the desk manager on or off; `wakes_per_day` keeps its value when omitted. */
+export function useSetManager() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { enabled: boolean; wakes_per_day?: number | null }) =>
+      unwrap(api.PUT("/api/v1/manager", { body })),
+    onSuccess: (manager) => client.setQueryData(keys.manager, manager),
+  });
+}
+
+/** Look now: the manager takes a turn at once. */
+export function useWakeManager() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.POST("/api/v1/manager/wake")),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.manager }),
   });
 }

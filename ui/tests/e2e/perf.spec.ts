@@ -11,6 +11,7 @@ import { nextLink } from "./links";
 
 const SCREENS = [
   "/",
+  "/manager",
   "/watchlist",
   "/options",
   "/positions",

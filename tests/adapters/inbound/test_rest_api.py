@@ -4,26 +4,38 @@ registered under its own name so nothing touches Kite."""
 import asyncio
 import logging
 from collections.abc import Iterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from mcp.server.mcpserver.exceptions import ToolError
+from sqlalchemy.orm import Session
 
 from openticker.adapters.brokers import registry
 from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.rest_api import HideAlertTokens, create_app
 from openticker.adapters.inbound.scopes import REST_ONLY_ROUTES, TOOL_ROUTES
 from openticker.composition import build_event_bus
+from openticker.core.agents.jobs import Harness
+from openticker.core.agents.manager import ManagerLine, SetBy, parse_key
+from openticker.core.agents.threads import Folder
 from openticker.core.brain.notes import NOTICE, NoteKind
 from openticker.core.brain.proposals import Decision
+from openticker.core.pnl import IntradayPoint
 from openticker.events.bus import EventBus
-from openticker.ports.models import Exchange, Instrument, InstrumentType
-from openticker.storage.sqlite import instruments_repo
+from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Instrument, InstrumentType
+from openticker.storage.sqlite import agent_threads_repo, instruments_repo, manager_repo
 from openticker.storage.sqlite.audit_repo import write_audit
-from openticker.storage.sqlite.strategies_repo import insert_strategy
-from openticker.use_cases.api_keys import create_api_key, create_review_key, revoke
+from openticker.storage.sqlite.engine import get_engine
+from openticker.storage.sqlite.pnl_repo import upsert_point
+from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
+from openticker.use_cases.api_keys import (
+    create_api_key,
+    create_chat_key,
+    create_review_key,
+    revoke,
+)
 from tests.fixtures.fake_broker import FAKE_ASK, FAKE_LAST_PRICE, FakeBrokerPort
 from tests.fixtures.strategies import STRADDLE
 
@@ -499,6 +511,11 @@ def test_strategy_run_routes_mirror_the_tools(client: TestClient) -> None:
     ledger = client.get(f"{base}/ledger", params={"limit": 1}).json()
     assert (ledger["total_runs"], ledger["uncharged"], len(ledger["runs"])) == (1, 1, 1)
     assert client.get("/api/v1/strategies/stg_nope/ledger").status_code == 404
+    [summary] = client.get("/api/v1/strategies").json()["strategies"]
+    assert summary["last_run_end"]["reason"] == "manual"
+    assert summary["last_run_end"]["detail"] == "stop by rest:tests"
+    assert summary["today_pnl"] == summary["today_gross"] - summary["today_charges"]
+    assert summary == mcp_server.list_strategies().strategies[0].model_dump(mode="json")
 
 
 def test_review_routes_mirror_the_tools(client: TestClient) -> None:
@@ -526,16 +543,11 @@ def test_review_routes_mirror_the_tools(client: TestClient) -> None:
         "stopped by rest:tests before it started",
     )
     assert client.post("/api/v1/agent-jobs/job_nope/stop").status_code == 404
-
-    schedule = f"/api/v1/strategies/{strategy_id}/review-schedule"
-    scheduled = client.post(schedule, json={"after_runs": 10})
-    bad = client.post(schedule, json={"every": "weekly"})
-    none = client.post(schedule, json={})
-
-    assert scheduled.json()["review_schedule"]["after_runs"] == 10
-    assert bad.status_code == none.status_code == 422
-    assert "like 30m" in bad.json()["detail"]
-    assert client.delete(schedule).json()["review_schedule"] is None
+    assert client.post(f"/api/v1/strategies/{strategy_id}/review-schedule").status_code in (
+        404,
+        405,
+    )
+    assert "review_schedule" not in client.get(f"/api/v1/strategies/{strategy_id}").json()
 
 
 def test_an_alert_posted_to_its_url_needs_no_api_key(client: TestClient, events: EventBus) -> None:
@@ -1026,3 +1038,182 @@ def test_search_hides_expired_contracts_by_the_app_clock(client: TestClient) -> 
     found = client.get("/api/v1/instruments", params={"query": "nifty"}).json()
 
     assert [i["symbol"] for i in found["instruments"]] == ["NIFTY22SEP2623350CE"]
+
+
+def test_get_manager_over_rest_and_mcp(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW)
+    off = client.get("/api/v1/manager").json()
+    assert off["enabled"] is False and off["lines"] == [] and off["thread_id"] is None
+    assert off["wakes_per_day"] == 40 and off["account"] > 0 and off["given"] == 0
+    assert off["desk_today"] is None  # no minute recorded yet
+
+    upsert_point(
+        NOW.astimezone(EXCHANGE_TIMEZONE).date(),
+        IntradayPoint(time(9, 29), -1180.0, 400.0, 80.0, -1500.0),
+    )
+    strategy = insert_strategy("Straddle", STRADDLE, NOW)
+    with Session(get_engine()) as session:
+        for key, capital in (("desk", None), (f"strategy:{strategy.id}", 600000.0)):
+            manager_repo.put_line(
+                session,
+                ManagerLine(
+                    parse_key(key), capital, -6000.0, "why", SetBy.MANAGER, None, None, NOW, "ui"
+                ),
+            )
+        session.commit()
+    found = client.get("/api/v1/manager").json()
+    assert [line["key"] for line in found["lines"]] == ["desk", f"strategy:{strategy.id}"]
+    straddle = found["lines"][1]
+    assert straddle["name"] == "Straddle"
+    assert straddle["today"] == {"gross": 0.0, "charges": 0.0, "open": None, "net": 0.0}
+    assert found["desk_today"] == {"gross": 400.0, "charges": 80.0, "open": -1500.0, "net": -1180.0}
+    assert straddle["crossed"] is False and found["given"] == 600000.0
+    assert found == mcp_server.get_manager().model_dump(mode="json")
+
+
+def test_manager_days_over_rest_and_mcp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_server, "clock", lambda: NOW)
+    days = client.get("/api/v1/manager/days", params={"start": "2026-09-18"}).json()
+    assert [d["trading_date"] for d in days["days"]] == ["2026-09-18", "2026-09-21", "2026-09-22"]
+    assert days == mcp_server.list_manager_days(date(2026, 9, 18)).model_dump(mode="json")
+
+    day = client.get("/api/v1/manager/days/2026-09-21").json()
+    assert day == {
+        "trading_date": "2026-09-21",
+        "live": False,
+        "ran": False,
+        "thread_ids": [],
+        "desk": None,
+        "looks": 0,
+        "cost_usd": 0.0,
+        "models": [],
+        "lines": [],
+        "plan": None,
+        "debrief": False,
+    }
+    assert day == mcp_server.get_manager_day(date(2026, 9, 21)).model_dump(mode="json")
+
+    holiday = client.get("/api/v1/manager/days/2026-09-20")
+    assert holiday.status_code == 404 and "wasn't a trading day" in holiday.json()["detail"]
+    too_long = client.get("/api/v1/manager/days", params={"start": "2026-06-01"})
+    assert too_long.status_code == 422 and "at most 60 days" in too_long.json()["detail"]
+
+
+def test_manager_numbers_over_rest_record_who_set_them(
+    events: EventBus, client: TestClient
+) -> None:
+    with write_transaction() as session:
+        thread = agent_threads_repo.add_thread(
+            session, Folder.MANAGER, "2026-09-22", Harness.CLAUDE, "Desk", NOW
+        )
+    managers = TestClient(
+        create_app(events, {}, clock=lambda: NOW),
+        headers={"X-API-Key": create_chat_key(thread.id, "job_m", NOW)},
+    )
+    put = "/api/v1/manager/numbers"
+    set_ = managers.put(put, json={"lines": [{"key": "own", "capital": 2e5, "reason": "budget"}]})
+    assert set_.status_code == 200, set_.text
+    line = set_.json()["lines"][0]
+    assert line["set_by"] == "manager" and line["triggered_by"] == f"manager:claude:{thread.id}"
+
+    mine = client.put(put, json={"lines": [{"key": "own", "capital": 1e5}]}).json()
+    assert mine["lines"][0]["set_by"] == "you" and mine["lines"][0]["manager_capital"] == 2e5
+    again = managers.put(put, json={"lines": [{"key": "own", "capital": 3e5, "reason": "more"}]})
+    assert again.json()["kept_yours"] == [
+        {"key": "own", "capital": 1e5, "stop": None, "wanted_capital": 3e5, "wanted_stop": None}
+    ]
+    audit = client.get("/api/v1/audit", params={"source": "manager"}).json()
+    assert {e["event_type"] for e in audit["entries"]} == {"ManagerNumbersChanged"}
+
+    assert client.put(put, json={"lines": [{"key": "own", "stop": 5}]}).status_code == 422
+    assert client.put(put, json={"lines": [{"key": "strategy:x"}]}).status_code == 404
+    back = client.delete("/api/v1/manager/numbers/own/override")
+    assert back.json()["set_by"] == "manager" and back.json()["capital"] == 3e5
+    assert client.delete("/api/v1/manager/numbers/own/override").status_code == 404
+
+
+def test_manager_switch_next_wake_and_plan_over_rest(events: EventBus, client: TestClient) -> None:
+    on = client.put("/api/v1/manager", json={"enabled": True, "wakes_per_day": 12}).json()
+    assert on["enabled"] is True and on["wakes_per_day"] == 12
+    wake = client.put(
+        "/api/v1/manager/next-wake",
+        json={"at": "2026-09-22T11:40:00+05:30", "reason": "after the 11:30 data"},
+    ).json()
+    assert wake["next_wake_at"] == "2026-09-22T11:40:00+05:30"
+    assert wake["next_wake_reason"] == "after the 11:30 data"
+    too_soon = client.put(
+        "/api/v1/manager/next-wake", json={"at": "2026-09-22T09:31:00+05:30", "reason": "x"}
+    )
+    assert too_soon.status_code == 422 and "2 minutes" in too_soon.json()["detail"]
+    plan = client.put("/api/v1/manager/plan", json={"text": "Run small on expiry."}).json()
+    assert plan["day"] == "2026-09-22" and plan["lesson_ids"] == []
+    assert client.get("/api/v1/manager").json()["plan"]["text"] == "Run small on expiry."
+    unknown = client.put("/api/v1/manager/plan", json={"text": "x", "lesson_ids": ["les_x"]})
+    assert unknown.status_code == 404
+
+    with write_transaction() as session:
+        thread = agent_threads_repo.add_thread(
+            session, Folder.MANAGER, "2026-09-22", Harness.CLAUDE, "Desk", NOW
+        )
+    managers = TestClient(
+        create_app(events, {}, clock=lambda: NOW),
+        headers={"X-API-Key": create_chat_key(thread.id, "job_m", NOW)},
+    )
+    refused = managers.put("/api/v1/manager", json={"enabled": False})
+    assert refused.status_code == 403
+    assert managers.put("/api/v1/manager/plan", json={"text": "mine"}).status_code == 200
+    assert (
+        client.get("/api/v1/audit", params={"source": "manager"}).json()["entries"][0]["event_type"]
+        == "ManagerPlanSet"
+    )
+
+
+def test_look_now_over_rest(events: EventBus, client: TestClient) -> None:
+    off = client.post("/api/v1/manager/wake")
+    assert off.status_code == 409 and "turn it on" in off.json()["detail"]
+    client.put("/api/v1/manager", json={"enabled": True})
+    job = client.post("/api/v1/manager/wake")
+    assert job.status_code == 200, job.text
+    assert job.json()["trigger"] == "manager-wake:asked"
+    busy = client.post("/api/v1/manager/wake")
+    assert busy.status_code == 409 and "already looking" in busy.json()["detail"]
+    thread_id = client.get("/api/v1/manager").json()["thread_id"]
+    assert thread_id == job.json()["thread_id"]
+
+    managers = TestClient(
+        create_app(events, {}, clock=lambda: NOW),
+        headers={"X-API-Key": create_chat_key(thread_id, "job_m", NOW)},
+    )
+    assert managers.post("/api/v1/manager/wake").status_code == 403
+
+
+def test_the_desk_manager_starts_a_review_a_chat_cannot(
+    events: EventBus, client: TestClient
+) -> None:
+    from tests.adapters.inbound.test_mcp_server import STRADDLE_JSON
+    from tests.fixtures.strategies import list_nifty_market
+
+    list_nifty_market()
+    body = {"name": "reviewed", "definition": STRADDLE_JSON}
+    strategy_id = client.post("/api/v1/strategies", json=body).json()["strategy_id"]
+    with write_transaction() as session:
+        desk = agent_threads_repo.add_thread(
+            session, Folder.MANAGER, "2026-09-22", Harness.CLAUDE, "Desk", NOW
+        )
+        general = agent_threads_repo.add_thread(
+            session, Folder.GENERAL, None, Harness.CLAUDE, "Hi", NOW
+        )
+
+    def key(thread_id: str) -> TestClient:
+        return TestClient(
+            create_app(events, {}, clock=lambda: NOW),
+            headers={"X-API-Key": create_chat_key(thread_id, f"job_{thread_id}", NOW)},
+        )
+
+    review = f"/api/v1/strategies/{strategy_id}/review"
+    assert key(general.id).post(review).status_code == 403
+    started = key(desk.id).post(review)
+    assert started.status_code == 200, started.text
+    assert started.json()["job"]["trigger"] == f"manager:claude:{desk.id}"

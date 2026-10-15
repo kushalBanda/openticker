@@ -11,7 +11,12 @@ async function openPositions(page: Page) {
     .getByRole("navigation", { name: "Pages" })
     .getByRole("link", { name: "Portfolio" })
     .click();
-  await expect(page.getByRole("table", { name: "Positions" })).toBeVisible({ timeout: 5000 });
+  // The sign-in link lands on the Dashboard, whose tables share these rows:
+  // wait for this page's own title, not a table both pages have.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Positions \(/, {
+    timeout: 5000,
+  });
+  await expect(page.getByRole("table", { name: "Positions" })).toBeVisible();
 }
 
 const row = (page: Page, name: string) => page.getByRole("row").filter({ hasText: name });

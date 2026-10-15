@@ -826,6 +826,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/manager": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manager
+         * @description The desk manager: on or off, its next look, its plan and its lines.
+         */
+        get: operations["manager_api_v1_manager_get"];
+        /**
+         * Set Manager
+         * @description Turns the desk manager on or off.
+         */
+        put: operations["set_manager_api_v1_manager_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manager Days
+         * @description Every trading day from start to end, with whether the manager ran.
+         */
+        get: operations["manager_days_api_v1_manager_days_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/days/{trading_date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manager Day
+         * @description One trading day of the manager's, read back: today live, a past day as it closed.
+         */
+        get: operations["manager_day_api_v1_manager_days__trading_date__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/wake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Wake Manager
+         * @description Look now: the manager takes a turn at once.
+         */
+        post: operations["wake_manager_api_v1_manager_wake_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/next-wake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Next Wake
+         * @description When the manager looks next, today.
+         */
+        put: operations["set_next_wake_api_v1_manager_next_wake_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Manager Plan
+         * @description Today's plan, with the lessons it relied on.
+         */
+        put: operations["set_manager_plan_api_v1_manager_plan_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Manager Numbers
+         * @description Lines' capital and stop. From the web app or a full key, the user's:
+         *     they stand over the manager's.
+         */
+        put: operations["set_manager_numbers_api_v1_manager_numbers_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manager/numbers/{key}/override": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear Manager Override
+         * @description Hands a line the user set back to the manager.
+         */
+        delete: operations["clear_manager_override_api_v1_manager_numbers__key__override_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlists": {
         parameters: {
             query?: never;
@@ -1280,30 +1445,6 @@ export interface paths {
          */
         post: operations["review_api_v1_strategies__strategy_id__review_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/strategies/{strategy_id}/review-schedule": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Schedule Review
-         * @description Reviews the strategy without being asked when any trigger is met.
-         */
-        post: operations["schedule_review_api_v1_strategies__strategy_id__review_schedule_post"];
-        /**
-         * Unschedule Review
-         * @description Reviewed only on start_review again.
-         */
-        delete: operations["unschedule_review_api_v1_strategies__strategy_id__review_schedule_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3245,6 +3386,32 @@ export interface components {
              */
             secret: string;
         };
+        /**
+         * DayFigureResult
+         * @description Today's money with the market apart from the charges (ADR 42 in docs/adr).
+         */
+        DayFigureResult: {
+            /**
+             * Gross
+             * @description Market P&L on trades closed today, at their fill prices, before charges.
+             */
+            gross: number;
+            /**
+             * Charges
+             * @description Charges and taxes today's fills paid: brokerage, STT, fees, stamp duty, GST.
+             */
+            charges: number;
+            /**
+             * Open
+             * @description Market P&L on what is still open, rupees; null where it isn't counted (a strategy line's figure is its closed trades only).
+             */
+            open: number | null;
+            /**
+             * Net
+             * @description gross + open - charges: what the stop is checked against.
+             */
+            net: number;
+        };
         /** DayFillResult */
         DayFillResult: {
             /** Order Id */
@@ -3273,6 +3440,24 @@ export interface components {
              * @description What it closed, before charges; 0 for one that only opened.
              */
             realized_pnl: number | null;
+        };
+        /** DayModelResult */
+        DayModelResult: {
+            /**
+             * Tier
+             * @description decisive: the plan, the close, a breakage, a line, Look now; check: the time it set, the hourly look.
+             * @enum {string}
+             */
+            tier: "decisive" | "check";
+            /**
+             * Model
+             * @description As the harness reported it; None: its default.
+             */
+            model: string | null;
+            /** Effort */
+            effort: string | null;
+            /** Looks */
+            looks: number;
         };
         /** DayPnlResult */
         DayPnlResult: {
@@ -3605,7 +3790,7 @@ export interface components {
          * Folder
          * @enum {string}
          */
-        Folder: "general" | "strategy" | "script" | "review" | "debrief";
+        Folder: "general" | "strategy" | "script" | "review" | "debrief" | "manager";
         /**
          * FolderChoiceBody
          * @description A folder kind's default; each field left out comes from the environment.
@@ -3645,7 +3830,7 @@ export interface components {
          * @description Where a run starts, each with its own default.
          * @enum {string}
          */
-        FolderKind: "general" | "strategies" | "scripts" | "reviews" | "debriefs";
+        FolderKind: "general" | "strategies" | "scripts" | "reviews" | "debriefs" | "manager" | "manager-checks";
         /** FolderSettingsResult */
         FolderSettingsResult: {
             kind: components["schemas"]["FolderKind"];
@@ -3829,6 +4014,28 @@ export interface components {
          * @enum {string}
          */
         Interval: "minute" | "3minute" | "5minute" | "10minute" | "15minute" | "30minute" | "60minute" | "day";
+        /** KeptYoursResult */
+        KeptYoursResult: {
+            /** Key */
+            key: string;
+            /**
+             * Capital
+             * @description The user's capital, which stands.
+             */
+            capital: number | null;
+            /**
+             * Stop
+             * @description The user's stop, which stands.
+             */
+            stop: number | null;
+            /**
+             * Wanted Capital
+             * @description What you asked for, kept beside it.
+             */
+            wanted_capital: number | null;
+            /** Wanted Stop */
+            wanted_stop: number | null;
+        };
         /** LearningResult */
         LearningResult: {
             /**
@@ -4229,6 +4436,35 @@ export interface components {
             /** Option Sell */
             option_sell: number;
         };
+        /** LineChangeResult */
+        LineChangeResult: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Capital */
+            capital: number | null;
+            /** Stop */
+            stop: number | null;
+            /**
+             * Set By
+             * @enum {string}
+             */
+            set_by: "manager" | "you";
+            /**
+             * Kept Yours
+             * @description The manager wanted these numbers on a line the user set; the user's stood.
+             */
+            kept_yours: boolean;
+            /** Reason */
+            reason: string;
+            /**
+             * After Close
+             * @description Set after the session's close, for the next day.
+             */
+            after_close: boolean;
+        };
         /**
          * LockMode
          * @enum {string}
@@ -4245,6 +4481,326 @@ export interface components {
             login_url: string;
             /** Next Step */
             next_step: string;
+        };
+        /** ManagerDayLineResult */
+        ManagerDayLineResult: {
+            /**
+             * Key
+             * @description desk, own (its own trades), strategy:<id> or script:<id>.
+             */
+            key: string;
+            /**
+             * Name
+             * @description The strategy's or script's name; None for desk and own.
+             */
+            name: string | null;
+            /**
+             * Capital
+             * @description Rupees given to it at the close; None: not set.
+             */
+            capital: number | null;
+            /**
+             * Stop
+             * @description Rupees, 0 or less, at the close; None: no stop.
+             */
+            stop: number | null;
+            /**
+             * Set By
+             * @enum {string}
+             */
+            set_by: "manager" | "you";
+            /** Reason */
+            reason: string;
+            /**
+             * Stood
+             * @description It stood at the close; false: first set after it.
+             */
+            stood: boolean;
+            /** @description That day's money, market and charges apart: a strategy's from its fills, the desk's from the record; null for scripts and its own trades. */
+            figure: components["schemas"]["DayFigureResult"] | null;
+            /**
+             * Crossed
+             * @description figure.net was at or below the stop at the close.
+             */
+            crossed: boolean;
+            /**
+             * Changes
+             * @description That day's changes, oldest first.
+             */
+            changes: components["schemas"]["LineChangeResult"][];
+        };
+        /**
+         * ManagerDayResult
+         * @description One trading day of the desk manager's, read back from what was kept
+         *     (ADR 43 in docs/adr).
+         */
+        ManagerDayResult: {
+            /**
+             * Trading Date
+             * Format: date
+             */
+            trading_date: string;
+            /**
+             * Live
+             * @description Today: still moving. A past day is as it closed.
+             */
+            live: boolean;
+            /**
+             * Ran
+             * @description Whether the manager had a thread that day.
+             */
+            ran: boolean;
+            /**
+             * Thread Ids
+             * @description That day's chat threads, oldest first, as the web app's Agents page lists them.
+             */
+            thread_ids: string[];
+            /** @description The desk's money that day, market apart from charges: the record written after its close, else its last recorded minute; null when neither was kept. */
+            desk: components["schemas"]["DayFigureResult"] | null;
+            /**
+             * Looks
+             * @description The manager's looks that day.
+             */
+            looks: number;
+            /**
+             * Cost Usd
+             * @description What that day's turns cost, dollars.
+             */
+            cost_usd: number;
+            /**
+             * Models
+             * @description What its looks ran on, by tier.
+             */
+            models: components["schemas"]["DayModelResult"][];
+            /**
+             * Lines
+             * @description Every line as it stood at the session's close, with that day's changes.
+             */
+            lines: components["schemas"]["ManagerDayLineResult"][];
+            /** @description The newest plan it set for that day. */
+            plan: components["schemas"]["ManagerPlanResult"] | null;
+            /**
+             * Debrief
+             * @description The brain's note of that day has a debrief.
+             */
+            debrief: boolean;
+        };
+        /** ManagerDaySummaryResult */
+        ManagerDaySummaryResult: {
+            /**
+             * Trading Date
+             * Format: date
+             */
+            trading_date: string;
+            /**
+             * Ran
+             * @description Whether the manager had a thread that day.
+             */
+            ran: boolean;
+            /**
+             * Net
+             * @description The desk's money that day after charges; null when it wasn't kept.
+             */
+            net: number | null;
+            /** Looks */
+            looks: number;
+            /**
+             * Cost Usd
+             * @description What that day's turns cost, dollars.
+             */
+            cost_usd: number;
+        };
+        /** ManagerDaysResult */
+        ManagerDaysResult: {
+            /**
+             * Days
+             * @description Trading days, oldest first.
+             */
+            days: components["schemas"]["ManagerDaySummaryResult"][];
+        };
+        /** ManagerLineInput */
+        ManagerLineInput: {
+            /**
+             * Key
+             * @description desk, own (its own trades), strategy:<id> or script:<id>.
+             */
+            key: string;
+            /**
+             * Capital
+             * @description Rupees to give it; null: none set.
+             */
+            capital?: number | null;
+            /**
+             * Stop
+             * @description Net loss today to stop it at, rupees, 0 or less; null: no stop.
+             */
+            stop?: number | null;
+            /**
+             * Reason
+             * @description Why these numbers, in a sentence the user reads. The manager must give one.
+             * @default
+             */
+            reason: string;
+        };
+        /** ManagerLineResult */
+        ManagerLineResult: {
+            /**
+             * Key
+             * @description desk, own (its own trades), strategy:<id> or script:<id>.
+             */
+            key: string;
+            /**
+             * Name
+             * @description The strategy's or script's name; None for desk and own.
+             */
+            name: string | null;
+            /**
+             * Capital
+             * @description Rupees given to it; None: not set.
+             */
+            capital: number | null;
+            /**
+             * Stop
+             * @description Rupees, 0 or less: net today at or below it is crossed; None: no stop.
+             */
+            stop: number | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Set By
+             * @description you: the user's value, which stands until they hand it back.
+             * @enum {string}
+             */
+            set_by: "manager" | "you";
+            /**
+             * Manager Capital
+             * @description What the manager last wanted, kept while the user's value stands.
+             */
+            manager_capital: number | null;
+            /** Manager Stop */
+            manager_stop: number | null;
+            /** @description Today's money, market and charges apart; null: no figure for it (scripts, its own trades). */
+            today: components["schemas"]["DayFigureResult"] | null;
+            /**
+             * Crossed
+             * @description today.net is at or below the stop.
+             */
+            crossed: boolean;
+            /**
+             * Set At
+             * Format: date-time
+             */
+            set_at: string;
+            /** Triggered By */
+            triggered_by: string;
+        };
+        /** ManagerNumbersBody */
+        ManagerNumbersBody: {
+            /** Lines */
+            lines: components["schemas"]["ManagerLineInput"][];
+        };
+        /** ManagerNumbersResult */
+        ManagerNumbersResult: {
+            /**
+             * Lines
+             * @description The lines as they now stand.
+             */
+            lines: components["schemas"]["ManagerLineResult"][];
+            /**
+             * Kept Yours
+             * @description Lines the user set, left as they are: say in your answer that you disagree and why, and don't ask again.
+             */
+            kept_yours: components["schemas"]["KeptYoursResult"][];
+        };
+        /** ManagerPlanBody */
+        ManagerPlanBody: {
+            /** Text */
+            text: string;
+            /** Lesson Ids */
+            lesson_ids?: string[];
+        };
+        /** ManagerPlanResult */
+        ManagerPlanResult: {
+            /**
+             * Day
+             * Format: date
+             * @description The trading day it is for.
+             */
+            day: string;
+            /** Text */
+            text: string;
+            /**
+             * Lesson Ids
+             * @description The brain's lessons it relied on.
+             */
+            lesson_ids: string[];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+        };
+        /** ManagerResult */
+        ManagerResult: {
+            /**
+             * Enabled
+             * @description Whether it wakes on its own.
+             */
+            enabled: boolean;
+            /**
+             * Wakes Per Day
+             * @description The most turns it takes a day.
+             */
+            wakes_per_day: number;
+            /** Wakes Today */
+            wakes_today: number;
+            /**
+             * Next Wake At
+             * @description When it set itself to look next.
+             */
+            next_wake_at: string | null;
+            /** Next Wake Reason */
+            next_wake_reason: string | null;
+            /** Last Wake At */
+            last_wake_at: string | null;
+            /**
+             * Thread Id
+             * @description Today's chat thread; None before its first wake.
+             */
+            thread_id: string | null;
+            /**
+             * Failures
+             * @description Its last turns today that failed in a row.
+             */
+            failures: number;
+            /**
+             * Stalled
+             * @description failing: its last turns failed; capped: today's wakes are used up.
+             */
+            stalled: string | null;
+            /** @description The latest plan it set. */
+            plan: components["schemas"]["ManagerPlanResult"] | null;
+            /** Lines */
+            lines: components["schemas"]["ManagerLineResult"][];
+            /**
+             * Account
+             * @description The paper account's capital, rupees.
+             */
+            account: number;
+            /**
+             * Given
+             * @description Capital given to strategies, scripts and its own trades.
+             */
+            given: number;
+            /** @description The desk's money today at the latest recorded minute: closed trades (gross), open positions (open), charges, and net; null before the first minute. */
+            desk_today: components["schemas"]["DayFigureResult"] | null;
+        };
+        /** ManagerSwitchBody */
+        ManagerSwitchBody: {
+            /** Enabled */
+            enabled: boolean;
+            /** Wakes Per Day */
+            wakes_per_day?: number | null;
         };
         /** MarginBody */
         MarginBody: {
@@ -4481,6 +5037,17 @@ export interface components {
             unitemized: number;
             /** Fills */
             fills: number;
+        };
+        /** NextWakeBody */
+        NextWakeBody: {
+            /**
+             * At
+             * Format: date-time
+             * @description Today, with its offset.
+             */
+            at: string;
+            /** Reason */
+            reason: string;
         };
         /**
          * NoteKind
@@ -5202,44 +5769,6 @@ export interface components {
              */
             ended_at: string;
         };
-        /**
-         * ReviewScheduleDefinition
-         * @description When openticker-serve reviews a strategy without being asked. Any
-         *     trigger met is enough; each counts from the last review, or from when
-         *     the schedule was set. A review is due only once a run has ended since
-         *     the last one.
-         */
-        ReviewScheduleDefinition: {
-            /**
-             * Every
-             * @description A review at most this often, like 30m, 4h or 1d (5 minutes to 90 days).
-             */
-            every?: string | null;
-            /**
-             * After Runs
-             * @description A review once this many runs have ended after costs since the last one.
-             */
-            after_runs?: number | null;
-            /**
-             * Drawdown
-             * @description A review when net P&L after charges falls this many rupees below its high.
-             */
-            drawdown?: number | null;
-        };
-        /** ReviewScheduleResult */
-        ReviewScheduleResult: {
-            /** Every */
-            every: string | null;
-            /** After Runs */
-            after_runs: number | null;
-            /** Drawdown */
-            drawdown: number | null;
-            /**
-             * Set At
-             * Format: date-time
-             */
-            set_at: string;
-        };
         /** RiskBody */
         RiskBody: {
             /** Broker */
@@ -5318,6 +5847,21 @@ export interface components {
             max_budget_usd: number | null;
             /** Timeout Minutes */
             timeout_minutes: number | null;
+        };
+        /** RunEndResult */
+        RunEndResult: {
+            /** @description Why it ended: tick_stale means its prices were lost; null before reasons were recorded. */
+            reason: components["schemas"]["StrategyStopReason"] | null;
+            /**
+             * Detail
+             * @description The stop in words, as the run recorded it.
+             */
+            detail: string | null;
+            /**
+             * At
+             * @description When it ended.
+             */
+            at: string | null;
         };
         /** RunLegResult */
         RunLegResult: {
@@ -5877,7 +6421,7 @@ export interface components {
          * Source
          * @enum {string}
          */
-        Source: "you" | "claude-code" | "codex" | "agent" | "strategy" | "alert" | "script" | "schedule" | "rest" | "system";
+        Source: "you" | "claude-code" | "codex" | "agent" | "strategy" | "alert" | "script" | "schedule" | "manager" | "rest" | "system";
         /** StartChatBody */
         StartChatBody: {
             /**
@@ -6159,8 +6703,6 @@ export interface components {
              * @description The broker its scheduled entries go through; null when it enters only on start_strategy.
              */
             scheduled_broker: string | null;
-            /** @description When openticker-serve reviews it without being asked; null when only start_review does. */
-            review_schedule: components["schemas"]["ReviewScheduleResult"] | null;
             /** Definition */
             definition: components["schemas"]["StrategyDefinition"] | components["schemas"]["SignalStrategyDefinition"];
             /**
@@ -6320,11 +6862,6 @@ export interface components {
              */
             scheduled: boolean;
             /**
-             * Review Scheduled
-             * @description True when it is reviewed on a schedule.
-             */
-            review_scheduled: boolean;
-            /**
              * Updated At
              * Format: date-time
              */
@@ -6352,9 +6889,24 @@ export interface components {
             pending: components["schemas"]["CommandKind"] | null;
             /**
              * Today Pnl
-             * @description Runs started today and the open run: realized P&L less charges, rupees. Open legs' unrealized P&L is not in it.
+             * @description Today's fills, whenever their run started: today_gross less today_charges, rupees. A positional run closed today counts today. Open legs' unrealized P&L is not in it.
              */
             today_pnl: number;
+            /**
+             * Today Gross
+             * @description Market P&L today's fills closed, at their fill prices, before charges.
+             */
+            today_gross: number;
+            /**
+             * Today Charges
+             * @description Charges and taxes today's fills paid: brokerage, STT, fees, stamp duty, GST.
+             */
+            today_charges: number;
+            /**
+             * Daily Used Before
+             * @description Realized P&L of its other runs started today. The daily loss limit counts this plus the open run's P&L, before charges.
+             */
+            daily_used_before: number;
             /**
              * Net Pnl
              * @description Every run after costs, less charges (as the ledger).
@@ -6382,6 +6934,8 @@ export interface components {
              * @description When the newest run started.
              */
             last_run_at: string | null;
+            /** @description How its newest ended run ended. */
+            last_run_end: components["schemas"]["RunEndResult"] | null;
             /**
              * Has Alert Url
              * @description A signal strategy with an alert URL.
@@ -6611,7 +7165,7 @@ export interface components {
          * @description What a lesson was relied on for.
          * @enum {string}
          */
-        UsePurpose: "design" | "review" | "debrief" | "answer";
+        UsePurpose: "design" | "review" | "debrief" | "answer" | "manage";
         /** UserNoteBody */
         UserNoteBody: {
             /**
@@ -8293,6 +8847,272 @@ export interface operations {
             };
         };
     };
+    manager_api_v1_manager_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerResult"];
+                };
+            };
+        };
+    };
+    set_manager_api_v1_manager_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagerSwitchBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    manager_days_api_v1_manager_days_get: {
+        parameters: {
+            query: {
+                start: string;
+                end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerDaysResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    manager_day_api_v1_manager_days__trading_date__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trading_date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerDayResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    wake_manager_api_v1_manager_wake_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResult"];
+                };
+            };
+        };
+    };
+    set_next_wake_api_v1_manager_next_wake_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NextWakeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_manager_plan_api_v1_manager_plan_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagerPlanBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerPlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_manager_numbers_api_v1_manager_numbers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagerNumbersBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerNumbersResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_manager_override_api_v1_manager_numbers__key__override_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerLineResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     watchlists_api_v1_watchlists_get: {
         parameters: {
             query?: never;
@@ -9277,72 +10097,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StartReviewResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    schedule_review_api_v1_strategies__strategy_id__review_schedule_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                strategy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewScheduleDefinition"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StrategyResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    unschedule_review_api_v1_strategies__strategy_id__review_schedule_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                strategy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StrategyResult"];
                 };
             };
             /** @description Validation Error */

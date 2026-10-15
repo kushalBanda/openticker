@@ -164,7 +164,7 @@ class StrategyRow(Base):
     scheduled_broker: Mapped[str | None]
     # When it is reviewed without being asked, as JSON; NULL: only on
     # start_review (ADR 29 in docs/adr).
-    review_schedule: Mapped[str | None]
+    review_schedule: Mapped[str | None]  # unused since ADR 41; kept, as ADR 18 drops no column
     # Who created it, as the audit log records who (ADR 35); NULL for one
     # created before this was kept.
     created_by: Mapped[str | None]
@@ -358,9 +358,14 @@ class AgentJobRow(Base):
     effort: Mapped[str | None]  # as asked
     model_used: Mapped[str | None]  # as the harness reported
     session_id: Mapped[str | None]
-    input_tokens: Mapped[int | None]
+    input_tokens: Mapped[int | None]  # the turn's own, as cost_usd (ADR 42)
     output_tokens: Mapped[int | None]
     duration_ms: Mapped[int | None]
+    # What the harness reported: on a resumed Claude Code session, the
+    # session's running total, which the next turn's own is taken from (ADR 42).
+    session_cost_usd: Mapped[float | None]
+    session_input_tokens: Mapped[int | None]
+    session_output_tokens: Mapped[int | None]
 
 
 class AgentThreadRow(Base):
@@ -384,6 +389,46 @@ class AgentThreadRow(Base):
     archived_at: Mapped[datetime | None]
     read_at: Mapped[datetime | None]  # the user last saw it; unread when a turn ends after
     access: Mapped[str | None]  # read or trade; NULL (every chat before) is trade
+
+
+class ManagerStateRow(Base):
+    """The desk manager's one row (ADR 41 in docs/adr): on or off, when it
+    next wakes, what it has already judged, and today's plan."""
+
+    __tablename__ = "manager_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)  # always 1
+    enabled: Mapped[bool]
+    wakes_per_day: Mapped[int | None]  # NULL: the default
+    next_wake_at: Mapped[datetime | None]  # UTC, stored naive
+    next_wake_reason: Mapped[str | None]
+    last_wake_at: Mapped[datetime | None]
+    last_audit_id: Mapped[int | None]
+    crossed: Mapped[str | None]  # JSON list of line keys
+    closed_on: Mapped[date | None]
+    stalled: Mapped[str | None]
+    plan_day: Mapped[date | None]
+    plan_text: Mapped[str | None]
+    plan_lessons: Mapped[str | None]  # JSON list of lesson ids
+    plan_at: Mapped[datetime | None]
+    updated_at: Mapped[datetime | None]
+
+
+class ManagerLineRow(Base):
+    """The capital and stop the manager gives one thing: the desk, its own
+    trades, a strategy or a script (ADR 41)."""
+
+    __tablename__ = "manager_lines"
+
+    key: Mapped[str] = mapped_column(primary_key=True)  # desk, own, strategy:<id>, script:<id>
+    capital: Mapped[float | None]
+    stop: Mapped[float | None]
+    reason: Mapped[str]
+    set_by: Mapped[str]  # manager or you
+    manager_capital: Mapped[float | None]
+    manager_stop: Mapped[float | None]
+    set_at: Mapped[datetime]  # UTC, stored naive
+    triggered_by: Mapped[str]
 
 
 class AgentSettingRow(Base):

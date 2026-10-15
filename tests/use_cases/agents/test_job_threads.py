@@ -113,14 +113,13 @@ def test_a_debrief_opens_its_thread_too() -> None:
 
 
 def test_its_first_message_is_what_it_was_asked_without_the_job_id() -> None:
-    job = start_review(_strategy(), SETTINGS, "schedule: 10 runs", NOW)
+    job = start_review(_strategy(), SETTINGS, "manager:claude:thr_m", NOW)
     assert job.thread_id is not None
 
     [turn] = read_thread(job.thread_id).turns
 
     assert turn.job.kind is AgentJobKind.REVIEW and turn.job.prompt is not None
     assert turn.job.prompt.startswith("Review the OpenTicker strategy 'straddle'")
-    assert "It is due on its review schedule: 10 runs." in turn.job.prompt
     assert "agent job" not in turn.job.prompt
 
 
@@ -387,6 +386,34 @@ def _chat_running(
     view = start_chat(Folder.GENERAL, None, message, None, None, SETTINGS, "ui", NOW + at)
     start_next_chat_turn(context, NOW + at)
     return view.thread.id
+
+
+def test_each_turn_records_its_own_cost_not_the_sessions_running_total(tmp_path: Path) -> None:
+    view = start_chat(Folder.GENERAL, None, "Hi", None, None, SETTINGS, "ui", NOW)
+    processes, events = _Processes(), _Events()
+    context = _context(processes, events, tmp_path)
+    # Claude Code reports a resumed session's running total (ADR 42).
+    reports = [
+        AgentOutcome("a", 0.30, "sess-1", "claude-opus-5-5", 20_000, 500),
+        AgentOutcome("b", 0.45, "sess-1", "claude-opus-5-5", 41_000, 800),
+        AgentOutcome(None, None, "sess-1"),  # stopped before it reported
+        AgentOutcome("d", 0.62, "sess-1", "claude-opus-5-5", 70_000, 1_100),
+    ]
+    for pid, report in enumerate(reports, start=1001):
+        if pid > 1001:
+            send_message(view.thread.id, "And?", None, None, SETTINGS, "ui", NOW)
+        processes.answer = report
+        start_next_chat_turn(context, NOW)
+        processes.exited[pid] = 0
+        watch_jobs(context, NOW)
+
+    turns = [turn.job for turn in read_thread(view.thread.id).turns]
+    assert [t.cost_usd for t in turns] == [0.30, 0.15, None, 0.17]
+    assert [t.input_tokens for t in turns] == [20_000, 21_000, None, 29_000]
+    assert [t.output_tokens for t in turns] == [500, 300, None, 300]
+    assert sum(t.cost_usd or 0.0 for t in turns) == pytest.approx(0.62)  # the session's total
+    ended = [e.cost_usd for e in events.of(AgentJobEnded)]  # type: ignore[attr-defined]
+    assert ended == [0.30, 0.15, None, 0.17]
 
 
 def test_a_message_sent_while_the_agent_works_waits_its_turn(tmp_path: Path) -> None:

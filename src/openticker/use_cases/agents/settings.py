@@ -12,7 +12,9 @@ from openticker.core.agents.choices import (
     MAX_RUNS_PER_DAY,
     FolderKind,
     RunChoice,
+    StoredSettings,
     check_choice,
+    checks_choice,
     env_choice,
     resolved_choices,
     stored_choice,
@@ -29,6 +31,8 @@ FOLDER_NAMES = {
     FolderKind.SCRIPTS: "Scripts",
     FolderKind.REVIEWS: "Reviews",
     FolderKind.DEBRIEFS: "Debriefs",
+    FolderKind.MANAGER: "Manager: decisive looks",
+    FolderKind.MANAGER_CHECKS: "Manager: check-ins",
 }
 
 
@@ -74,12 +78,22 @@ def read_settings(env_settings: AgentSettings) -> AgentSettingsView:
         runs_per_day=stored.runs_per_day,
         runs_per_day_env=env_settings.jobs_per_day,
         folders=[
-            FolderSettings(
-                kind, stored_choice(stored, kind, env_settings.harness), env, resolved[kind]
-            )
+            FolderSettings(kind, _stored(stored, kind, resolved, env_settings), env, resolved[kind])
             for kind in FolderKind
         ],
     )
+
+
+def _stored(
+    stored: StoredSettings,
+    kind: FolderKind,
+    resolved: dict[FolderKind, RunChoice],
+    env_settings: AgentSettings,
+) -> RunChoice:
+    if kind is not FolderKind.MANAGER_CHECKS:
+        return stored_choice(stored, kind, env_settings.harness)
+    manager = resolved[FolderKind.MANAGER].harness or env_settings.harness
+    return replace(checks_choice(stored, manager), harness=None)
 
 
 def set_folder_choice(
@@ -94,6 +108,13 @@ def set_folder_choice(
     harness Settings picked, then the environment."""
     stored = agent_settings_repo.stored_settings()
     harness = choice.harness or stored.harness or env_settings.harness
+    if kind is FolderKind.MANAGER_CHECKS:
+        if choice.harness is not None:
+            raise AgentSettingsError(
+                "check-ins run on the Manager's harness, so its day stays one conversation: "
+                "set the harness on Manager: decisive looks"
+            )
+        harness = resolved_choices(stored, env_settings)[FolderKind.MANAGER].harness or harness
     try:
         check_choice(choice, harness)
     except AgentJobError as exc:

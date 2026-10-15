@@ -572,27 +572,6 @@ def test_review_tools_queue_a_job_and_read_it_back() -> None:
         mcp_server.stop_agent_job(job_id="job_nope")
 
 
-def test_review_schedule_tools_set_show_and_clear_it() -> None:
-    from openticker.adapters.inbound.mcp_models import StrategyDefinition
-    from tests.fixtures.strategies import list_nifty_market
-
-    list_nifty_market()
-    strategy_id = mcp_server.create_strategy(
-        name="reviewed", definition=StrategyDefinition.model_validate(STRADDLE_JSON)
-    ).strategy_id
-
-    scheduled = mcp_server.schedule_review(strategy_id=strategy_id, every="1d", drawdown=3_000)
-    listed = mcp_server.list_strategies().strategies
-
-    assert scheduled.review_schedule is not None
-    assert (scheduled.review_schedule.every, scheduled.review_schedule.after_runs) == ("1d", None)
-    assert scheduled.review_schedule.drawdown == 3_000
-    assert [s.review_scheduled for s in listed] == [True]
-    with pytest.raises(ToolError, match="like 30m, 4h or 1d"):
-        mcp_server.schedule_review(strategy_id=strategy_id, every="weekly")
-    assert mcp_server.unschedule_review(strategy_id=strategy_id).review_schedule is None
-
-
 def test_schedule_tools_arm_and_disarm_scheduled_entries() -> None:
     from openticker.adapters.inbound.mcp_models import StrategyDefinition
     from tests.fixtures.strategies import list_nifty_market

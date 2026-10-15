@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   List,
   type LucideIcon,
+  Radar,
   Receipt,
   ScrollText,
   Settings,
@@ -25,6 +26,7 @@ export interface NavPage {
 // The sidebar's pages, in DESIGN.md's order; Settings sits apart at the bottom.
 export const PAGES: NavPage[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/manager", label: "Manager", icon: Radar },
   { path: "/watchlist", label: "Watchlist", icon: List },
   { path: "/options", label: "Options", icon: Layers },
   { path: "/positions", label: "Portfolio", icon: Wallet, also: ["/orders", "/trades"] },

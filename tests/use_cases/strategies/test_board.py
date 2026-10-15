@@ -2,10 +2,12 @@ from datetime import time, timedelta
 
 from openticker.adapters.sandbox.broker import SandboxSettings
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, Harness
+from openticker.core.pnl import DayFigure
+from openticker.core.risk.models import StrategyStopReason
 from openticker.core.strategies.models import Horizon, Schedule, SignalLeg, SignalStrategySpec
 from openticker.core.strategies.runs import CommandKind
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
-from openticker.storage.sqlite import agent_jobs_repo
+from openticker.storage.sqlite import agent_jobs_repo, runs_repo
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.strategies.board import Segment, StrategyState, strategy_board
 from openticker.use_cases.strategies.control import (
@@ -20,7 +22,7 @@ from openticker.use_cases.strategies.define import create_strategy
 from openticker.use_cases.strategies.ledger import get_strategy_ledger
 from openticker.use_cases.strategies.runner import process_commands
 from tests.fixtures.calendar import NO_HOLIDAYS
-from tests.fixtures.strategies import STRADDLE
+from tests.fixtures.strategies import POSITIONAL_STRADDLE, STRADDLE
 from tests.fixtures.strategy_desk import CE, Desk
 
 # Real charges from the shipped rates: runs after costs count in the totals.
@@ -37,7 +39,7 @@ def _row(desk: Desk, name: str):  # type: ignore[no-untyped-def]
     return row
 
 
-def test_a_running_strategy_nets_todays_runs_and_counts_every_run() -> None:
+def test_a_running_strategy_counts_todays_fills_and_every_run() -> None:
     desk = Desk(COSTED)
     strategy_id = desk.start()
     desk.tick(ce=90.0, pe=95.0)
@@ -54,8 +56,11 @@ def test_a_running_strategy_nets_todays_runs_and_counts_every_run() -> None:
     assert (row.runs, row.judged) == (2, 1)
     ledger = get_strategy_ledger(strategy_id, 2)
     assert row.net_pnl == ledger.totals.net_pnl > 0
-    # Today holds the ended run and the open one, which has paid its entry charges.
-    assert row.today_net == round(sum(r.net_pnl for r in ledger.runs), 2) < row.net_pnl
+    # Today holds the ended run and the open one's entry, which paid charges.
+    ended, opened = ledger.runs[1], ledger.runs[0]
+    assert row.today.gross == ended.gross_pnl > 0
+    assert row.today.charges == round(ended.charges + opened.charges, 2) > ended.charges
+    assert row.today.net == round(sum(r.net_pnl for r in ledger.runs), 2) < row.net_pnl
     assert row.last_run_at == desk.now
 
 
@@ -70,7 +75,59 @@ def test_yesterdays_runs_leave_today_at_zero() -> None:
     row = _row(desk, "straddle")
 
     assert row.state is StrategyState.STOPPED
-    assert row.today_net == 0 and row.net_pnl > 0
+    assert row.today == DayFigure(0.0, 0.0) and row.net_pnl > 0
+
+
+def test_a_positional_run_closed_today_counts_today() -> None:
+    desk = Desk(COSTED)
+    desk.now -= timedelta(days=1)  # the contracts expire today: enter yesterday
+    strategy_id = desk.start(POSITIONAL_STRADDLE)
+    desk.now += timedelta(days=1)
+    desk.tick(ce=90.0, pe=95.0)
+    request_stop(strategy_id, "mcp", desk.now)
+    process_commands(desk.context, desk.now)
+
+    row = _row(desk, "straddle")
+
+    [run] = get_strategy_ledger(strategy_id, 1).runs
+    exits = run.fills[len(run.fills) // 2 :]
+    assert row.today.gross == run.gross_pnl > 0  # the whole run closed today
+    assert row.today.charges == round(sum(f.charges or 0.0 for f in exits), 2)
+    assert 0 < row.today.charges < run.charges  # yesterday's entry charges aren't today's
+
+
+def test_it_says_how_its_last_run_ended() -> None:
+    desk = Desk()
+    strategy_id = desk.start()
+    assert _row(desk, "straddle").last_end is None
+    request_stop(strategy_id, "mcp", desk.now)
+    process_commands(desk.context, desk.now)
+    desk.now += timedelta(minutes=5)
+    request_start(strategy_id, "fake", "mcp", desk.now)
+    process_commands(desk.context, desk.now)
+
+    end = _row(desk, "straddle").last_end
+
+    assert end is not None and end.reason is StrategyStopReason.MANUAL
+    assert end.at is not None and end.at < desk.now
+
+
+def test_the_day_used_before_is_what_the_runner_counts_against_the_daily_limit() -> None:
+    desk = Desk(COSTED)
+    strategy_id = desk.start()
+    desk.tick(ce=90.0, pe=95.0)
+    request_stop(strategy_id, "mcp", desk.now)
+    process_commands(desk.context, desk.now)
+    desk.now += timedelta(minutes=5)
+    request_start(strategy_id, "fake", "mcp", desk.now)
+    process_commands(desk.context, desk.now)
+
+    row = _row(desk, "straddle")
+
+    assert row.active_run is not None
+    midnight = desk.now.astimezone(EXCHANGE_TIMEZONE).replace(hour=0, minute=0, second=0)
+    runner = runs_repo.realized_since(strategy_id, midnight, row.active_run.id)
+    assert row.day_used_before == runner > 0
 
 
 def test_a_scheduled_strategy_says_when_it_enters_next() -> None:

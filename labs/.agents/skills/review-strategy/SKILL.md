@@ -1,6 +1,6 @@
 ---
 name: review-strategy
-description: Judge a paper strategy by its own results after costs, against the test its note set and the desk's lessons, and write a dated verdict (keep, change one thing, or retire) into that note. Use when the user asks how a strategy is doing, whether to keep it, or to review it, or when a scheduled review runs. Writes the note, and in OpenTicker's brain only lesson checks, lesson uses and a proposal for that strategy; never starts, stops, schedules, edits or creates a strategy.
+description: Judge a paper strategy by its own results after costs, against the test its note set and the desk's lessons, and write a dated verdict (keep, change one thing, or retire) into that note. Use when the user asks how a strategy is doing, whether to keep it, or to review it, or when a review job runs (asked for by the user or the desk manager). Writes the note, and in OpenTicker's brain only lesson checks, lesson uses and a proposal for that strategy; never starts, stops, schedules, edits or creates a strategy.
 ---
 
 # Review a strategy

@@ -1,10 +1,11 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { Schemas } from "../../api/client";
+import { useManager } from "../../api/queries";
 import { Markdown } from "../../components/Markdown";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
 import { istDate } from "../../lib/format";
-import { askedBy } from "../../lib/strategies";
-import { ReviewNow, ReviewScheduleButton, scheduleText, VerdictBadge } from "./LatestReview";
+import { askedBy, reviewedWhen } from "../../lib/strategies";
+import { ReviewNow, VerdictBadge } from "./LatestReview";
 
 type Jobs = Schemas["AgentJobsResult"];
 type Job = Jobs["jobs"][number];
@@ -34,23 +35,14 @@ function Outcome({ job }: { job: Job }) {
 }
 
 /** Every review, newest first, with its answer. */
-export function ReviewsTab({
-  id,
-  reviews,
-  schedule,
-}: {
-  id: string;
-  reviews: UseQueryResult<Jobs>;
-  schedule: Schemas["ReviewScheduleResult"] | null | undefined;
-}) {
-  const when = scheduleText(schedule);
+export function ReviewsTab({ id, reviews }: { id: string; reviews: UseQueryResult<Jobs> }) {
+  const managerOn = useManager().data?.enabled === true;
   return (
     <div className="tile" data-flush="true">
       <div className="tile-head">
         <h2>Reviews</h2>
-        <span className="note">{when ? `also ${when}` : "only when asked"}</span>
+        <span className="note">{reviewedWhen(managerOn)}</span>
         <span className="flex-1" />
-        <ReviewScheduleButton key={when ?? "none"} id={id} current={schedule} />
         <ReviewNow id={id} reviews={reviews.data?.jobs} variant="primary" />
       </div>
       {reviews.isPending ? (

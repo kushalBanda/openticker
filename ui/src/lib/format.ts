@@ -184,6 +184,7 @@ export type Source =
   | "alert"
   | "script"
   | "schedule"
+  | "manager"
   | "rest"
   | "system";
 
@@ -196,6 +197,7 @@ const SOURCES: Record<Source, string> = {
   alert: "An alert",
   script: "A script",
   schedule: "Schedule",
+  manager: "Manager",
   rest: "REST API",
   system: "OpenTicker",
 };

@@ -141,6 +141,7 @@ export function Activity() {
             { value: "strategy", label: "Strategies" },
             { value: "script", label: "Scripts" },
             { value: "alert", label: "Alerts" },
+            { value: "manager", label: "Manager" },
           ]}
         />
       </div>

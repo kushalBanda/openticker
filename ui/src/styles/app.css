@@ -313,7 +313,7 @@
   }
   .badge[data-tone="warn"] {
     background: var(--warn-soft);
-    color: var(--warn);
+    color: var(--color-warn);
   }
   .badge[data-tone="up"] {
     background: var(--up-soft);
@@ -1139,7 +1139,7 @@
   }
   .banner[data-tone="warn"] > svg {
     flex: none;
-    color: var(--warn);
+    color: var(--color-warn);
   }
   .banner[data-tone="down"] > svg {
     flex: none;
@@ -4894,5 +4894,792 @@
     width: 40px;
     height: 40px;
     stroke-width: 1.4;
+  }
+}
+
+/* The Manager page (ADR 41): its numbers change in place. */
+@layer components {
+  .amount-edit {
+    padding: 2px 6px;
+    margin: -2px -6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: text;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  }
+  .amount-edit:hover:not(:disabled),
+  .amount-edit:focus-visible {
+    background: var(--surface-raised);
+    outline: none;
+  }
+  .amount-edit:disabled {
+    cursor: default;
+    box-shadow: none;
+  }
+  .amount-input {
+    height: 30px;
+    width: 120px;
+    padding: 0 8px;
+    text-align: right;
+  }
+}
+
+@layer components {
+  .mgr-stalled {
+    margin-bottom: 20px;
+  }
+  /* A link inside a stat's note sits in running text: underlined, not colour alone. */
+  .stat .note a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .mgr-split {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 16px;
+    margin: 10px 0 0;
+  }
+  .mgr-split dd {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-lines {
+    overflow-x: auto;
+  }
+  .mgr-lines-note {
+    margin: 0;
+    padding: 12px 24px 20px;
+  }
+  .mgr-fault {
+    color: var(--color-warn);
+  }
+  .mgr-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+    margin-top: 24px;
+  }
+  .mgr-row > .tile,
+  .mgr-side > .tile {
+    margin-top: 0;
+  }
+  .mgr-side {
+    display: grid;
+    gap: 24px;
+    min-width: 0;
+  }
+  /* How it runs (ADR 42): next look, the day as a rail, two choices, what it used. */
+  .mgr-run .tile-head {
+    padding-bottom: 0;
+  }
+  .mgr-run-next {
+    display: grid;
+    gap: 2px;
+    padding: 12px 24px 0;
+    min-width: 0;
+  }
+  .mgr-run-label {
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-when {
+    margin: 2px 0 1px;
+    font: 600 24px / 1.15 var(--font-display);
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  /* Its reason for the next look, whole: up to three lines, then cut. */
+  .mgr-run-why {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-day {
+    margin: 24px 30px 0 24px;
+  }
+  .mgr-run-rail {
+    position: relative;
+    height: 22px;
+  }
+  .mgr-run-rail::before {
+    content: "";
+    position: absolute;
+    inset: 50% 0 auto;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--fill);
+  }
+  .mgr-run-off {
+    position: absolute;
+    left: 0;
+    width: var(--to);
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px);
+  }
+  .mgr-run-track {
+    position: absolute;
+    left: var(--from);
+    right: 0;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--ink);
+    transform-origin: left center;
+  }
+  .mgr-run-tick {
+    position: absolute;
+    left: var(--at);
+    top: 50%;
+    width: 1px;
+    height: 10px;
+    margin-top: -5px;
+    background: var(--line-strong);
+  }
+  .mgr-run-look {
+    position: absolute;
+    left: var(--at);
+    top: 50%;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: default;
+  }
+  .mgr-run-look::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px var(--surface);
+    transition: transform 0.2s var(--ease-out);
+  }
+  .mgr-run-look[data-tier="decisive"]::before {
+    background: var(--ink);
+  }
+  .mgr-run-look[data-tier="check"]::before {
+    background: var(--surface);
+    border: 2px solid var(--ink);
+  }
+  .mgr-run-look:hover::before,
+  .mgr-run-look:focus-visible::before {
+    transform: scale(1.35);
+  }
+  .mgr-run-look:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+  .mgr-run-tip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: -6px;
+    z-index: 2;
+    display: grid;
+    gap: 1px;
+    padding: 7px 10px;
+    border-radius: var(--radius-md);
+    background: var(--ink);
+    color: var(--on-ink);
+    font-size: 12px;
+    line-height: 16px;
+    white-space: nowrap;
+    text-align: left;
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition:
+      opacity 0.15s,
+      transform 0.2s var(--ease-out);
+  }
+  .mgr-run-look[data-side="start"] .mgr-run-tip {
+    right: auto;
+    left: -6px;
+  }
+  .mgr-run-tip b {
+    font-weight: 600;
+  }
+  .mgr-run-look:hover .mgr-run-tip,
+  .mgr-run-look:focus-visible .mgr-run-tip {
+    opacity: 1;
+    transform: none;
+  }
+  .mgr-run-scale {
+    display: flex;
+    justify-content: space-between;
+    margin: 6px -6px 0 0;
+    font-size: 11px;
+    color: var(--ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The one authored moment: the watched stretch draws in, each look lands as the line reaches it. */
+  @media (prefers-reduced-motion: no-preference) {
+    .mgr-run-track {
+      animation: mgr-run-draw 0.9s var(--ease-out) both 0.15s;
+    }
+    .mgr-run-look::before {
+      animation: mgr-run-land 0.45s var(--ease-out) both;
+      animation-delay: calc(0.25s + var(--i) * 0.16s);
+    }
+  }
+  @keyframes mgr-run-draw {
+    from {
+      transform: scaleX(0);
+    }
+  }
+  @keyframes mgr-run-land {
+    from {
+      transform: scale(0);
+    }
+  }
+  .mgr-run-tiers {
+    display: grid;
+    margin: 28px 24px 0;
+    border-radius: var(--radius-lg);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .mgr-run-item + .mgr-run-item {
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+  .mgr-run-tier {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 10px minmax(0, 1fr) auto 14px;
+    align-items: center;
+    column-gap: 14px;
+    padding: 14px 14px 14px 16px;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .mgr-run-tier:hover {
+    background: var(--surface-hover);
+  }
+  .mgr-run-tier:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+    border-radius: var(--radius-lg);
+  }
+  .mgr-run-mark {
+    width: 10px;
+    height: 10px;
+    box-sizing: border-box;
+    border-radius: 50%;
+  }
+  .mgr-run-tier[data-tier="decisive"] .mgr-run-mark {
+    background: var(--ink);
+  }
+  .mgr-run-tier[data-tier="check"] .mgr-run-mark {
+    border: 2px solid var(--ink);
+  }
+  .mgr-run-text {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .mgr-run-text b {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .mgr-run-text span {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-model {
+    display: grid;
+    justify-items: end;
+    gap: 6px;
+  }
+  .mgr-run-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .mgr-run-effort {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+  }
+  .mgr-run-effort i {
+    width: 3px;
+    border-radius: 1px;
+    background: var(--fill);
+  }
+  .mgr-run-effort i:nth-child(1) {
+    height: 4px;
+  }
+  .mgr-run-effort i:nth-child(2) {
+    height: 6px;
+  }
+  .mgr-run-effort i:nth-child(3) {
+    height: 8px;
+  }
+  .mgr-run-effort i:nth-child(4) {
+    height: 10px;
+  }
+  .mgr-run-effort i:nth-child(5) {
+    height: 12px;
+  }
+  .mgr-run-effort[data-level="1"] i:nth-child(-n + 1),
+  .mgr-run-effort[data-level="2"] i:nth-child(-n + 2),
+  .mgr-run-effort[data-level="3"] i:nth-child(-n + 3),
+  .mgr-run-effort[data-level="4"] i:nth-child(-n + 4),
+  .mgr-run-effort[data-level="5"] i:nth-child(-n + 5) {
+    background: var(--ink);
+  }
+  .mgr-run-effort em {
+    margin-left: 5px;
+    font-size: 12px;
+    font-style: normal;
+    line-height: 12px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-chev {
+    width: 14px;
+    height: 14px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-tier[aria-expanded="true"] .mgr-run-chev {
+    transform: rotate(90deg);
+  }
+  .mgr-run-use {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 28px 24px 0;
+  }
+  .mgr-run-use > div {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    padding: 0 16px;
+  }
+  .mgr-run-use > div:first-child {
+    padding-left: 0;
+  }
+  .mgr-run-use > div + div {
+    box-shadow: inset 1px 0 0 var(--line);
+  }
+  .mgr-run-use dt {
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-use dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    min-height: 30px;
+    margin: 0;
+    font: 600 20px / 1.2 var(--font-display);
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-run-use dd.mgr-run-sub {
+    min-height: 0;
+    font: 400 12px / 16px var(--font-text);
+    letter-spacing: 0;
+    color: var(--ink-muted);
+  }
+  .mgr-run-of {
+    font: 400 12px / 1 var(--font-text);
+    letter-spacing: 0;
+    color: var(--ink-muted);
+  }
+  .mgr-run-use .input {
+    width: 46px;
+    height: 28px;
+    padding: 0 8px;
+    font: 500 13px / 1 var(--font-text);
+    text-align: right;
+  }
+  .mgr-run-error {
+    margin: 28px 24px 0;
+  }
+  .mgr-run-foot {
+    max-width: 60ch;
+    margin: 24px;
+    padding-top: 16px;
+    box-shadow: inset 0 1px 0 var(--line);
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--ink-muted);
+  }
+  .mgr-run-foot .harness-logo {
+    vertical-align: -1px;
+  }
+  /* Settings' folder editor, in the side column: one field under another. */
+  .mgr-side .st-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 4px 16px 16px 40px;
+  }
+  .mgr-side .st-fl:not(:first-child) {
+    margin-top: 8px;
+  }
+  .mgr-side .st-hint {
+    grid-column: 1;
+    margin-top: 0;
+  }
+  /* Six effort levels don't fit the side column in one row of fixed segments:
+     the segments share the width, and wrap to a second row before they'd scroll. */
+  .mgr-side .segmented {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    height: auto;
+    min-height: 32px;
+    row-gap: 2px;
+  }
+  /* The model box spans the column like the effort track under it: one
+     model, then its levels, edge to edge. */
+  .mgr-side .st-model .select-btn {
+    align-self: stretch;
+  }
+  .mgr-side .st-model .select-value {
+    flex: 1;
+    text-align: left;
+  }
+  .mgr-side .segmented button {
+    flex: 1 0 auto;
+    justify-content: center;
+    height: 28px;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+  @media (max-width: 1100px) {
+    .mgr-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .mgr-decisions {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .mgr-decisions > li {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 16px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--line);
+  }
+  .mgr-decisions time {
+    color: var(--ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-what {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .mgr-asked {
+    margin: 0 0 6px;
+    padding: 8px 12px;
+    border-radius: var(--radius-lg);
+    background: var(--surface-raised);
+    max-width: 80ch;
+  }
+  .mgr-told {
+    display: grid;
+    gap: 4px;
+    margin: 0 0 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--bg);
+    font-size: 13px;
+    line-height: 20px;
+    max-width: 80ch;
+  }
+  .mgr-told .label:not(:first-child) {
+    margin-top: 8px;
+  }
+  .mgr-told ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: disc;
+  }
+  .mgr-told p {
+    margin: 0;
+    white-space: pre-line;
+  }
+  .mgr-said {
+    max-width: 80ch;
+    font-size: 13px;
+    line-height: 19px;
+  }
+  .mgr-lessons {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  /* Its days as a tape (ADR 43): each trading day a cell, a dot where it ran. */
+  .mgr-tape {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    align-items: stretch;
+    gap: 4px;
+    margin: 0 0 20px;
+    padding: 8px;
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+  }
+  .mgr-tape-step {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--ink-muted);
+    cursor: pointer;
+  }
+  .mgr-tape-step:hover:not(:disabled) {
+    background: var(--fill);
+    color: var(--ink);
+  }
+  .mgr-tape-step:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .mgr-tape-error {
+    align-self: center;
+    margin: 0;
+  }
+  /* The newest days on the right; older ones fall off the left edge. */
+  .mgr-tape-days {
+    display: flex;
+    justify-content: flex-end;
+    gap: 2px;
+    overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent 0, #000 24px);
+  }
+  .mgr-tape-week {
+    position: relative;
+    flex: none;
+    width: 10px;
+  }
+  .mgr-tape-week::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 12px;
+    bottom: 12px;
+    width: 1px;
+    background: var(--line);
+  }
+  .mgr-tape-day {
+    flex: 0 0 46px;
+    display: grid;
+    grid-template-rows: 14px 18px 40px 4px;
+    justify-items: center;
+    align-content: center;
+    gap: 4px;
+    padding: 8px 0;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+    transition: background var(--duration-fast);
+  }
+  .mgr-tape-day:hover {
+    background: var(--fill);
+  }
+  .mgr-tape-day:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+  .mgr-tape-day[aria-selected="true"] {
+    background: var(--thumb);
+    box-shadow: var(--shadow-control);
+  }
+  .mgr-tape-wd {
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--ink-muted);
+  }
+  /* On the raised thumb, muted ink falls short of contrast in dark. */
+  .mgr-tape-day[aria-selected="true"] .mgr-tape-wd {
+    color: var(--ink);
+  }
+  .mgr-tape-day .mgr-tape-wd[data-today="true"] {
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+  .mgr-tape-n {
+    font: 600 14px / 18px var(--font-display);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The day's result: a bar from the zero line, up green, down red. */
+  .mgr-tape-bar {
+    position: relative;
+    width: 100%;
+    height: 40px;
+  }
+  .mgr-tape-bar::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: 50%;
+    height: 1px;
+    background: var(--line);
+  }
+  .mgr-tape-bar i {
+    position: absolute;
+    left: 50%;
+    bottom: 50%;
+    width: 8px;
+    height: calc(var(--h) * 18px);
+    margin-left: -4px;
+    border-radius: 2px;
+    background: var(--up);
+    transform-origin: center bottom;
+  }
+  .mgr-tape-bar i[data-tone="down"] {
+    top: 50%;
+    bottom: auto;
+    background: var(--down);
+    transform-origin: center top;
+  }
+  /* A day it didn't manage is still the desk's, quieter. */
+  .mgr-tape-day[data-ran="false"] .mgr-tape-bar i {
+    opacity: 0.38;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .mgr-tape-bar i {
+      animation: mgr-tape-grow 0.7s var(--ease-out) both;
+      animation-delay: calc(var(--i) * 15ms);
+    }
+    @keyframes mgr-tape-grow {
+      from {
+        transform: scaleY(0);
+      }
+    }
+  }
+  /* The date input sits under its button: the button opens its picker. */
+  .mgr-tape-pick {
+    position: relative;
+    display: grid;
+  }
+  .mgr-tape-date {
+    position: absolute;
+    inset: auto 0 0;
+    width: 100%;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .mgr-tape-sum {
+    display: grid;
+    align-content: center;
+    gap: 2px;
+    min-width: 168px;
+    padding: 0 12px 0 16px;
+    box-shadow: inset 1px 0 0 var(--line);
+  }
+  .mgr-tape-sum b {
+    font: 600 15px / 20px var(--font-display);
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-tape-sum > span:last-child {
+    font-size: 12px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  /* It ran that day: filled, like a decisive look on the rail. */
+  .mgr-tape-ran {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+  }
+  .mgr-tape-day[data-ran="true"] .mgr-tape-ran {
+    background: var(--ink);
+  }
+  /* What changed a line that day, oldest first: the story of a number. */
+  .mgr-chg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+  .mgr-chg > [data-after="true"] {
+    font-style: italic;
+  }
+  .mgr-brain-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 24px 18px;
+    box-shadow: inset 0 1px 0 var(--line);
+    font-size: 13px;
+  }
+  /* What a past day's looks ran on, and what they cost. */
+  .mgr-ran-used {
+    display: grid;
+    gap: 6px;
+    margin: 20px 24px 0;
+    font-size: 13px;
+  }
+  .mgr-ran-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .mgr-ran-used dt {
+    color: var(--ink-muted);
+  }
+  .mgr-ran-used dd {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-day-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: -4px 0 16px;
+  }
+  .mgr-day-head h2 {
+    margin: 0;
+    font: 600 20px / 26px var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  .mgr-day-head p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-muted);
   }
 }

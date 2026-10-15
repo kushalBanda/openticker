@@ -152,20 +152,15 @@ def exit_reason(returncode: int | None) -> tuple[AgentJobEndReason, str]:
     return AgentJobEndReason.FAILED, f"exited with code {returncode}"
 
 
-SCHEDULE_TRIGGER = "schedule: "  # how a review due on its schedule is asked for
+SCHEDULE_TRIGGER = "schedule: "  # how a job due on its own is asked for: the debrief
 
 
-def review_prompt(strategy_name: str, strategy_id: str, job_id: str, trigger: str) -> str:
+def review_prompt(strategy_name: str, strategy_id: str, job_id: str) -> str:
     """What a review job is asked. The job's id is in it, so its process can
     be recognised after a restart."""
-    due = (
-        f"It is due on its review schedule: {trigger.removeprefix(SCHEDULE_TRIGGER)}. "
-        if trigger.startswith(SCHEDULE_TRIGGER)
-        else ""
-    )
     return (
         f"Review the OpenTicker strategy {strategy_name!r} ({strategy_id}) with the "
-        f"review-strategy skill, and write the entry in notes/{strategy_name}.md. {due}"
+        f"review-strategy skill, and write the entry in notes/{strategy_name}.md. "
         "This is an unattended job: nobody will answer questions, so decide from the "
         "evidence and the skill. Finish with the skill's short summary, starting with "
         f"the verdict. (OpenTicker agent job {job_id})"

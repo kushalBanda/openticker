@@ -41,8 +41,8 @@ from openticker.core.agents.threads import (
     AgentThread,
     Folder,
     chat_title,
-    chat_triggered_by,
     snippet,
+    thread_agent,
 )
 from openticker.core.agents.transcript import Step
 from openticker.events.bus import EventPublisher
@@ -122,6 +122,10 @@ def start_chat(
     harness and what the agent may do (`access`) are the chat's from then on."""
     if folder in (Folder.REVIEW, Folder.DEBRIEF):
         raise ChatChoiceError(f"a chat can't be started in {folder}s: continue one instead")
+    if folder is Folder.MANAGER:
+        raise ChatChoiceError(
+            "the desk manager's chat is started by openticker-serve: continue today's instead"
+        )
     if folder is Folder.GENERAL:
         subject = None
     elif not subject:
@@ -262,15 +266,23 @@ def delete_thread(thread_id: str, events: EventPublisher, triggered_by: str, now
 
 def recorded_as(scope: str) -> str:
     """Who a key's calls are recorded as (ADR 35): a chat's key, read-only or
-    not, as its chat with its harness ("chat:claude:thr_…"), any other agent
-    key as its scope."""
+    not, as its chat with its harness ("chat:claude:thr_…"), the desk
+    manager's as the manager ("manager:claude:thr_…", ADR 41), any other
+    agent key as its scope."""
     prefix = next(
         (p for p in (CHAT_SCOPE_PREFIX, CHAT_READ_SCOPE_PREFIX) if scope.startswith(p)), None
     )
     if prefix is None:
         return scope
     thread = agent_threads_repo.find_thread(scope.removeprefix(prefix))
-    return chat_triggered_by(thread.harness, thread.id) if thread else scope
+    if thread is None:
+        return scope
+    return thread_agent(thread)
+
+
+def is_manager_key(scope: str) -> bool:
+    """A key of the desk manager's day: its turns may start reviews (ADR 41)."""
+    return recorded_as(scope).startswith("manager:")
 
 
 def update_thread(
@@ -327,7 +339,7 @@ def thread_changes(thread_id: str, job_id: str | None = None) -> list[AuditEntry
         since, until = job.started_at, job.ended_at
     return list_audit(
         MAX_CHANGES,
-        triggered_by=chat_triggered_by(thread.harness, thread.id),
+        triggered_by=thread_agent(thread),
         since=since,
         until=until,
     )
@@ -393,7 +405,7 @@ class SearchKind(StrEnum):
 
 
 _SEARCHED: dict[SearchKind, frozenset[Folder]] = {
-    SearchKind.CHATS: frozenset({Folder.GENERAL, Folder.STRATEGY, Folder.SCRIPT}),
+    SearchKind.CHATS: frozenset({Folder.GENERAL, Folder.STRATEGY, Folder.SCRIPT, Folder.MANAGER}),
     SearchKind.REVIEWS: frozenset({Folder.REVIEW}),
     SearchKind.DEBRIEFS: frozenset({Folder.DEBRIEF}),
 }
@@ -503,7 +515,7 @@ def _asked(job: AgentJob) -> AgentJob:
     if job.kind is AgentJobKind.REVIEW and job.strategy_id:
         stored = find_strategy(job.strategy_id)
         name = stored.name if stored else "(since deleted)"
-        prompt = review_prompt(name, job.strategy_id, job.id, job.trigger)
+        prompt = review_prompt(name, job.strategy_id, job.id)
     elif job.kind is AgentJobKind.DEBRIEF and job.subject:
         prompt = debrief_prompt(job.subject, job.id, job.trigger)
     else:

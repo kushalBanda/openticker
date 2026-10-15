@@ -39,10 +39,20 @@ def test_the_server_command_runs_the_installed_entry_point() -> None:
     assert OPENTICKER_SERVER["args"][-1] in scripts
 
 
-def test_every_skill_is_the_same_for_both_agents() -> None:
-    claude, codex = _skills(CLAUDE_SKILLS), _skills(CODEX_SKILLS)
+def _skill_files(root: Path) -> dict[str, str]:
+    """Every file of every skill, by its path under `root`: references too."""
+    return {
+        str(path.relative_to(root)): path.read_text()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.name != ".DS_Store"
+    }
 
-    assert claude, "labs ships at least one skill"
+
+def test_every_skill_is_the_same_for_both_agents() -> None:
+    claude, codex = _skill_files(CLAUDE_SKILLS), _skill_files(CODEX_SKILLS)
+
+    assert _skills(CLAUDE_SKILLS), "labs ships at least one skill"
+    assert claude.keys() == codex.keys()
     assert claude == codex
 
 
@@ -55,6 +65,7 @@ def test_a_skill_names_itself_and_says_when_to_use_it(name: str) -> None:
     fields = dict(line.split(": ", 1) for line in front.group(1).splitlines())
     assert fields["name"] == name
     assert "Use when" in fields["description"]
+    assert "<" not in front.group(1) and ">" not in front.group(1)  # frontmatter is plain text
 
 
 def test_claude_code_reads_the_same_instructions_as_codex() -> None:
@@ -172,3 +183,31 @@ def test_debrief_agent_has_no_trading_write_or_file_tools() -> None:
     assert openticker - brain_writes <= _read_only_tools()
     assert {TOOL_ROUTES[t] for t in openticker} <= DEBRIEF_ROUTES  # its key reaches each
     assert [t for t in tools if "openticker" not in t] == ["Read"]  # its skill; no writes
+
+
+def test_manage_desk_skill_records_lesson_use_with_manage() -> None:
+    from openticker.core.brain.lessons import UsePurpose
+
+    skill = (LABS / ".claude" / "skills" / "manage-desk" / "SKILL.md").read_text()
+    assert f"record_lesson_use(purpose={UsePurpose.MANAGE.value})" in skill
+    assert "start_review" in skill
+
+
+def test_manage_desk_says_when_not_to_run_and_points_to_its_references() -> None:
+    skill = CLAUDE_SKILLS / "manage-desk"
+    text = (skill / "SKILL.md").read_text()
+    description = re.search(r"^description: (.*)$", text, re.MULTILINE)
+
+    assert description and "Do not use" in description.group(1)
+    for name in ("reading-the-desk.md", "answers.md", "troubleshooting.md"):
+        assert (skill / "references" / name).is_file()
+        assert f"references/{name}" in text  # it says when to open each
+    assert len(text.split()) < 5_000
+
+
+def test_manage_desk_sets_a_next_look_only_when_needed_and_a_stop_for_every_run() -> None:
+    text = (CLAUDE_SKILLS / "manage-desk" / "SKILL.md").read_text()
+
+    assert "End every turn with set_next_wake" not in text
+    assert "Every running strategy gets a stop line" in text
+    assert "Explain before you act" in text

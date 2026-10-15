@@ -262,7 +262,6 @@ export function Overview({
   reviews,
   marketOpen,
   broker,
-  reviewSchedule,
 }: {
   id: string;
   summary: Strategy | undefined;
@@ -272,7 +271,6 @@ export function Overview({
   reviews: Job[] | undefined;
   marketOpen: boolean;
   broker: string | undefined;
-  reviewSchedule: Schemas["ReviewScheduleResult"] | null | undefined;
 }) {
   const name = summary?.name ?? "";
   return (
@@ -281,7 +279,7 @@ export function Overview({
       <div className="overview-grid">
         <div className="flex flex-col gap-6">
           <EquityTile ledger={ledger} />
-          <LatestReview id={id} summary={summary} reviews={reviews} schedule={reviewSchedule} />
+          <LatestReview id={id} summary={summary} reviews={reviews} />
         </div>
         {definition &&
           ("underlying" in definition ? (

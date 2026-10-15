@@ -187,23 +187,6 @@ def test_a_review_runs_with_its_folder_choice_and_records_what_ran(tmp_path: Pat
     assert ended.session_id == "sess-9"
     [event] = events.of(AgentJobEnded)
     assert isinstance(event, AgentJobEnded) and event.model_used == "claude-opus-5-5"
-    assert agent_jobs_repo.runs_without_model(NOW) == (0, 1)
-
-
-def test_a_run_with_no_model_reported_counts_against_the_metric(tmp_path: Path) -> None:
-    stopped = start_review(_strategy("a"), SETTINGS, "ui", NOW)
-    stop_agent_job(stopped.id, _Events(), "ui", NOW)  # never ran: not counted
-    start_review(_strategy("b"), SETTINGS, "ui", NOW)
-    processes, events = _Processes(), _Events()
-    context = _context(processes, events, tmp_path)
-    start_next_job(context, NOW)
-    assert agent_jobs_repo.runs_without_model(NOW) == (0, 0)  # still running
-
-    processes.exited[1001] = 0
-    watch_jobs(context, NOW + timedelta(minutes=1))
-
-    assert agent_jobs_repo.runs_without_model(NOW) == (1, 1)
-    assert agent_jobs_repo.runs_without_model(NOW + timedelta(seconds=1)) == (0, 0)
 
 
 def test_a_job_past_its_timeout_is_stopped_then_killed(tmp_path: Path) -> None:

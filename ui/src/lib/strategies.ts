@@ -298,16 +298,17 @@ export function triggerLabel(trigger: string): string {
   if (known) return known;
   if (trigger.startsWith("schedule")) return "Schedule";
   if (trigger.startsWith("mcp")) return "An agent";
+  if (trigger.startsWith("manager:")) return "The manager";
   if (trigger.startsWith("rest:")) return `REST API (${trigger.slice(5)})`;
   if (trigger.startsWith("alert")) return "An alert";
   return trigger;
 }
 
-/** How a review came about: "on its schedule", "asked by you", "asked by Claude". */
+/** How a review came about: "on its schedule", "asked by you", "asked by the manager". */
 export function askedBy(trigger: string): string {
   if (trigger.startsWith("schedule")) return "on its schedule";
   const label = triggerLabel(trigger);
-  return `asked by ${label === "You" ? "you" : label}`;
+  return `asked by ${label === "You" || label === "The manager" ? label.toLowerCase() : label}`;
 }
 
 const REASONS: Record<Schemas["StrategyStopReason"], string> = {
@@ -360,4 +361,9 @@ export function contractOf(symbol: string): {
   const expiry = `20${found[4]}-${month}-${found[2]}`;
   if (found[5] === "FUT") return { type: "FUT", expiry, strike: null };
   return { type: found[7] as "CE" | "PE", expiry, strike: Number(found[6]) };
+}
+
+/** When a strategy is reviewed without the user asking. */
+export function reviewedWhen(managerOn: boolean): string {
+  return managerOn ? "Reviewed when the manager judges it due" : "Reviewed only when asked";
 }

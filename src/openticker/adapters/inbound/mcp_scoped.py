@@ -29,6 +29,7 @@ from openticker.adapters.inbound.scopes import TOOL_ROUTES, refusal
 from openticker.core.pnl import client_name
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.api_keys_repo import StoredApiKey
+from openticker.use_cases.agents.threads import is_manager_key
 from openticker.use_cases.api_keys import (
     CHAT_READ_SCOPE_PREFIX,
     CHAT_SCOPE_PREFIX,
@@ -108,7 +109,15 @@ def _tool_refusal(
     if route is None:
         return f"{tool} has no route, so no key but a full one may call it"
     method, path = route
-    return refusal(scope, method, path, arguments, _strategy_of_run, whole_call=not listing)
+    return refusal(
+        scope,
+        method,
+        path,
+        arguments,
+        _strategy_of_run,
+        whole_call=not listing,
+        is_manager_key=is_manager_key,
+    )
 
 
 class ScopedMCPServer(MCPServer):

@@ -47,17 +47,27 @@ from sqlalchemy.orm import Session
 
 from openticker.adapters.agents.harness import HarnessProcesses
 from openticker.adapters.brokers import registry
+from openticker.adapters.inbound import mcp_server
 from openticker.adapters.inbound.daemon.feed_loop import FeedLoop
 from openticker.adapters.inbound.daemon.prices import LatestPrices
 from openticker.adapters.inbound.daemon.script_loop import ScriptLoop
-from openticker.adapters.inbound.mcp_scoped import MCP_PATH
+from openticker.adapters.inbound.mcp_scoped import MCP_PATH, WithMcp
 from openticker.adapters.inbound.rest_api import create_app
 from openticker.adapters.inbound.web.app import DIST
 from openticker.adapters.inbound.web.auth import WebSettings
 from openticker.adapters.inbound.web.stream import StreamHub
 from openticker.adapters.scripts.supervisor import ProcessSupervisor
 from openticker.composition import build_event_bus, order_broker, script_limits
-from openticker.core.agents.jobs import AgentJob, AgentJobKind, AgentJobStatus, AgentSettings
+from openticker.core.agents.jobs import (
+    AgentJob,
+    AgentJobEndReason,
+    AgentJobKind,
+    AgentJobStatus,
+    AgentSettings,
+    Harness,
+)
+from openticker.core.agents.threads import Folder
+from openticker.core.agents.transcript import Usage
 from openticker.core.options.chain import years_to_expiry
 from openticker.core.options.greeks import black76_price
 from openticker.core.orders.models import OrderRequest, OrderResult, OrderStatus, OrderType
@@ -71,6 +81,9 @@ from openticker.core.strategies.models import (
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, leg_risk
 from openticker.events import types as event_types
 from openticker.events.bus import EventPublisher
+from openticker.events.subscribers.audit_log import record_event
+from openticker.events.types import ManagerNumbersChanged, ManagerPlanSet
+from openticker.ports.agent_job_port import AgentOutcome
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
     Bar,
@@ -87,14 +100,19 @@ from openticker.ports.models import (
     Tick,
 )
 from openticker.storage.calendar_file import load_calendar
-from openticker.storage.sqlite import agent_jobs_repo, runs_repo
+from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo, runs_repo
 from openticker.storage.sqlite.credentials_repo import save_credentials
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.models import AgentJobRow, SandboxTradeRow
 from openticker.storage.sqlite.pnl_repo import upsert_day, upsert_point
-from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
+from openticker.storage.sqlite.strategies_repo import (
+    insert_strategy,
+    list_strategies,
+    write_transaction,
+)
 from openticker.storage.sqlite.watchlists_repo import WatchlistItem, add_items, insert_watchlist
+from openticker.use_cases.agents.manager import queue_due_manager_wake
 from openticker.use_cases.agents.settings import resolved_settings
 from openticker.use_cases.agents.supervise import (
     AgentContext,
@@ -634,8 +652,17 @@ def _seed_pnl(now: datetime) -> None:
     step = 0
     while minute <= now:
         swing = 2400.0 * math.sin(step / 11) + 38.0 * step - 900.0
+        # Trades close through the day and pay charges; what's open makes up the rest.
+        realized, charges = round(14.0 * step, 2), round(1.6 * step, 2)
         upsert_point(
-            today, IntradayPoint(minute.time(), round(swing, 2), 0.0, 0.0, round(swing, 2))
+            today,
+            IntradayPoint(
+                minute.time(),
+                round(swing, 2),
+                realized,
+                charges,
+                round(swing - realized + charges, 2),
+            ),
         )
         minute += timedelta(minutes=1)
         step += 1
@@ -649,6 +676,111 @@ def _seed_pnl(now: datetime) -> None:
         upsert_day(
             DayPnl(day, net + charges, charges, 0.0, net, 0.0, rng.randint(2, 24), True),
             now,
+        )
+
+
+def _seed_manager_history(now: datetime) -> None:
+    """Yesterday as the manager left it (ADR 43): its thread of three looks,
+    its plan, its numbers set before the open, one changed by the user, and
+    the close look's for today."""
+    yesterday = now.astimezone(EXCHANGE_TIMEZONE).date() - timedelta(days=1)
+    first = list_strategies()[0]
+
+    def at(hour: int, minute: int) -> datetime:
+        return datetime.combine(yesterday, clock_time(hour, minute), EXCHANGE_TIMEZONE)
+
+    with write_transaction() as session:
+        thread = agent_threads_repo.add_thread(
+            session, Folder.MANAGER, yesterday.isoformat(), Harness.CLAUDE, "Manager", at(9, 0)
+        )
+        for when, reason, model, effort, cost, said in (
+            (
+                at(9, 0),
+                "plan",
+                "claude-opus-5-5",
+                "high",
+                0.21,
+                f"{first.name} runs with ₹2,00,000 and a -₹6,000 stop. Desk stop -₹30,000.",
+            ),
+            (
+                at(12, 0),
+                "scheduled",
+                "claude-sonnet-5-5",
+                "low",
+                0.02,
+                "Nothing changed since 09:00.",
+            ),
+            (
+                at(15, 35),
+                "close",
+                "claude-opus-5-5",
+                "high",
+                0.05,
+                "Desk up on the day. A smaller desk stop tomorrow: -₹20,000.",
+            ),
+        ):
+            turn = agent_jobs_repo.add_job(
+                session,
+                AgentJobKind.CHAT,
+                None,
+                Harness.CLAUDE,
+                f"manager-wake:{reason}",
+                when,
+                thread_id=thread.id,
+                prompt=f'<wake reason="{reason}" day="{yesterday}">',
+                model=model,
+                effort=effort,
+            )
+            agent_jobs_repo.mark_running(session, turn.id, 4400, when)
+            agent_jobs_repo.mark_outcome(
+                session, turn.id, AgentOutcome(None, cost, None, model), Usage(cost, None, None)
+            )
+            agent_jobs_repo.end_job(
+                session,
+                turn.id,
+                AgentJobEndReason.FINISHED,
+                "exited with code 0",
+                when + timedelta(seconds=40),
+                0,
+                said,
+                cost,
+            )
+    record_event(
+        ManagerPlanSet(
+            yesterday,
+            f"Run {first.name} small, with a stop under its worst run; nothing new starts.",
+            (),
+            f"manager:claude:{thread.id}",
+            occurred_at=at(9, 3),
+        )
+    )
+
+    for key, name, capital, stop, set_by, reason, when in (
+        ("desk", None, None, -30000.0, "manager", "about half the strategies' stops", at(9, 2)),
+        (
+            f"strategy:{first.id}",
+            first.name,
+            200000.0,
+            -6000.0,
+            "manager",
+            "1.8x its median losing run",
+            at(9, 2),
+        ),
+        (f"strategy:{first.id}", first.name, 200000.0, -4000.0, "you", "set by you", at(11, 20)),
+        ("desk", None, None, -20000.0, "manager", "a smaller desk tomorrow", at(15, 36)),
+    ):
+        record_event(
+            ManagerNumbersChanged(
+                key=key,
+                name=name,
+                capital=capital,
+                stop=stop,
+                set_by=set_by,
+                kept_yours=False,
+                reason=reason,
+                triggered_by="ui" if set_by == "you" else f"manager:claude:{thread.id}",
+                occurred_at=when,
+            )
         )
 
 
@@ -709,7 +841,8 @@ def _run_agents(
     home: Path, events: EventPublisher, url: str, clock: Clock, stop: threading.Event
 ) -> None:
     """The daemon's agent lanes (ADR 40), with tests/fixtures/fake_claude.py as
-    Claude Code and fake_codex.py as Codex: every chat, and the reviews asked for while the suite runs.
+    Claude Code and fake_codex.py as Codex: every chat, the desk manager's
+    wakes (ADR 41), and the reviews asked for while the suite runs.
     Jobs seeded before it started stay as they were (the Agents mock's
     waiting review stays waiting), and so do debriefs (Brain's proof stops
     one before it starts)."""
@@ -744,6 +877,7 @@ def _run_agents(
             now = clock()
             settled = replace(context, settings=resolved_settings(context.settings))
             watch_jobs(settled, now)
+            queue_due_manager_wake(settled, now)
             start_next_job(settled, now)
             start_next_chat_turn(settled, now)
             stop.wait(0.25)
@@ -769,6 +903,7 @@ def main() -> None:
     env = dict(E2E_ENV)
     _seed(env, clock)
     _seed_pnl(clock())
+    _seed_manager_history(clock())
     _seed_watchlists(clock())
 
     events = build_event_bus({})
@@ -813,7 +948,10 @@ def main() -> None:
     env["PATH"] = f"{Path(args.home).resolve() / 'bin'}:{os.environ.get('PATH', '')}"
 
     web = WebSettings(f"http://127.0.0.1:{args.port}", args.port, None, DIST)
-    app = create_app(events, env, clock=clock, hub=hub, web=web)
+    # MCP at /mcp as openticker-serve serves it, on the session's clock: a
+    # real agent can be put behind bin/claude and work the e2e desk.
+    mcp_server.clock = clock
+    app = WithMcp(create_app(events, env, clock=clock, hub=hub, web=web), mcp_server.mcp)
     links = [create_sign_in_link(web.own_origin, clock()) for _ in range(160)]
     Path(args.links).write_text("\n".join(links) + "\n")
     try:

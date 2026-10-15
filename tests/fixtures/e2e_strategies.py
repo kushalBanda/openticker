@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from openticker.adapters.agents.harness import read_outcome
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, Harness
+from openticker.core.agents.transcript import Usage
 from openticker.core.risk.models import StrategyLimits, StrategyStopReason
 from openticker.core.strategies.models import (
     Direction,
@@ -264,7 +265,12 @@ def _review(
     events.write_text(_review_events(strategy_id, summary))
     outcome = read_outcome(Harness.CLAUDE, events, agent_job_files.result_path(job.id))
     with write_transaction() as session:
-        agent_jobs_repo.mark_outcome(session, job.id, outcome)
+        agent_jobs_repo.mark_outcome(
+            session,
+            job.id,
+            outcome,
+            Usage(outcome.cost_usd, outcome.input_tokens, outcome.output_tokens),
+        )
         agent_jobs_repo.end_job(
             session,
             job.id,

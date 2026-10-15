@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from openticker.adapters.inbound.daemon import agent_loop
-from openticker.adapters.inbound.daemon.agent_loop import REVIEW_CHECK_EVERY, AgentLoop
+from openticker.adapters.inbound.daemon.agent_loop import DUE_CHECK_EVERY, AgentLoop
 from openticker.core.agents.jobs import AgentJobEndReason, AgentSettings
 from openticker.storage.sqlite import agent_jobs_repo
 from openticker.use_cases.agents.manage import start_review
@@ -35,11 +35,11 @@ def test_the_first_pass_ends_what_a_previous_daemon_left_then_starts_what_waits(
     assert [launch.job_id for launch in after.launches] == [waiting.id]
 
 
-def test_schedules_are_checked_once_a_minute(
+def test_due_wakes_are_checked_once_a_minute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     checks: list[datetime] = []
-    monkeypatch.setattr(agent_loop, "queue_due_reviews", lambda context, now: checks.append(now))
+    monkeypatch.setattr(agent_loop, "queue_due_debrief", lambda context, now: checks.append(now))
     now = NOW
     loop = AgentLoop(
         AgentContext(_Processes(), _Events(), AgentSettings(), tmp_path, "u"), lambda: now
@@ -49,7 +49,7 @@ def test_schedules_are_checked_once_a_minute(
         loop.step()
         now += timedelta(seconds=30)
 
-    assert checks == [NOW, NOW + REVIEW_CHECK_EVERY, NOW + 2 * REVIEW_CHECK_EVERY]
+    assert checks == [NOW, NOW + DUE_CHECK_EVERY, NOW + 2 * DUE_CHECK_EVERY]
 
 
 def test_step_queues_debrief_after_pnl_recorded(tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ def test_step_queues_debrief_after_pnl_recorded(tmp_path: Path) -> None:
     loop.step()
     assert processes.launches == []  # the day's P&L isn't recorded yet
     pnl_repo.upsert_day(DayPnl(MONDAY, 120.0, 30.0, 0.0, 90.0, 0.0, 4, True), now)
-    now += REVIEW_CHECK_EVERY
+    now += DUE_CHECK_EVERY
     loop.step()
 
     [launch] = processes.launches
@@ -94,3 +94,25 @@ def test_a_pass_starts_a_waiting_chat_turn_beside_a_review(tmp_path: Path) -> No
     ).step()
 
     assert [launch.job_id for launch in processes.launches] == [review.id, chat.turns[0].job.id]
+
+
+def test_a_pass_wakes_the_manager_and_starts_its_turn_with_its_context(tmp_path: Path) -> None:
+    from openticker.core.agents.manager import manager_context
+    from openticker.use_cases.agents.manager import set_manager
+    from openticker.use_cases.api_keys import authenticate
+
+    plan_time = datetime(2026, 9, 22, 3, 30, tzinfo=UTC)  # 09:00 IST
+    set_manager(True, None, _Events(), "ui", plan_time)
+    processes = _Processes()
+    loop = AgentLoop(
+        AgentContext(processes, _Events(), AgentSettings(), tmp_path, "u"), lambda: plan_time
+    )
+
+    loop.step()
+
+    [launch] = processes.launches
+    assert "Plan today" in launch.prompt and launch.agent is None
+    assert launch.context is not None
+    assert manager_context(plan_time.date()) in launch.context
+    key = authenticate(launch.api_key)
+    assert key is not None and key.scope.startswith("chat:thr_")

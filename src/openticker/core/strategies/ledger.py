@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from openticker.core.pnl import DayFigure
 from openticker.core.strategies.runs import Run, RunStatus
 from openticker.ports.models import EXCHANGE_TIMEZONE, Side
 
@@ -33,6 +34,7 @@ class LedgerFill:
     filled_at: datetime  # tz-aware UTC
     expected_price: float | None  # None: filled before costs were modelled
     charges: float | None  # likewise
+    realized_pnl: float | None  # what this fill closed, before charges; None: not recorded
 
     @property
     def slippage(self) -> float | None:
@@ -123,6 +125,22 @@ def _max_drawdown(nets: Sequence[float]) -> float:
         high = max(high, cumulative)
         deepest = max(deepest, high - cumulative)
     return round(deepest, 2)
+
+
+def day_figure(runs: Sequence[LedgerRun], day: date) -> DayFigure:
+    """What the fills filled on `day` (exchange-local) closed and paid, whichever
+    day their run started: a positional run closed today counts today, its
+    entry yesterday doesn't (ADR 42 in docs/adr). Open legs aren't in it."""
+    fills = [
+        fill
+        for entry in runs
+        for fill in entry.fills
+        if fill.filled_at.astimezone(EXCHANGE_TIMEZONE).date() == day
+    ]
+    return DayFigure(
+        gross=round(sum(fill.realized_pnl or 0.0 for fill in fills), 2),
+        charges=round(sum(fill.charges or 0.0 for fill in fills), 2),
+    )
 
 
 # Days an equity curve keeps: three years of trading days.

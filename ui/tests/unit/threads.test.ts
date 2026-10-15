@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { AgentThreadSummary, AgentTurn, Script } from "../../src/api/queries";
 import type { Strategy } from "../../src/lib/strategies";
-import { queuedTurn, relativeTime, seedFrom, suggestions } from "../../src/lib/threads";
+import {
+  choiceKind,
+  FOLDER_ORDER,
+  folderName,
+  queuedTurn,
+  relativeTime,
+  seedFrom,
+  suggestions,
+  whereLabel,
+} from "../../src/lib/threads";
 
 const strategy = (s: Partial<Strategy>): Strategy =>
   ({ strategy_id: "stg_x", name: "x", today_pnl: 0, last_review: null, ...s }) as Strategy;
@@ -136,5 +145,19 @@ describe("a message waiting for the agent's turn", () => {
     expect(queuedTurn([turn("pending", "a")])).toBeNull();
     expect(queuedTurn([turn("ended", "a"), turn("pending", "b")])).toBeNull();
     expect(queuedTurn([turn("ended", "a")])).toBeNull();
+  });
+});
+
+describe("the desk manager's chats", () => {
+  it("live in a Manager folder that takes the manager's Settings", () => {
+    const thread = {
+      folder: "manager",
+      subject: "2026-09-22",
+      subject_name: null,
+    } as AgentThreadSummary;
+    expect(whereLabel(thread)).toBe("Manager");
+    expect(FOLDER_ORDER).toContain("manager");
+    expect(folderName("manager")).toBe("Manager");
+    expect(choiceKind("manager")).toBe("manager");
   });
 });

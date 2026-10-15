@@ -1,16 +1,19 @@
 """Every strategy with what it is doing now: the web app's strategies list
 (ADR 30 in docs/adr) and `list_strategies`. Its state, the open run, today's
-net and all-time net after costs (ADR 28, 29), and its latest review."""
+money from today's fills and all-time net after costs (ADR 28, 29, 42), how
+its last run ended, and its latest review."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 from enum import StrEnum
 
 from sqlalchemy.orm import Session
 
 from openticker.core.agents.jobs import AgentJob
 from openticker.core.calendar.models import MarketCalendar
-from openticker.core.strategies.ledger import ledger_totals
+from openticker.core.pnl import DayFigure
+from openticker.core.risk.models import StrategyStopReason
+from openticker.core.strategies.ledger import LedgerRun, day_figure, ledger_totals
 from openticker.core.strategies.models import OptionsStrategySpec, SignalStrategySpec
 from openticker.core.strategies.runs import CommandKind, Run, RunStatus
 from openticker.core.strategies.schedule import next_entry
@@ -42,6 +45,13 @@ class Segment(StrEnum):
 
 
 @dataclass(frozen=True)
+class RunEnd:
+    reason: StrategyStopReason | None  # None: ended before reasons were recorded
+    detail: str | None
+    at: datetime | None
+
+
+@dataclass(frozen=True)
 class BoardRow:
     strategy: StoredStrategy
     state: StrategyState
@@ -49,13 +59,15 @@ class BoardRow:
     active_run: Run | None
     pending: CommandKind | None  # the oldest request the daemon hasn't carried out
     next_entry: datetime | None  # when scheduled
-    today_net: float  # runs started today and the open run: realized less charges
+    today: DayFigure  # today's fills, whenever their run started; open legs not in it
+    day_used_before: float  # earlier runs today, realized: what the daily loss limit adds to
     net_pnl: float  # every run after costs (ADR 29)
     runs: int  # every run it has had
     judged: int  # runs after costs
     wins: int
     max_drawdown: float
     last_run_at: datetime | None  # when the newest run started
+    last_end: RunEnd | None  # how the newest ended run ended
     has_alert_url: bool  # a signal strategy's
     review: AgentJob | None  # the newest review that answered
 
@@ -95,26 +107,42 @@ def strategy_board(calendar: MarketCalendar, now: datetime) -> list[BoardRow]:
                 next_entry=next_entry(stored.spec.schedule, stored.spec.exchange, calendar, now)
                 if isinstance(stored.spec, OptionsStrategySpec) and stored.scheduled_broker
                 else None,
-                today_net=round(
-                    sum(
-                        r.net_pnl
-                        for r in runs
-                        if r.run.status is not RunStatus.ENDED
-                        or r.run.started_at.astimezone(EXCHANGE_TIMEZONE).date() == today
-                    ),
-                    2,
-                ),
+                today=day_figure(runs, today),
+                day_used_before=_day_used_before(runs, active, today),
                 net_pnl=totals.net_pnl,
                 runs=len(runs),
                 judged=totals.runs,
                 wins=totals.wins,
                 max_drawdown=totals.max_drawdown,
                 last_run_at=runs[0].run.started_at if runs else None,
+                last_end=_last_end(runs),
                 has_alert_url=alert_url,
                 review=reviews.get(stored.id),
             )
         )
     return rows
+
+
+def _day_used_before(runs: list[LedgerRun], active: Run | None, today: date) -> float:
+    """Realized P&L of the runs started today other than the open one, as the
+    runner adds it to the open run's for the daily loss limit (ADR 21)."""
+    midnight = datetime.combine(today, time(), EXCHANGE_TIMEZONE)
+    return round(
+        sum(
+            r.run.realized_pnl
+            for r in runs
+            if r.run.started_at >= midnight and (active is None or r.run.id != active.id)
+        ),
+        2,
+    )
+
+
+def _last_end(runs: list[LedgerRun]) -> RunEnd | None:
+    """Runs are newest first."""
+    ended = next((r.run for r in runs if r.run.status is RunStatus.ENDED), None)
+    if ended is None:
+        return None
+    return RunEnd(ended.stop_reason, ended.stop_detail, ended.ended_at)
 
 
 def _state(stored: StoredStrategy, running: bool, alert_url: bool) -> StrategyState:

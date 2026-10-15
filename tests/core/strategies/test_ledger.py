@@ -1,7 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
+from openticker.core.pnl import DayFigure
 from openticker.core.risk.models import StrategyStopReason
-from openticker.core.strategies.ledger import LedgerFill, LedgerRun, equity_curve, ledger_totals
+from openticker.core.strategies.ledger import (
+    LedgerFill,
+    LedgerRun,
+    day_figure,
+    equity_curve,
+    ledger_totals,
+)
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
 from openticker.ports.models import Exchange, Product, Side
 
@@ -10,9 +17,14 @@ SYMBOL = "NIFTY22SEP2625000CE"
 
 
 def _fill(
-    side: Side, price: float, expected: float | None = None, charges: float | None = 5.0
+    side: Side,
+    price: float,
+    expected: float | None = None,
+    charges: float | None = 5.0,
+    realized: float | None = None,
+    at: datetime = START,
 ) -> LedgerFill:
-    return LedgerFill(SYMBOL, "NFO", side, 10, price, START, expected, charges)
+    return LedgerFill(SYMBOL, "NFO", side, 10, price, at, expected, charges, realized)
 
 
 def _run(
@@ -109,6 +121,34 @@ def test_no_runs_judged_yet() -> None:
         0.0,
     )
     assert totals.average_win is None and totals.stop_reasons == {}
+
+
+def test_a_day_counts_the_fills_filled_that_day_whichever_day_the_run_started() -> None:
+    # A positional run: sold on the 22nd, bought back on the 23rd for 300.
+    entry = _fill(Side.SELL, 100.0, charges=8.0, realized=0.0)
+    exit_ = _fill(Side.BUY, 70.0, charges=12.5, realized=300.0, at=START + timedelta(days=1))
+    positional = LedgerRun(_run(0, 300.0).run, (entry, exit_))
+    # One opened and closed on the 23rd.
+    same_day = LedgerRun(
+        _run(1, -40.0).run,
+        (
+            _fill(Side.SELL, 100.0, charges=4.0, realized=0.0, at=START + timedelta(days=1)),
+            _fill(Side.BUY, 104.0, charges=6.0, realized=-40.0, at=START + timedelta(days=1)),
+        ),
+    )
+    day = (START + timedelta(days=1)).date()
+
+    figure = day_figure([positional, same_day], day)
+
+    assert figure == DayFigure(gross=260.0, charges=22.5)
+    assert figure.net == 237.5
+    assert day_figure([positional, same_day], START.date()) == DayFigure(gross=0.0, charges=8.0)
+
+
+def test_a_fill_that_never_recorded_what_it_realized_counts_its_charges_only() -> None:
+    old = LedgerRun(_run(0, 50.0).run, (_fill(Side.BUY, 95.0, charges=3.0),))
+
+    assert day_figure([old], START.date()) == DayFigure(gross=0.0, charges=3.0)
 
 
 def test_equity_adds_up_judged_runs_by_the_day_they_started() -> None:

@@ -64,11 +64,43 @@ class TurnOutcome:
     answer: str | None = None  # the final assistant text
     session_id: str | None = None  # the harness's own, to resume the conversation
     model_used: str | None = None  # the model that did most of the work
+    # Claude Code: the session's running totals on a resumed session (ADR 42);
+    # Codex: the run's own.
     input_tokens: int | None = None  # cached input included
     output_tokens: int | None = None
     cost_usd: float | None = None
     duration_ms: int | None = None
     error: str | None = None  # why the harness says the turn failed
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What a run spent: dollars, input tokens (cached included), output tokens."""
+
+    cost_usd: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+def own_usage(reported: Usage, before: Usage | None) -> Usage:
+    """A turn's own spend. Claude Code reports a resumed session's running
+    total (ADR 42 in docs/adr), so the previous turn's total is taken off.
+    A field without a `before`, or one that went down (a new session), is the
+    turn's own already."""
+    if before is None:
+        return reported
+
+    def own[T: (int, float)](now: T | None, then: T | None) -> T | None:
+        if now is None or then is None or now < then:
+            return now
+        return now - then
+
+    cost = own(reported.cost_usd, before.cost_usd)
+    return Usage(
+        cost_usd=None if cost is None else round(cost, 10),  # float noise off, cents kept
+        input_tokens=own(reported.input_tokens, before.input_tokens),
+        output_tokens=own(reported.output_tokens, before.output_tokens),
+    )
 
 
 def read_steps(harness: Harness, lines: Iterable[str]) -> list[Step]:
@@ -124,10 +156,12 @@ def read_outcome(harness: Harness, lines: Iterable[str]) -> TurnOutcome:
                 last_text = "\n\n".join(texts)
         elif kind == "result":
             outcome = _result_outcome(event, outcome)
+    # The init event names this run's model; the result's usage is the
+    # session's, which on a resumed session may be mostly another model's.
     return replace(
         outcome,
         answer=outcome.answer or last_text,
-        model_used=outcome.model_used or init_model,
+        model_used=init_model or outcome.model_used,
     )
 
 
@@ -151,7 +185,8 @@ def _result_outcome(event: Mapping[str, Any], outcome: TurnOutcome) -> TurnOutco
 
 def _usage(event: Mapping[str, Any]) -> tuple[str | None, int | None, int | None]:
     """The model with the most output tokens (Claude Code also asks a small
-    model for side tasks), and the turn's tokens over every model."""
+    model for side tasks), and the tokens over every model: the session's
+    running total on a resumed session, like `total_cost_usd`."""
     by_model = event.get("modelUsage")
     if isinstance(by_model, dict) and by_model:
         models = {name: used for name, used in by_model.items() if isinstance(used, dict)}

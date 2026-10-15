@@ -6,6 +6,8 @@ from openticker.core.agents.jobs import Harness
 from openticker.core.agents.transcript import (
     MAX_RESULT_CHARS,
     StepKind,
+    Usage,
+    own_usage,
     read_outcome,
     read_steps,
     session_gone,
@@ -53,6 +55,41 @@ def test_claude_outcome_names_session_model_tokens_cost_and_time() -> None:
     assert outcome.cost_usd == 0.0712
     assert outcome.duration_ms == 41_000
     assert outcome.error is None
+
+
+def test_a_resumed_turn_names_its_own_model_not_the_sessions_busiest() -> None:
+    # Opus did the session's earlier turns; this one ran on Sonnet.
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"}),
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": "ok",
+                "total_cost_usd": 0.9,
+                "modelUsage": {
+                    "claude-opus-5-5": {"inputTokens": 50_000, "outputTokens": 3_000},
+                    "claude-sonnet-5-5": {"inputTokens": 9_000, "outputTokens": 200},
+                },
+            }
+        ),
+    ]
+
+    assert read_outcome(Harness.CLAUDE, lines).model_used == "claude-sonnet-5-5"
+
+
+def test_own_usage_takes_off_the_previous_running_total() -> None:
+    reported = Usage(0.45, 41_000, 800)
+
+    assert own_usage(reported, Usage(0.30, 20_000, 500)) == Usage(0.15, 21_000, 300)
+
+
+def test_own_usage_takes_a_new_session_or_a_missing_total_whole() -> None:
+    reported = Usage(0.05, 9_000, 100)
+
+    assert own_usage(reported, None) == reported
+    assert own_usage(reported, Usage(0.30, 20_000, 500)) == reported  # went down: new session
+    assert own_usage(reported, Usage(None, 2_000, None)) == Usage(0.05, 7_000, 100)
 
 
 def test_claude_error_result_keeps_partial_steps_and_says_why() -> None:

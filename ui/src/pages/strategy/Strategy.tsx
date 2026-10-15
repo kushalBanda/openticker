@@ -31,6 +31,7 @@ import { useLiveLegs } from "../strategies/live";
 import { StopDialog } from "../strategies/StopDialog";
 import { StateBadge, useMinute } from "../strategies/Strategies";
 import { LedgerTab } from "./LedgerTab";
+import { ManagerCard } from "./ManagerCard";
 import { Overview } from "./Overview";
 import { ReviewsTab } from "./ReviewsTab";
 import { RunsTab } from "./RunsTab";
@@ -53,6 +54,15 @@ function useOpenPnl(summary: Summary | undefined): number | null {
     sum += leg.pnl;
   }
   return sum;
+}
+
+/**
+ * What the daily loss limit has used, counted as the runner counts it:
+ * earlier runs today, realized, plus the open run's P&L, before charges.
+ */
+function usedToday(summary: Summary, openPnl: number | null): string | undefined {
+  if (summary.active_run && openPnl === null) return undefined;
+  return `${rupees(Math.max(0, -(summary.daily_used_before + (openPnl ?? 0))))} used today`;
 }
 
 /**
@@ -292,7 +302,7 @@ export function Strategy() {
               }
               note={
                 definition?.daily_loss_limit != null && summary
-                  ? `${rupees(Math.max(0, -summary.today_pnl))} used today`
+                  ? usedToday(summary, openPnl)
                   : undefined
               }
             />
@@ -330,6 +340,7 @@ export function Strategy() {
             />
           </>
         )}
+        <ManagerCard strategyId={id} />
       </div>
 
       <div className="toolbar">
@@ -359,15 +370,12 @@ export function Strategy() {
           reviews={reviews.data?.jobs}
           marketOpen={marketOpen}
           broker={broker}
-          reviewSchedule={detail.data?.review_schedule}
         />
       )}
       {tab === "runs" && <RunsTab ledger={ledger} />}
       {tab === "ledger" && <LedgerTab ledger={ledger} />}
       {tab === "signals" && signal && <SignalsTab signals={signals} />}
-      {tab === "reviews" && (
-        <ReviewsTab id={id} reviews={reviews} schedule={detail.data?.review_schedule} />
-      )}
+      {tab === "reviews" && <ReviewsTab id={id} reviews={reviews} />}
 
       <StopDialog
         strategy={stopping && summary ? summary : null}

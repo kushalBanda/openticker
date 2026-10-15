@@ -31,6 +31,7 @@ const OptionChain = page(() => import("./pages/options/OptionChain"), "OptionCha
 const Positions = page(() => import("./pages/positions/Positions"), "Positions");
 const Orders = page(() => import("./pages/orders/Orders"), "Orders");
 const Trades = page(() => import("./pages/trades/Trades"), "Trades");
+const Manager = page(() => import("./pages/manager/Manager"), "Manager");
 const Strategies = page(() => import("./pages/strategies/Strategies"), "Strategies");
 const Strategy = page(() => import("./pages/strategy/Strategy"), "Strategy");
 const Scripts = page(() => import("./pages/scripts/Scripts"), "Scripts");
@@ -76,6 +77,8 @@ const routes: { path: string; element: ReactNode }[] = [
   { path: "/positions", element: <Positions /> },
   { path: "/orders", element: <Orders /> },
   { path: "/trades", element: <Trades /> },
+  // One route, so stepping through days keeps the tape (and its focus) mounted.
+  { path: "/manager/:day?", element: <Manager /> },
   { path: "/strategies", element: <Strategies /> },
   { path: "/strategies/:id", element: <Strategy /> },
   { path: "/scripts", element: <Scripts /> },

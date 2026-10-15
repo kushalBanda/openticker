@@ -367,7 +367,8 @@ export function Strategies() {
       </div>
       <p className="note" style={{ marginTop: 16 }}>
         Strategies are written and changed by your agent. Here you start, stop, schedule and kill
-        them. Today counts runs started today and the open run, after charges.
+        them. Today counts trades closed today, whenever the run started, and open legs live, after
+        charges.
       </p>
 
       <StopDialog

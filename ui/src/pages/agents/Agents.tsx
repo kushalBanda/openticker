@@ -5,10 +5,10 @@ import {
   useAgentJobLog,
   useAgentJobs,
   useAgents,
+  useManager,
   useReviews,
   useStopAgentJob,
   useStrategies,
-  useStrategy,
 } from "../../api/queries";
 import { CopyLine } from "../../components/CopyLine";
 import { type Column, DataTable } from "../../components/DataTable";
@@ -28,16 +28,12 @@ import {
 } from "../../lib/agents";
 import { MISSING, qty } from "../../lib/format";
 import { stamp } from "../../lib/scripts";
+import { reviewedWhen } from "../../lib/strategies";
 import { ranLine } from "../../lib/threads";
 import { useActions } from "../../shell/actions";
 import { useServerNow } from "../../stream/StreamProvider";
 import { useTick } from "../scripts/Scripts";
-import {
-  ReviewNow,
-  ReviewScheduleButton,
-  scheduleText,
-  VerdictBadge,
-} from "../strategy/LatestReview";
+import { ReviewNow, VerdictBadge } from "../strategy/LatestReview";
 
 const CodeView = lazy(() =>
   import("../../components/CodeView").then((m) => ({ default: m.CodeView })),
@@ -103,16 +99,14 @@ function Clients() {
   );
 }
 
-/** Pick a strategy, then review it now or set when it is reviewed. */
+/** Pick a strategy, then review it now. */
 function ReviewDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const strategies = useStrategies();
   const all = strategies.data?.strategies ?? [];
   const [picked, setPicked] = useState<string>("");
   const id = picked || all[0]?.strategy_id || "";
-  const detail = useStrategy(id);
   const reviews = useReviews(id);
-  const schedule = detail.data?.review_schedule;
-  const when = scheduleText(schedule);
+  const managerOn = useManager().data?.enabled === true;
   const summary = all.find((s) => s.strategy_id === id);
   const serverNow = useServerNow();
 
@@ -151,10 +145,9 @@ function ReviewDialog({ open, onClose }: { open: boolean; onClose: () => void })
             ) : (
               "Not reviewed yet. "
             )}
-            {when ? `Also reviewed ${when}.` : "Reviewed only when asked."}
+            {reviewedWhen(managerOn)}.
           </p>
           <div className="flex items-center gap-2">
-            <ReviewScheduleButton key={`${id}:${when ?? "none"}`} id={id} current={schedule} />
             <span className="flex-1" />
             <ReviewNow id={id} reviews={reviews.data?.jobs} variant="primary" />
           </div>

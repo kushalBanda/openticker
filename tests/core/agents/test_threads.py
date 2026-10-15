@@ -1,4 +1,6 @@
 from openticker.core.agents.threads import (
+    BRAIN_LINE,
+    BRAIN_READ_LINE,
     MAX_TITLE_CHARS,
     READ_ONLY_LINE,
     Access,
@@ -55,3 +57,10 @@ def test_a_snippet_is_the_line_around_the_first_match_cut_with_ellipses() -> Non
     assert len(found) <= 42
     assert snippet("short answer", "zzz") == "short answer"
     assert snippet("a " * 100, "zzz", width=10) == "a a a a a…"
+
+
+def test_every_chat_prompt_has_the_brain_line() -> None:
+    for folder, subject in ((Folder.GENERAL, None), (Folder.MANAGER, "2026-09-22")):
+        assert BRAIN_LINE in chat_prompt_context(folder_context(folder, subject, None), "j")
+    read = chat_prompt_context(None, "j", Access.READ)
+    assert BRAIN_READ_LINE in read and "record_lesson_use" not in read
