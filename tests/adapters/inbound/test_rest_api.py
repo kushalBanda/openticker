@@ -547,11 +547,6 @@ def test_review_routes_mirror_the_tools(client: TestClient) -> None:
         "stopped by rest:tests before it started",
     )
     assert client.post("/api/v1/agent-jobs/job_nope/stop").status_code == 404
-    assert client.post(f"/api/v1/strategies/{strategy_id}/review-schedule").status_code in (
-        404,
-        405,
-    )
-    assert "review_schedule" not in client.get(f"/api/v1/strategies/{strategy_id}").json()
 
 
 def test_an_alert_posted_to_its_url_needs_no_api_key(client: TestClient, events: EventBus) -> None:

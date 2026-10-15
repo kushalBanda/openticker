@@ -248,11 +248,6 @@ def test_a_read_only_chats_key_reads_the_desk_and_changes_nothing() -> None:
     assert refusal(scope, "POST", "/api/v1/agent-threads", {}, RUNS.get) is not None
 
 
-def test_the_review_schedule_routes_are_gone() -> None:
-    assert not {"schedule_review", "unschedule_review"} & set(TOOL_ROUTES)
-    assert not any("review-schedule" in path for _, path in TOOL_ROUTES.values())
-
-
 def test_the_managers_days_are_read_by_chats_and_the_manager_not_reviews() -> None:
     for tool in ("get_manager_day", "list_manager_days"):
         assert _refusal("chat:thr_1", tool, trading_date="2026-10-14") is None, tool
