@@ -72,12 +72,15 @@ class BoardRow:
     review: AgentJob | None  # the newest review that answered
 
 
-def strategy_board(calendar: MarketCalendar, now: datetime) -> list[BoardRow]:
+def strategy_board(
+    calendar: MarketCalendar, now: datetime, ledgers: dict[str, list[LedgerRun]] | None = None
+) -> list[BoardRow]:
     """By name, as list_strategies has always listed them. Each kind of
-    thing is read once for every strategy, not once a strategy."""
+    thing is read once for every strategy, not once a strategy; a caller
+    that also needs the ledgers passes the ones it read."""
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
     reviews = agent_jobs_repo.latest_answers()
-    ledgers = every_ledger()
+    ledgers = every_ledger() if ledgers is None else ledgers
     pending_of = _pending()
     webhooks = signals_repo.strategies_with_webhooks()
     strategies = strategies_repo.list_strategies()

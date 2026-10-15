@@ -1,13 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
 from openticker.core.pnl import DayFigure
-from openticker.core.risk.models import StrategyStopReason
+from openticker.core.risk.models import StrategyLimits, StrategyStopReason
 from openticker.core.strategies.ledger import (
     LedgerFill,
     LedgerRun,
+    SuggestedStop,
     day_figure,
     equity_curve,
     ledger_totals,
+    suggest_stop,
 )
 from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus
 from openticker.ports.models import Exchange, Product, Side
@@ -172,3 +174,45 @@ def test_equity_keeps_the_latest_days_when_there_are_too_many() -> None:
     curve = equity_curve([_run(day, 20.0) for day in range(5)], limit=2)  # nets 10 a day
 
     assert [point.net_pnl for point in curve] == [40.0, 50.0]
+
+
+def _record(losers: list[float], winners: int) -> list[LedgerRun]:
+    """Runs after costs: each loser's net as given (charges 10), then winners of +990."""
+    nets = [*losers, *([990.0] * winners)]
+    return [_run(day, net + 10.0) for day, net in enumerate(nets)]
+
+
+def test_suggest_stop_is_the_multiple_of_the_median_losing_run() -> None:
+    runs = _record([-4000.0, -5000.0, -5000.0, -6000.0, -9000.0], winners=7)
+    assert suggest_stop(runs, StrategyLimits()) == SuggestedStop(
+        -8750.0, "1.75x its median losing run -₹5,000 over 12 runs after costs"
+    )
+
+
+def test_suggest_stop_is_never_tighter_than_its_own_combined_stop() -> None:
+    runs = _record([-2000.0] * 4, winners=8)  # 1.75x gives -3,500
+    found = suggest_stop(runs, StrategyLimits(combined_stop_loss=10_000.0))
+    assert found is not None and found.value == -10_000.0
+    assert found.basis.startswith("its own combined stop -₹10,000; 1.75x its median")
+    # a daily loss limit is no floor: it caps a whole day, not a run
+    found = suggest_stop(runs, StrategyLimits(daily_loss_limit=10_000.0))
+    assert found is not None and found.value == -3500.0
+
+
+def test_a_thin_record_uses_its_own_combined_stop_else_its_daily_limit() -> None:
+    runs = _record([-2000.0], winners=3)
+    found = suggest_stop(runs, StrategyLimits(combined_stop_loss=3000.0, daily_loss_limit=9000.0))
+    assert found == SuggestedStop(
+        -3000.0, "its own combined stop -₹3,000; 4 runs after costs, fewer than 10"
+    )
+    found = suggest_stop(runs, StrategyLimits(daily_loss_limit=9000.0))
+    assert found == SuggestedStop(
+        -9000.0, "its own daily loss limit -₹9,000; 4 runs after costs, fewer than 10"
+    )
+
+
+def test_no_record_and_no_own_stop_suggests_nothing() -> None:
+    assert suggest_stop([], StrategyLimits()) is None
+    one = suggest_stop(_record([-100.0], winners=0), StrategyLimits(combined_stop_loss=500.0))
+    assert one is not None and "; 1 run after costs," in one.basis
+    assert suggest_stop(_record([], winners=12), StrategyLimits()) is None  # never lost

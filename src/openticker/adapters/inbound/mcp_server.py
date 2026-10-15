@@ -107,6 +107,7 @@ from openticker.adapters.inbound.mcp_models import (
     SyncResult,
     TradebookResult,
     TradeNoteInput,
+    UndoneResult,
     WatchlistResult,
     WatchlistsResult,
     WebhookResult,
@@ -2607,7 +2608,7 @@ def set_manager_numbers(
     kept_yours. Numbers set from anywhere but the manager's own day are the
     user's, and stand until they hand them back."""
     with _agent_facing_errors():
-        views, kept = desk_manager.set_manager_numbers(
+        views, kept, left = desk_manager.set_manager_numbers(
             [desk_manager.LineChange(l.key, l.capital, l.stop, l.reason) for l in lines],
             event_bus(),
             _who(),
@@ -2617,6 +2618,7 @@ def set_manager_numbers(
     return ManagerNumbersResult(
         lines=[ManagerLineResult.of(v) for v in views],
         kept_yours=[KeptYoursResult.of(k) for k in kept],
+        undone=[UndoneResult.of(u) for u in left],
     )
 
 

@@ -122,6 +122,7 @@ from openticker.adapters.inbound.mcp_models import (
     ThreadSearchResult,
     TradebookResult,
     TradeNoteInput,
+    UndoneResult,
     WatchlistResult,
     WatchlistsResult,
     WebhookResult,
@@ -1324,7 +1325,7 @@ def create_app(
     def set_manager_numbers(body: ManagerNumbersBody, caller: Caller) -> ManagerNumbersResult:
         """Lines' capital and stop. From the web app or a full key, the user's:
         they stand over the manager's."""
-        views, kept = desk_manager.set_manager_numbers(
+        views, kept, left = desk_manager.set_manager_numbers(
             [desk_manager.LineChange(l.key, l.capital, l.stop, l.reason) for l in body.lines],
             events,
             caller.triggered_by,
@@ -1334,6 +1335,7 @@ def create_app(
         return ManagerNumbersResult(
             lines=[ManagerLineResult.of(v) for v in views],
             kept_yours=[KeptYoursResult.of(k) for k in kept],
+            undone=[UndoneResult.of(u) for u in left],
         )
 
     @api.delete("/manager/numbers/{key}/override")

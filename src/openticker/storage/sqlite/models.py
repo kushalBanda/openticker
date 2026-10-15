@@ -412,6 +412,8 @@ class ManagerStateRow(Base):
     plan_lessons: Mapped[str | None]  # JSON list of lesson ids
     plan_at: Mapped[datetime | None]
     updated_at: Mapped[datetime | None]
+    # JSON list of the undone items an undone wake was last sent for (ADR 44); NULL: none
+    undone_told: Mapped[str | None]
 
 
 class ManagerLineRow(Base):

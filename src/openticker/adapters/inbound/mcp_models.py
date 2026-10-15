@@ -20,7 +20,7 @@ from openticker.core.agents.jobs import (
     job_title,
     verdict_of,
 )
-from openticker.core.agents.manager import ManagerPlan
+from openticker.core.agents.manager import ManagerPlan, Undone
 from openticker.core.agents.threads import FAILED_ENDS, Access, Folder, is_unread
 from openticker.core.agents.transcript import Step, StepKind
 from openticker.core.brain.lessons import CheckOutcome, Override, UsePurpose
@@ -62,7 +62,7 @@ from openticker.core.scripts.models import (
     ScriptSchedule,
     ScriptStopReason,
 )
-from openticker.core.strategies.ledger import LedgerFill, LedgerRun, LedgerTotals
+from openticker.core.strategies.ledger import LedgerFill, LedgerRun, LedgerTotals, SuggestedStop
 from openticker.core.strategies.models import (
     MAX_LEGS,
     MAX_LOTS,
@@ -1960,6 +1960,15 @@ class LedgerTotalsResult(BaseModel):
         return cls(**{field: getattr(totals, field) for field in cls.model_fields})
 
 
+class SuggestedStopResult(BaseModel):
+    value: float = Field(description="Rupees, below 0: the stop line its record gives.")
+    basis: str = Field(description="What it rests on; give it as the line's reason.")
+
+    @classmethod
+    def of(cls, stop: SuggestedStop | None) -> "SuggestedStopResult | None":
+        return cls(value=stop.value, basis=stop.basis) if stop else None
+
+
 class StrategyLedgerResult(BaseModel):
     strategy_id: str
     name: str
@@ -1977,6 +1986,12 @@ class StrategyLedgerResult(BaseModel):
         "first; the latest 750 days."
     )
 
+    suggested_stop: SuggestedStopResult | None = Field(
+        description="The desk manager's stop line from this record: 1.75x its median losing "
+        "run with 10 or more runs after costs, never tighter than its own combined stop; "
+        "with fewer, its own combined stop, else its daily loss limit; null without either."
+    )
+
     @classmethod
     def of(cls, ledger: StrategyLedger) -> "StrategyLedgerResult":
         return cls(
@@ -1989,6 +2004,7 @@ class StrategyLedgerResult(BaseModel):
             totals=LedgerTotalsResult.of(ledger.totals),
             runs=[LedgerRunResult.of(run) for run in ledger.runs],
             equity=[EquityPointResult(day=p.day, net_pnl=p.net_pnl) for p in ledger.equity],
+            suggested_stop=SuggestedStopResult.of(ledger.suggested_stop),
         )
 
 
@@ -3703,6 +3719,31 @@ class ManagerPlanResult(BaseModel):
         )
 
 
+class UndoneResult(BaseModel):
+    kind: Literal["unguarded", "contradicted", "blind_plan"] = Field(
+        description="unguarded: it trades today (running, listening, or entering later today) "
+        "with no stop on your line. contradicted: your line gives it capital 0, yet it "
+        "trades today. blind_plan: today's plan was made while prices were down, and "
+        "they're back."
+    )
+    key: str = Field(description="The line it is about (strategy:<id>), or plan.")
+    name: str
+    text: str = Field(description="What's undone, and what would do it.")
+    suggested_stop: SuggestedStopResult | None = Field(
+        description="The stop line its record gives, as get_strategy_ledger has it."
+    )
+
+    @classmethod
+    def of(cls, item: Undone) -> "UndoneResult":
+        return cls(
+            kind=item.kind.value,
+            key=item.key,
+            name=item.name,
+            text=item.text,
+            suggested_stop=SuggestedStopResult.of(item.suggested),
+        )
+
+
 class ManagerResult(BaseModel):
     enabled: bool = Field(description="Whether it wakes on its own.")
     wakes_per_day: int = Field(description="The most turns it takes a day.")
@@ -3723,6 +3764,10 @@ class ManagerResult(BaseModel):
         description="The desk's money today at the latest recorded minute: closed trades "
         "(gross), open positions (open), charges, and net; null before the first minute."
     )
+    undone: list[UndoneResult] = Field(
+        description="The desk's duties left undone. Do each before you end the look, or say "
+        "in your answer why it stays."
+    )
 
     @classmethod
     def of(cls, view: ManagerView) -> "ManagerResult":
@@ -3742,6 +3787,7 @@ class ManagerResult(BaseModel):
             account=view.account,
             given=view.given,
             desk_today=DayFigureResult.of(view.desk_today) if view.desk_today else None,
+            undone=[UndoneResult.of(item) for item in view.undone],
         )
 
 
@@ -3921,4 +3967,8 @@ class ManagerNumbersResult(BaseModel):
     kept_yours: list[KeptYoursResult] = Field(
         description="Lines the user set, left as they are: say in your answer that you "
         "disagree and why, and don't ask again."
+    )
+    undone: list[UndoneResult] = Field(
+        description="The desk's duties still undone after this call: do each before you end "
+        "the look, or say in your answer why it stays."
     )

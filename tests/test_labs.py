@@ -209,5 +209,22 @@ def test_manage_desk_sets_a_next_look_only_when_needed_and_a_stop_for_every_run(
     text = (CLAUDE_SKILLS / "manage-desk" / "SKILL.md").read_text()
 
     assert "End every turn with set_next_wake" not in text
-    assert "Every running strategy gets a stop line" in text
+    assert "Every strategy that trades today gets a stop line before it trades" in text
     assert "Explain before you act" in text
+
+
+def test_manage_desk_says_to_decide_not_ask_and_finish_the_look() -> None:
+    skill = CLAUDE_SKILLS / "manage-desk"
+    text = (skill / "SKILL.md").read_text()
+    assert "Decide; don't ask." in text
+    assert "A look is finished when `undone` is empty" in text
+    assert "- [ ] 1 Read the wake's tags" in text  # the checklist it copies and ticks
+    for kind in ("unguarded", "contradicted", "blind_plan"):
+        assert f"`{kind}`" in text
+    # what it must never do appears only as what to leave out
+    answers = (skill / "references" / "answers.md").read_text()
+    leave_out = answers.split("## What to leave out", 1)[1]
+    assert "say the word" in leave_out and "I'll do it at the close" in leave_out
+    assert answers.count("<example ") == answers.count("</example>") >= 6
+    agents = (LABS / "AGENTS.md").read_text()
+    assert "doesn't bind you. Don't ask; decide." in agents

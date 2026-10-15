@@ -48,7 +48,7 @@ from openticker.use_cases.agents.supervise import AgentContext, start_next_chat_
 from openticker.use_cases.agents.threads import recorded_as
 from openticker.use_cases.brain.read import UnknownNoteError
 from openticker.use_cases.brain.write import write_debrief
-from openticker.use_cases.strategies.control import request_stop
+from openticker.use_cases.strategies.control import request_stop, schedule_strategy
 from openticker.use_cases.strategies.runner import process_commands
 from tests.fixtures.strategies import POSITIONAL_STRADDLE, STRADDLE
 from tests.fixtures.strategy_desk import Desk
@@ -67,7 +67,7 @@ def _set(events: _Events, who: str, *changes: LineChange):  # type: ignore[no-un
 def test_manager_sets_its_lines() -> None:
     events = _Events()
     stg = insert_strategy("Straddle", STRADDLE, NOW)
-    views, kept = _set(
+    views, kept, _ = _set(
         events,
         MANAGER,
         LineChange(f"strategy:{stg.id}", 600000.0, -6000.0, "median loser -2,880"),
@@ -87,7 +87,7 @@ def test_manager_sets_its_lines() -> None:
 def test_your_change_wins_and_keeps_the_managers_values() -> None:
     events = _Events()
     _set(events, MANAGER, LineChange("own", 200000.0, -2000.0, "a hedge budget"))
-    views, _ = _set(events, "ui", LineChange("own", 100000.0, -1000.0))
+    views, _, _ = _set(events, "ui", LineChange("own", 100000.0, -1000.0))
     line = views[0].line
     assert line.set_by is SetBy.YOU and (line.capital, line.stop) == (100000.0, -1000.0)
     assert (line.manager_capital, line.manager_stop) == (200000.0, -2000.0)
@@ -97,14 +97,14 @@ def test_your_change_wins_and_keeps_the_managers_values() -> None:
 def test_manager_change_to_your_line_is_kept_yours() -> None:
     events = _Events()
     _set(events, "ui", LineChange("desk", None, -5000.0))
-    views, kept = _set(events, MANAGER, LineChange("desk", None, -3500.0, "tighter on expiry"))
+    views, kept, _ = _set(events, MANAGER, LineChange("desk", None, -3500.0, "tighter on expiry"))
     line = views[0].line
     assert line.set_by is SetBy.YOU and line.stop == -5000.0 and line.manager_stop == -3500.0
     assert [(k.key, k.stop, k.wanted_stop) for k in kept] == [("desk", -5000.0, -3500.0)]
     last = events.of(ManagerNumbersChanged)[-1]
     assert last.kept_yours and last.set_by == "manager"  # type: ignore[attr-defined]
     # The user changing it again keeps what the manager last wanted.
-    views, _ = _set(events, "ui", LineChange("desk", None, -4000.0))
+    views, _, _ = _set(events, "ui", LineChange("desk", None, -4000.0))
     assert views[0].line.manager_stop == -3500.0
 
 
@@ -154,6 +154,71 @@ def test_get_manager_counts_given_without_the_desk() -> None:
     _set(events, "ui", LineChange("own", 100.0, None), LineChange("desk", 999.0, None))
     view = get_manager(1_000_000.0, CALENDAR, NOW)
     assert view.given == 100.0 and view.account == 1_000_000.0
+
+
+OWN_STOP = (
+    " Suggested stop -3,000: its own combined stop -₹3,000; 0 runs after costs, fewer than 10."
+)
+
+
+def test_get_manager_lists_a_strategy_trading_without_a_stop_line() -> None:
+    desk = Desk()
+    running = desk.start(STRADDLE)
+    later = insert_strategy("Later straddle", STRADDLE, desk.now)  # enters at 09:20
+    schedule_strategy(later.id, "fake")
+
+    view = get_manager(1_000_000.0, CALENDAR, _ist(9, 10))
+    assert {(u.key, u.text) for u in view.undone} == {
+        (f"strategy:{running}", f"straddle: running, no stop line.{OWN_STOP}"),
+        (f"strategy:{later.id}", f"Later straddle: enters 09:20, no stop line.{OWN_STOP}"),
+    }
+
+    _set(_Events(), MANAGER, LineChange(f"strategy:{running}", 50_000.0, -2000.0, "its record"))
+    _set(_Events(), "ui", LineChange(f"strategy:{later.id}", 50_000.0, None, "mine"))
+    assert get_manager(1_000_000.0, CALENDAR, _ist(9, 10)).undone == []
+
+
+def test_set_numbers_returns_whats_still_undone() -> None:
+    desk = Desk()
+    first = desk.start(STRADDLE)
+    second = desk.start(STRADDLE, name="second")
+    _, _, left = _set(_Events(), MANAGER, LineChange(f"strategy:{first}", 0.0, None, "no evidence"))
+    assert {(u.key, u.kind.value) for u in left} == {
+        (f"strategy:{first}", "contradicted"),
+        (f"strategy:{second}", "unguarded"),
+    }
+    contradicted = next(u for u in left if u.key == f"strategy:{first}")
+    assert "but your line gives it capital 0. Stop or unschedule it" in contradicted.text
+
+
+def test_a_stop_set_past_todays_figure_does_not_wake_it(tmp_path: Path) -> None:
+    events = _Events()
+    context = _planned(tmp_path, events)
+    desk = Desk()
+    desk.now -= timedelta(days=1)
+    strategy_id = desk.start(POSITIONAL_STRADDLE)
+    desk.now += timedelta(days=1)
+    desk.tick(ce=110.0, pe=110.0)
+    request_stop(strategy_id, "mcp", desk.now)
+    process_commands(desk.context, desk.now)  # its own stop acted: -1,300 today
+    key = f"strategy:{strategy_id}"
+    _set(events, MANAGER, LineChange(key, 0.0, -1000.0, "the loss it took"))
+
+    assert key in get_state().crossed
+    assert queue_due_manager_wake(context, _ist(10)) is None  # no line wake for it
+
+
+def test_a_wake_names_whats_undone(tmp_path: Path) -> None:
+    context = _planned(tmp_path, _Events())
+    Desk().start(STRADDLE)
+    set_next_wake(_ist(10), "the 10:00 data", CALENDAR, _ist(9, 30))
+
+    job = queue_due_manager_wake(context, _ist(10))
+
+    assert job is not None
+    assert f"<undone>\n- straddle: running, no stop line.{OWN_STOP}\n</undone>" in (
+        job.prompt or ""
+    )
 
 
 def test_recorded_as_manager_for_a_manager_thread_chat_key() -> None:
@@ -341,6 +406,51 @@ def _stopped(reason: str, at: datetime, name: str = "Straddle") -> None:
     write_audit("StrategyStopped", at, "strategy:stg_1", json.dumps(payload))
 
 
+def _broker(event_type: str, at: datetime) -> None:
+    write_audit(event_type, at, None, json.dumps({"broker": "zerodha"}))
+
+
+def test_queue_wakes_restored_when_the_user_signs_in_after_a_blind_plan(tmp_path: Path) -> None:
+    events = _Events()
+    _broker("BrokerSessionExpired", datetime(2026, 9, 21, 20, 0, tzinfo=EXCHANGE_TIMEZONE))
+    context = _planned(tmp_path, events)
+    set_plan("Nothing trades: no prices.", [], events, MANAGER, _ist(9, 4))
+    assert queue_due_manager_wake(context, _ist(9, 10)) is None  # still down
+
+    _broker("BrokerConnected", _ist(9, 18))
+    job = queue_due_manager_wake(context, _ist(9, 19))
+
+    assert job is not None and job.trigger == "manager-wake:restored"
+    assert "Your plan at 09:04 was made while prices were down; they came back at 09:18." in (
+        job.prompt or ""
+    )
+    _end_turns(_ist(9, 25))
+    again = queue_due_manager_wake(context, _ist(9, 26))
+    assert again is None or again.trigger != "manager-wake:restored"  # once
+
+
+def test_a_plan_made_with_prices_is_not_blind(tmp_path: Path) -> None:
+    events = _Events()
+    _broker("BrokerSessionExpired", datetime(2026, 9, 21, 20, 0, tzinfo=EXCHANGE_TIMEZONE))
+    _broker("BrokerConnected", _ist(8, 50))
+    context = _planned(tmp_path, events)
+    set_plan("Run small.", [], events, MANAGER, _ist(9, 4))
+    _broker("BrokerConnected", _ist(9, 18))  # signed in again
+    assert queue_due_manager_wake(context, _ist(9, 19)) is None
+
+
+def test_queue_wakes_undone_when_a_look_left_a_strategy_unguarded(tmp_path: Path) -> None:
+    context = _planned(tmp_path, _Events())
+    Desk().start(STRADDLE)
+
+    job = queue_due_manager_wake(context, _ist(10))
+
+    assert job is not None and job.trigger == "manager-wake:undone"
+    assert "- straddle: running, no stop line." in (job.prompt or "")
+    _end_turns(_ist(10, 5))
+    assert queue_due_manager_wake(context, _ist(10, 10)) is None  # named once
+
+
 def test_turning_on_does_not_wake_for_what_broke_before(tmp_path: Path) -> None:
     _stopped("kill", _ist(7))
     context = _planned(tmp_path, _Events())
@@ -468,9 +578,9 @@ def test_a_positional_run_closed_today_at_a_loss_crosses_its_line(tmp_path: Path
     strategy_id = desk.start(POSITIONAL_STRADDLE)
     desk.now += timedelta(days=1)
     desk.tick(ce=110.0, pe=110.0)
+    _set(events, MANAGER, LineChange(f"strategy:{strategy_id}", None, -1000.0, "half a lot's risk"))
     request_stop(strategy_id, "mcp", desk.now)
     process_commands(desk.context, desk.now)  # bought back today: -1,300
-    _set(events, MANAGER, LineChange(f"strategy:{strategy_id}", None, -1000.0, "half a lot's risk"))
 
     job = queue_due_manager_wake(context, _ist(10))
 

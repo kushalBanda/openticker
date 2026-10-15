@@ -2,6 +2,10 @@ from pathlib import Path
 
 import pytest
 
+# The desk manager's evals spend real money on a real harness: run by hand
+# (tests/evals/manager/README.md), never collected.
+collect_ignore = ["evals"]
+
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

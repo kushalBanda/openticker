@@ -18,8 +18,10 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from statistics import median
 
 from openticker.core.pnl import DayFigure
+from openticker.core.risk.models import StrategyLimits
 from openticker.core.strategies.runs import Run, RunStatus
 from openticker.ports.models import EXCHANGE_TIMEZONE, Side
 
@@ -125,6 +127,53 @@ def _max_drawdown(nets: Sequence[float]) -> float:
         high = max(high, cumulative)
         deepest = max(deepest, high - cumulative)
     return round(deepest, 2)
+
+
+MIN_RECORD = 10  # runs after costs before the record sizes a stop (ADR 44)
+STOP_MULTIPLE = 1.75  # the middle of 1.5 to 2 times its median losing run (ADR 44)
+
+
+@dataclass(frozen=True)
+class SuggestedStop:
+    """The desk manager's stop line for a strategy, from its record (ADR 44)."""
+
+    value: float  # rupees, below 0
+    basis: str  # what it rests on, in words
+
+
+def suggest_stop(runs: Sequence[LedgerRun], limits: StrategyLimits) -> SuggestedStop | None:
+    """With MIN_RECORD runs after costs and a losing one: STOP_MULTIPLE times
+    the median losing run, never tighter than its own combined stop loss (it
+    would cross before the strategy's own rule acts). A thinner record: its
+    own combined stop loss, else its daily loss limit. Neither: None."""
+    judged = [r for r in runs if r.after_costs]
+    losses = [r.net_pnl for r in judged if r.net_pnl < 0]
+    own = limits.combined_stop_loss
+    if len(judged) >= MIN_RECORD and losses:
+        typical = median(losses)
+        basis = (
+            f"{STOP_MULTIPLE:g}x its median losing run {_rupees(typical)} over "
+            f"{_runs(len(judged))} after costs"
+        )
+        value = round(STOP_MULTIPLE * typical)
+        if own and -own < value:
+            return SuggestedStop(-own, f"its own combined stop {_rupees(-own)}; {basis} is tighter")
+        return SuggestedStop(value, basis)
+    thin = f"{_runs(len(judged))} after costs, fewer than {MIN_RECORD}"
+    if own:
+        return SuggestedStop(-own, f"its own combined stop {_rupees(-own)}; {thin}")
+    if limits.daily_loss_limit:
+        limit = -limits.daily_loss_limit
+        return SuggestedStop(limit, f"its own daily loss limit {_rupees(limit)}; {thin}")
+    return None
+
+
+def _runs(count: int) -> str:
+    return f"{count} run" if count == 1 else f"{count} runs"
+
+
+def _rupees(value: float) -> str:
+    return f"{'-' if value < 0 else ''}₹{abs(value):,.0f}"
 
 
 def day_figure(runs: Sequence[LedgerRun], day: date) -> DayFigure:
