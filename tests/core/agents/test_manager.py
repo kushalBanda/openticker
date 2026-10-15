@@ -101,10 +101,6 @@ def test_is_wake() -> None:
     assert not is_wake("ui")
 
 
-def test_manager_context_names_the_day() -> None:
-    assert "2026-09-22" in manager_context(date(2026, 9, 22))
-
-
 @pytest.mark.parametrize(
     ("capital", "stop", "reason", "by_manager", "message"),
     [
@@ -299,6 +295,7 @@ def test_facts_can_not_open_or_close_a_tag() -> None:
 
 def test_manager_context_names_the_skill_and_the_rules_that_matter_most() -> None:
     context = manager_context(DAY)
+    assert DAY.isoformat() in context
     assert "manage-desk" in context and "Paper only" in context
     assert "explain where today's money came from" in context
     assert "Every running strategy gets a stop line" in context
