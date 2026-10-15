@@ -157,7 +157,7 @@ def test_get_manager_counts_given_without_the_desk() -> None:
 
 
 OWN_STOP = (
-    " Suggested stop -3,000: its own combined stop -₹3,000; 0 runs after costs, fewer than 10."
+    " Suggested stop -₹3,000: its own combined stop -₹3,000; 0 runs after costs, fewer than 10."
 )
 
 
@@ -188,7 +188,7 @@ def test_set_numbers_returns_whats_still_undone() -> None:
         (f"strategy:{second}", "unguarded"),
     }
     contradicted = next(u for u in left if u.key == f"strategy:{first}")
-    assert "but your line gives it capital 0. Stop or unschedule it" in contradicted.text
+    assert "but your line gives it capital 0. Run " in contradicted.text
 
 
 def test_a_stop_set_past_todays_figure_does_not_wake_it(tmp_path: Path) -> None:
@@ -559,7 +559,7 @@ def test_queue_wakes_on_line_crossed_once_until_it_recovers(tmp_path: Path) -> N
     point(1, -1000.0)
     job = queue_due_manager_wake(context, _ist(10, 1))
     assert job is not None and job.trigger == "manager-wake:line"
-    assert "The desk is at -1,000.00 today, at or past your stop -1,000.00." in (job.prompt or "")
+    assert "The desk is at -₹1,000.00 today, at or past your stop -₹1,000.00." in (job.prompt or "")
     _end_turns(_ist(10, 2))
     point(3, -1200.0)
     assert queue_due_manager_wake(context, _ist(10, 3)) is None  # still crossed: no news
@@ -585,7 +585,7 @@ def test_a_positional_run_closed_today_at_a_loss_crosses_its_line(tmp_path: Path
     job = queue_due_manager_wake(context, _ist(10))
 
     assert job is not None and job.trigger == "manager-wake:line"
-    assert f"'straddle' ({strategy_id}) is at -1,300.00 today, at or past your stop" in (
+    assert f"'straddle' ({strategy_id}) is at -₹1,300.00 today, at or past your stop" in (
         job.prompt or ""
     )
 
@@ -699,7 +699,8 @@ def test_wake_manager_refused_when_off_or_busy(tmp_path: Path) -> None:
     assert job.trigger == "manager-wake:asked"
     assert (
         job.prompt == '<wake reason="asked" day="2026-09-22">\n</wake>\n'
-        "The user asked you to look now. Look at the desk and act if it needs it."
+        "The user asked you to look now: a full look, as the skill's plan reads the desk, and "
+        "act if it needs it."
     )
     assert [w.reason for w in events.of(ManagerWoke)] == ["asked"]  # type: ignore[attr-defined]
     with pytest.raises(AgentJobBusyError, match="already looking"):

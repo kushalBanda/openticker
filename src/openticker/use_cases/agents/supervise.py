@@ -254,7 +254,10 @@ def start_next_chat_turn(context: AgentContext, now: datetime) -> None:
                 effort=job.effort,
                 resume_session=thread.session_id,
                 context=chat_prompt_context(
-                    folder_context(thread.folder, thread.subject, name), job.id, thread.access
+                    folder_context(thread.folder, thread.subject, name),
+                    job.id,
+                    thread.access,
+                    thread.folder,
                 ),
             )
         )

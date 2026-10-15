@@ -219,7 +219,11 @@ def test_manage_desk_says_to_decide_not_ask_and_finish_the_look() -> None:
     text = (skill / "SKILL.md").read_text()
     assert "Decide; don't ask." in text
     assert "A look is finished when `undone` is empty" in text
-    assert "- [ ] 1 Read the wake's tags" in text  # the checklist it copies and ticks
+    assert "1. Read the wake's tags" in text  # its steps on every look, kept out of its answer
+    from openticker.core.agents.manager import WakeReason
+
+    for reason in WakeReason:
+        assert f"`{reason.value}`" in text  # each wake reason, in the wake's own word
     for kind in ("unguarded", "contradicted", "blind_plan"):
         assert f"`{kind}`" in text
     # what it must never do appears only as what to leave out

@@ -60,7 +60,15 @@ def test_a_snippet_is_the_line_around_the_first_match_cut_with_ellipses() -> Non
 
 
 def test_every_chat_prompt_has_the_brain_line() -> None:
-    for folder, subject in ((Folder.GENERAL, None), (Folder.MANAGER, "2026-09-22")):
-        assert BRAIN_LINE in chat_prompt_context(folder_context(folder, subject, None), "j")
+    assert BRAIN_LINE in chat_prompt_context(None, "j")
     read = chat_prompt_context(None, "j", Access.READ)
     assert BRAIN_READ_LINE in read and "record_lesson_use" not in read
+
+
+def test_the_managers_turns_carry_only_its_own_context() -> None:
+    context = folder_context(Folder.MANAGER, "2026-09-22", None)
+    text = chat_prompt_context(context, "job_ab12", folder=Folder.MANAGER)
+
+    assert context is not None and text == f"{context}\n(OpenTicker agent job job_ab12)"
+    assert "chatting" not in text  # the user is away (ADR 44)
+    assert BRAIN_LINE not in text  # its skill says when to read lessons
