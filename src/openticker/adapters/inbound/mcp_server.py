@@ -2534,9 +2534,11 @@ def get_learning(
 )
 def get_manager() -> ManagerResult:
     """The desk manager (ADR 41): whether it's on, when it looks next and
-    why, today's plan, and every line it set (capital and stop for the desk,
-    its own trades, each strategy and script) with who set it and net today.
-    A line set by "you" is the user's: it stands over the manager's."""
+    why, today's plan, the desk's money today (desk_today: closed, open and
+    charges apart), every line it set (capital and stop for the desk, its own
+    trades, each strategy and script) with who set it and its today, and
+    undone: the duties the desk shows left, each with what would do it. A
+    line set by "you" is the user's: it stands over the manager's."""
     with _agent_facing_errors():
         view = desk_manager.get_manager(
             sandbox_settings(os.environ).starting_capital, load_calendar(), clock()

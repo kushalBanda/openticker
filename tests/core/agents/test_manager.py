@@ -530,7 +530,7 @@ def test_wake_message_says_which_line_crossed() -> None:
         WakeReason.LINE, DAY, crossed=[Crossed("desk", "The desk", -31000.0, -30000.0)]
     )
     assert "<crossed>" in text
-    assert "The desk is at -31,000.00 today, at or past your stop -30,000.00." in text
+    assert "The desk is at -₹31,000.00 today, at or past your stop -₹30,000.00." in text
 
 
 def _row(name: str, when: str = "running", trades: bool = True, yours: bool = False) -> DeskRow:
@@ -563,7 +563,7 @@ def test_undone_names_the_suggested_stop_and_its_basis() -> None:
     (found,) = undone([row], {})
     assert found.suggested == stop
     assert found.text == (
-        "a: running, no stop line. Suggested stop -8,750: "
+        "a: running, no stop line. Suggested stop -₹8,750: "
         "1.75x its median losing run -₹5,000 over 12 runs after costs."
     )
 
@@ -575,7 +575,7 @@ def test_undone_says_capital_zero_contradicts_a_strategy_that_trades() -> None:
     (found,) = undone(rows, {"strategy:stg_a": zero, "strategy:stg_b": off})
     assert found.kind is UndoneKind.CONTRADICTED
     assert found.text.startswith(
-        "a: running, but your line gives it capital 0. Stop or unschedule it, or give it "
+        "a: running, but your line gives it capital 0. Run stop_strategy on it, or give it "
         "capital and a stop."
     )
 
@@ -677,7 +677,8 @@ def test_retry_message_says_what_failed() -> None:
 
 def test_wake_message_when_asked() -> None:
     assert wake_message(WakeReason.ASKED, DAY).endswith(
-        "The user asked you to look now. Look at the desk and act if it needs it."
+        "The user asked you to look now: a full look, as the skill's plan reads the desk, and "
+        "act if it needs it."
     )
 
 

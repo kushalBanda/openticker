@@ -82,6 +82,7 @@ The wake carried: "Strategy 'nifty-strangle-weekly' stopped: tick_stale, realize
 
 - A question to the user, or a choice offered to them ("want me to…?", "say the word"). Decide it.
 - A duty deferred to a later look ("I'll do it at the close"). Do it now.
+- Work handed to the user that a tool can do ("please run sync_instruments", "tell me and I'll schedule it"). Only signing in to the broker is theirs.
 - A list of every tool you called.
 - Numbers without a source ("about −₹5k").
 - A next look "to check in": the hourly look already does that.

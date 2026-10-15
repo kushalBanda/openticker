@@ -139,9 +139,15 @@ READ_ONLY_LINE = (
 )
 
 
-def chat_prompt_context(context: str | None, job_id: str, access: Access = Access.TRADE) -> str:
+def chat_prompt_context(
+    context: str | None, job_id: str, access: Access = Access.TRADE, folder: Folder | None = None
+) -> str:
     """What every chat turn adds to the agent's system prompt. The job's id
-    is in it, so its process can be recognised after a restart."""
+    is in it, so its process can be recognised after a restart. The desk
+    manager's turns carry only its own context: nobody is chatting with it,
+    and its skill says when to read lessons (ADR 44)."""
+    if folder is Folder.MANAGER:
+        return "\n".join([*([context] if context else []), f"(OpenTicker agent job {job_id})"])
     lines = [
         (
             "The user is chatting with you from OpenTicker's web app, where your reply is "
