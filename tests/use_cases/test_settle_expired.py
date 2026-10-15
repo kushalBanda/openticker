@@ -15,7 +15,6 @@ from tests.fixtures.priced_broker import PricedBroker
 from tests.fixtures.sandbox import frictionless
 
 EXPIRY = date(2026, 9, 22)
-TRADING = datetime(2026, 9, 22, 5, 0, tzinfo=UTC)  # 10:30 IST on expiry day
 BEFORE_FINAL = datetime(2026, 9, 22, 10, 14, tzinfo=UTC)  # 15:44 IST
 AFTER_FINAL = datetime(2026, 9, 22, 10, 15, tzinfo=UTC)  # 15:45 IST
 DAYS_LATER = datetime(2026, 9, 25, 4, 0, tzinfo=UTC)

@@ -207,15 +207,14 @@ def get_manager_day(day: date, calendar: MarketCalendar, now: datetime) -> Manag
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
     _check_day(day, today, calendar)
     found = _day(day)
-    threads = agent_threads_repo.manager_threads(day)
     hours = session_hours(day, Exchange.NSE, calendar)
     assert hours is not None  # _check_day
     desk = _desk_figures(day, day).get(day)
     return ManagerDay(
         trading_date=day,
         live=day == today,
-        ran=bool(threads),
-        thread_ids=[thread.id for thread in threads],
+        ran=bool(found.threads),
+        thread_ids=[thread.id for thread in found.threads],
         desk=desk,
         use=day_use(found.turns),
         lines=_lines_on(day, hours.closes_at, desk),
@@ -504,12 +503,17 @@ def today_figures(calendar: MarketCalendar, now: datetime) -> dict[str, DayFigur
 
 
 @dataclass(frozen=True)
-class _Today:
-    """The manager's day so far: its newest thread and every turn of the day."""
+class _Day:
+    """A trading day of the manager's: its threads and every turn of them."""
 
-    thread: AgentThread | None  # the newest; the one a wake goes to
+    threads: list[AgentThread]  # oldest first
     turns: list[AgentJob]  # of every thread of the day, first asked first
     needs_plan: bool  # no thread, or the newest's first turn failed with no conversation
+
+    @property
+    def thread(self) -> AgentThread | None:
+        """The newest: the one a wake goes to."""
+        return self.threads[-1] if self.threads else None
 
     @property
     def wakes(self) -> int:
@@ -529,7 +533,7 @@ class _Today:
         return ended[-1] if self.failures and ended else None
 
 
-def _day(day: date, session: Session | None = None) -> _Today:
+def _day(day: date, session: Session | None = None) -> _Day:
     """The manager's trading day: its threads and every turn of them."""
     threads = agent_threads_repo.manager_threads(day, session)
     turns_by_thread = {t.id: agent_jobs_repo.turns_of(t.id, session) for t in threads}
@@ -545,7 +549,7 @@ def _day(day: date, session: Session | None = None) -> _Today:
         and all(turn.end_reason is not None for turn in newest_turns)
         and not any(turn.end_reason is AgentJobEndReason.FINISHED for turn in newest_turns)
     )
-    return _Today(newest, turns, needs_plan)
+    return _Day(threads, turns, needs_plan)
 
 
 def _name(line: ManagerLine) -> str | None:
@@ -686,7 +690,7 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
 def _add_wake(
     session: Session,
     settings: AgentSettings,
-    today: _Today,
+    today: _Day,
     day: date,
     reason: WakeReason,
     message: str,
