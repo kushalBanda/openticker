@@ -8,6 +8,7 @@ import { nextLink } from "./links";
 
 const ROUTES = [
   "/",
+  "/manager",
   "/watchlist",
   "/options",
   "/positions",

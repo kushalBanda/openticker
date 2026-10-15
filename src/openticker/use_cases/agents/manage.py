@@ -16,14 +16,13 @@ from openticker.core.agents.jobs import (
     AgentSettings,
     job_title,
 )
-from openticker.core.agents.reviews import ReviewSchedule, parse_every
 from openticker.events.bus import EventPublisher
 from openticker.events.types import AgentJobEnded
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage import agent_job_files
 from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo, strategies_repo
 from openticker.storage.sqlite.engine import get_engine
-from openticker.storage.sqlite.strategies_repo import StoredStrategy, write_transaction
+from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.strategies.define import UnknownStrategyError
 
 MAX_AGENT_JOBS = 50  # per answer (ADR 8 in docs/adr)
@@ -85,37 +84,6 @@ def start_review(
         )
 
 
-def schedule_review(
-    strategy_id: str,
-    every: str | None,
-    after_runs: int | None,
-    drawdown: float | None,
-    now: datetime,
-) -> StoredStrategy:
-    """Has openticker-serve review the strategy when any of the triggers is
-    met (core/agents/reviews.py), replacing an earlier schedule. Counting
-    starts now."""
-    schedule = ReviewSchedule(
-        set_at=now,
-        every=parse_every(every) if every is not None else None,
-        after_runs=after_runs,
-        drawdown=drawdown,
-    )
-    with write_transaction() as session:
-        stored = _strategy(session, strategy_id)
-        strategies_repo.set_review_schedule(session, strategy_id, schedule)
-    return strategies_repo.find_strategy(strategy_id) or stored
-
-
-def unschedule_review(strategy_id: str) -> StoredStrategy:
-    """Reviewed only when asked again. A review already waiting or running
-    carries on."""
-    with write_transaction() as session:
-        stored = _strategy(session, strategy_id)
-        strategies_repo.set_review_schedule(session, strategy_id, None)
-    return strategies_repo.find_strategy(strategy_id) or stored
-
-
 def strategy_names() -> dict[str, str]:
     """Every strategy's name by id: what a job's title names."""
     return {s.id: s.name for s in strategies_repo.list_strategies()}
@@ -165,18 +133,22 @@ def stop_agent_job(
             )
     if ended is not None:
         stored = strategies_repo.find_strategy(ended.strategy_id) if ended.strategy_id else None
+        thread = agent_threads_repo.find_thread(ended.thread_id) if ended.thread_id else None
+        title = job_title(ended.kind, stored.name if stored else None, ended.subject)
         events.publish(
             AgentJobEnded(
                 job_id=ended.id,
                 kind=ended.kind,
                 strategy_id=ended.strategy_id,
                 subject=ended.subject,
-                title=job_title(ended.kind, stored.name if stored else None, ended.subject),
+                title=thread.title if thread else title,
                 strategy_name=stored.name if stored else ended.strategy_id,
                 reason=AgentJobEndReason.STOPPED,
                 detail=ended.end_detail or "",
                 summary=None,
                 cost_usd=None,
+                thread_id=ended.thread_id,
+                trigger=ended.trigger,
             )
         )
     return agent_jobs_repo.find_job(job_id) or job
@@ -186,10 +158,3 @@ def _unknown_strategy(strategy_id: str) -> UnknownStrategyError:
     return UnknownStrategyError(
         f"no strategy with id {strategy_id!r}; list_strategies shows the ones that exist"
     )
-
-
-def _strategy(session: Session, strategy_id: str) -> StoredStrategy:
-    stored = strategies_repo.load_strategy(session, strategy_id)
-    if stored is None:
-        raise _unknown_strategy(strategy_id)
-    return stored

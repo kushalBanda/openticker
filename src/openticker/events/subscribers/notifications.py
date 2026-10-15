@@ -8,6 +8,7 @@ from openticker.events.types import (
     AgentJobEnded,
     BrokerSessionExpired,
     ChargeRatesDiffer,
+    ManagerStalled,
     OrderFailed,
     OrderFilled,
     PositionSettled,
@@ -35,7 +36,12 @@ NOTIFIED_EVENTS: tuple[type, ...] = (
     ScriptExited,
     ChargeRatesDiffer,
     AgentJobEnded,
+    ManagerStalled,
 )
+
+# A desk manager's wake turn that finished is on its page and in the
+# Activity log; only its failures are worth a message (ADR 41).
+_WAKE_TRIGGER = "manager-wake:"
 
 
 def describe(event: object) -> tuple[str, str] | None:
@@ -81,6 +87,10 @@ def describe(event: object) -> tuple[str, str] | None:
             )
         case BrokerSessionExpired():
             return f"Log in to {event.broker}: live prices stopped", event.detail
+        case AgentJobEnded() if event.reason == "finished" and (event.trigger or "").startswith(
+            _WAKE_TRIGGER
+        ):
+            return None
         case AgentJobEnded():
             cost = f" Cost ${event.cost_usd:.2f}." if event.cost_usd is not None else ""
             if event.reason == "finished" and event.summary:
@@ -93,6 +103,10 @@ def describe(event: object) -> tuple[str, str] | None:
                 f"{event.title} {event.reason}",
                 f"{event.detail}. Job {event.job_id}; get_agent_job_log shows its output.{cost}",
             )
+        case ManagerStalled():
+            if event.why == "capped":
+                return "Desk manager: today's wakes are used up", event.detail
+            return "Desk manager stalled: its turns keep failing", event.detail
         case ChargeRatesDiffer():
             subject = (
                 f"Charge rates differ from {event.broker}'s: "

@@ -47,6 +47,19 @@ The Brain is a graph of linked notes about days, lessons, proposals, strategies,
 
 ![A day's debrief: each trade with why and what was given up, and the lessons it checked](docs/images/web-brain-day.png)
 
+### Manager: an agent runs the desk
+
+Turn the Manager on once and your own Claude Code or Codex runs the paper desk each trading day, so you can rest and read what it did.
+
+- **It plans before the open, knowing what it missed.** It's told everything that broke since the last close, even while it was off, and what it said at that close. It reads every strategy's record, the Brain's lessons and yesterday's debrief, explains where the day's money came from, then decides what runs today and gives every running strategy capital and a stop, with a reason for every number.
+- **It comes back when it should.** At the time it set, the moment something breaks (a strategy killed, a script crashed, an order refused, the Zerodha session expired), when a loss line is crossed, and after the close to settle the day.
+- **Your numbers win.** Change any capital or stop on the Manager page and it stands; the manager says where it disagrees, and you can hand a line back. Look now asks it to look at once.
+- **It tells you when it can't go on.** Turns that keep failing, or a day's looks used up, raise a banner and a notification. Its own looks that went fine stay on its page, not in Slack.
+- **Its lines act when it looks.** Each strategy's own stops still act at once; the manager is not a stop loss.
+- **Market apart from charges.** Today's figure for the desk and for each strategy shows what the market made, what charges and taxes took, and what's left. A positional run closed today counts today.
+- **Two models, your choice.** Pick one model and effort for the looks that decide things (the plan, the close, a breakage, a crossed line, Look now) and another for routine check-ins. Its page shows the day's looks on a timeline, and what each one actually cost.
+- **Go back to any day.** A strip of trading days under the Manager's header shows each day's result and whether it ran; open one to see its numbers as they stood at the close and what changed them, its plan, its decisions, what it ran on and what it spent.
+
 ### Agents: talk to your own coding agent
 
 ![The Agents page: a chat in a strategy's folder, its steps folded, and what ran under the answer](docs/images/web-agents.png)
@@ -61,7 +74,7 @@ The Agents page is a chat with your own Claude Code or Codex, signed in as you, 
 
 ## Built for coding agents
 
-OpenTicker gives your agent 90 MCP tools and a place to work. You describe an idea in plain words. The agent turns it into a strategy, previews it against today's market, and runs it on paper.
+OpenTicker gives your agent 95 MCP tools and a place to work. You describe an idea in plain words. The agent turns it into a strategy, previews it against today's market, and runs it on paper.
 
 > "Sell an ATM NIFTY straddle every weekday at 9:20 with a 30% stop on each leg. Show me what it would trade right now."
 
@@ -70,13 +83,13 @@ OpenTicker gives your agent 90 MCP tools and a place to work. You describe an id
 > "Review my straddle's last 20 runs after costs. Keep it, change one thing, or retire it?"
 
 - **Claude Code, Codex, or any MCP client.** One command adds it to Claude Code, and the JSON config works everywhere else.
-- **A research folder, ready to go.** `labs/` sets up Claude Code and Codex with shared instructions and skills: `new-strategy`, `review-strategy`, and `debrief-day`.
-- **Reviews and debriefs run unattended.** `openticker-serve` runs your own Claude Code or Codex as a background job, on demand or on a schedule. Each job gets a key that reads only what it needs: one strategy for a review, one day for a debrief.
+- **A research folder, ready to go.** `labs/` sets up Claude Code and Codex with shared instructions and skills: `new-strategy`, `review-strategy`, `debrief-day`, and `manage-desk`.
+- **Reviews, debriefs and the manager run unattended.** `openticker-serve` runs your own Claude Code or Codex as a background job: a review when you or the manager ask, a debrief after each close, the manager's looks through the day. Each job gets a key that reaches only what it needs: one strategy for a review, one day for a debrief.
 - **Strategies don't need the conversation.** Once started or scheduled, the server enters, watches and exits them on their own stops, targets, and limits. Signal strategies take TradingView and ChartInk alerts at their own URL.
 - **Your scripts too.** Upload a Python script and it runs under the server with a per-run API key, a clean environment, and memory and CPU limits. It never sees your broker keys.
 
 <details>
-<summary>All 90 tools, by area</summary>
+<summary>All 97 tools, by area</summary>
 
 | Area | Tools |
 | --- | --- |
@@ -86,7 +99,8 @@ OpenTicker gives your agent 90 MCP tools and a place to work. You describe an id
 | Options strategies | `create_strategy`, `update_strategy`, `get_strategy`, `list_strategies`, `delete_strategy`, `preview_strategy`, `start_strategy`, `stop_strategy`, `close_strategy_leg`, `schedule_strategy`, `unschedule_strategy`, `kill_strategy`, `release_kill_switch`, `get_strategy_runs`, `get_strategy_run`, `get_strategy_ledger` |
 | Signal strategies | `create_signal_strategy`, `update_signal_strategy`, `rotate_strategy_webhook`, `disable_strategy_webhook`, `get_strategy_signals` |
 | Scripts | `upload_script`, `update_script`, `delete_script`, `list_scripts`, `get_script`, `start_script`, `stop_script`, `schedule_script`, `unschedule_script`, `get_script_logs` |
-| Agent jobs | `start_review`, `schedule_review`, `unschedule_review`, `get_agent_jobs`, `get_agent_job_log`, `stop_agent_job` |
+| Agent jobs | `start_review`, `get_agent_jobs`, `get_agent_job_log`, `stop_agent_job` |
+| Desk manager | `get_manager`, `set_manager`, `wake_manager`, `set_manager_numbers`, `clear_manager_override`, `set_next_wake`, `set_manager_plan`, `get_manager_day`, `list_manager_days` |
 | The Brain | `get_brain_graph`, `search_brain`, `get_brain_note`, `get_day_record`, `write_debrief`, `create_lesson`, `update_lesson`, `check_lesson`, `record_lesson_use`, `set_lesson_override`, `raise_proposal`, `decide_proposal`, `start_debrief`, `schedule_debrief`, `get_debrief_schedule`, `get_learning` |
 | Watchlists | `list_watchlists`, `create_watchlist`, `add_to_watchlist`, `remove_from_watchlist`, `rename_watchlist`, `delete_watchlist` |
 | Audit | `get_audit_log` |
@@ -150,7 +164,7 @@ cd labs
 claude                    # or: codex
 ```
 
-Then describe an idea. Your notes go in `labs/notes/`, which is never committed. Once a strategy has run at least 10 times, ask the agent to review it: the `reviewer` judges its runs after costs against what your note said would prove it wrong, and writes a dated verdict (keep, change one thing, or retire) into the note. It can't change anything else. `openticker-serve` can also run that review unattended, when you ask (`start_review`) or on a schedule you set per strategy (`schedule_review`: every so often, after so many runs, or when it falls a set amount below its high), with your own Claude Code or Codex, signed in as you. A scheduled review waits for a new run to have ended, so an idle strategy costs nothing. The job reaches OpenTicker over MCP at `/mcp` on the server, with a key that reads only that strategy. See [labs/playbook](labs/playbook/README.md).
+Then describe an idea. Your notes go in `labs/notes/`, which is never committed. Once a strategy has run at least 10 times, ask the agent to review it: the `reviewer` judges its runs after costs against what your note said would prove it wrong, and writes a dated verdict (keep, change one thing, or retire) into the note. It can't change anything else. `openticker-serve` can also run that review unattended, when you ask (`start_review`) or when the desk manager judges one due, with your own Claude Code or Codex, signed in as you. The job reaches OpenTicker over MCP at `/mcp` on the server, with a key that reads only that strategy. See [labs/playbook](labs/playbook/README.md).
 
 ### REST API (optional)
 

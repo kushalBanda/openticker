@@ -22,6 +22,7 @@ class Source(StrEnum):
     ALERT = "alert"
     SCRIPT = "script"
     SCHEDULE = "schedule"
+    MANAGER = "manager"  # the desk manager (ADR 41)
     REST = "rest"
     SYSTEM = "system"  # the server itself: square-off, settlement, recovery
 
@@ -46,6 +47,7 @@ RULES = (
     Rule("mcp:", Source.AGENT, prefix=True),
     Rule("review:", Source.AGENT, prefix=True),
     Rule("debrief:", Source.AGENT, prefix=True),
+    Rule("manager:", Source.MANAGER, prefix=True),  # the desk manager's day (ADR 41)
     Rule("chat:", Source.AGENT, prefix=True),  # a chat in the web app (ADR 40)
     Rule("strategy:", Source.STRATEGY, prefix=True),
     Rule("alert:", Source.ALERT, prefix=True),
@@ -72,6 +74,26 @@ def client_name(name: str) -> str:
     """An MCP client's name as `triggered_by` records it: lower case, spaces
     as hyphens ("Claude Code" and "claude-code" are one client)."""
     return "-".join(name.strip().lower().split())
+
+
+@dataclass(frozen=True)
+class DayFigure:
+    """A day's money with the market apart from the charges (ADR 42 in
+    docs/adr): what trades closed that day made at their fill prices, what is
+    still open is worth, what the fills paid, and what is left."""
+
+    gross: float  # realized by the day's fills, before charges
+    charges: float  # brokerage, STT, fees, stamp duty, GST: positive, paid
+    open: float | None = None  # unrealized on what is open; None: not known here
+
+    @property
+    def net(self) -> float:
+        return round(self.gross + (self.open or 0.0) - self.charges, 2)
+
+    @classmethod
+    def of(cls, point: "IntradayPoint") -> "DayFigure":
+        """The desk's, from a minute of the P&L record."""
+        return cls(point.realized_pnl, point.charges, point.unrealized_pnl)
 
 
 # The account's P&L by day (ADR 34 in docs/adr). A day's figure is how much

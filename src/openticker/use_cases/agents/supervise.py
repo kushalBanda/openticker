@@ -30,16 +30,17 @@ from openticker.core.agents.choices import (
     RunChoice,
     folder_kind,
     job_kind_folder,
+    look_kind,
     run_choice,
 )
 from openticker.core.agents.debriefs import DebriefOutcome
 from openticker.core.agents.jobs import (
-    SCHEDULE_TRIGGER,
     AgentJob,
     AgentJobEndReason,
     AgentJobKind,
     AgentJobStatus,
     AgentSettings,
+    Harness,
     capped,
     debrief_prompt,
     exit_reason,
@@ -47,24 +48,22 @@ from openticker.core.agents.jobs import (
     review_prompt,
     start_failure,
 )
-from openticker.core.agents.reviews import review_due
 from openticker.core.agents.threads import (
     Access,
     AgentThread,
     chat_prompt_context,
     folder_context,
 )
-from openticker.core.agents.transcript import session_gone
+from openticker.core.agents.transcript import Usage, own_usage, session_gone
 from openticker.events.bus import EventPublisher
 from openticker.events.types import AgentJobEnded, AgentJobStarted
-from openticker.ports.agent_job_port import AgentLaunch, AgentProcesses
+from openticker.ports.agent_job_port import AgentLaunch, AgentOutcome, AgentProcesses
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage import agent_job_files
 from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo, strategies_repo
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError, revoke_api_key
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.strategies_repo import write_transaction
-from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError, start_review
 from openticker.use_cases.agents.threads import subject_name
 from openticker.use_cases.api_keys import (
     agent_key_name,
@@ -74,8 +73,6 @@ from openticker.use_cases.api_keys import (
     revoke_agent_keys,
 )
 from openticker.use_cases.brain.debrief import DEBRIEF_TRIGGER, debrief_outcome, write_quiet_day
-from openticker.use_cases.strategies.define import UnknownStrategyError
-from openticker.use_cases.strategies.ledger import ledger_runs
 
 log = logging.getLogger(__name__)
 
@@ -101,38 +98,10 @@ def recover_jobs(context: AgentContext, now: datetime) -> None:
     revoke_agent_keys(now)
 
 
-def queue_due_reviews(context: AgentContext, now: datetime) -> list[AgentJob]:
-    """A pending review for each strategy whose schedule is due. One that
-    can't be queued stays due and is tried on a later pass: a review of it
-    is already open, or the jobs started today and those waiting fill the
-    day's cap. Counting the waiting ones keeps a scheduled review from being
-    queued only to be refused when its turn comes."""
-    queued = []
-    for stored in strategies_repo.list_review_scheduled():
-        assert stored.review_schedule is not None
-        if _cap_taken(context.settings, now):
-            break
-        reason = review_due(
-            stored.review_schedule,
-            ledger_runs(stored.id),
-            agent_jobs_repo.last_asked_at(stored.id),
-            now,
-        )
-        if reason is None:
-            continue
-        try:
-            job = start_review(stored.id, context.settings, SCHEDULE_TRIGGER + reason, now)
-        except (AgentJobBusyError, AgentJobCapError, UnknownStrategyError):
-            continue
-        log.info("review of %s is due (%s): job %s", stored.name, reason, job.id)
-        queued.append(job)
-    return queued
-
-
 def queue_due_debrief(context: AgentContext, now: datetime) -> AgentJob | None:
     """Today's debrief, when it's due (core/agents/debriefs.py): a pending
     job, or on a quiet day a one-line note the server writes itself. Waits
-    while the day's cap is taken, like a scheduled review."""
+    while the day's cap is taken."""
     outcome, today = debrief_outcome(now)
     if outcome is DebriefOutcome.QUIET:
         write_quiet_day(today, context.events, now)
@@ -210,7 +179,7 @@ def start_next_job(context: AgentContext, now: datetime) -> None:
         else:
             assert stored is not None
             key = create_review_key(stored.id, job.id, now)
-            prompt = review_prompt(stored.name, stored.id, job.id, job.trigger)
+            prompt = review_prompt(stored.name, stored.id, job.id)
             agent, writes_notes = "reviewer", True
         pid = context.processes.start(
             AgentLaunch(
@@ -309,6 +278,8 @@ def _choice_of(
         if thread is None and job.thread_id is not None:
             thread = agent_threads_repo.find_thread(job.thread_id)
         kind = folder_kind(thread.folder) if thread is not None else FolderKind.GENERAL
+        if kind is FolderKind.MANAGER:
+            kind = look_kind(job.trigger)  # a check-in's cap and time limit (ADR 42)
     return run_choice(context.settings, kind)
 
 
@@ -395,7 +366,8 @@ def _finish(context: AgentContext, job: AgentJob, returncode: int | None, now: d
         job.harness, agent_job_files.events_path(job.id), agent_job_files.result_path(job.id)
     )
     with write_transaction() as session:
-        agent_jobs_repo.mark_outcome(session, job.id, outcome)
+        own = _own_usage(session, job, outcome)
+        agent_jobs_repo.mark_outcome(session, job.id, outcome, own)
         thread = agent_threads_repo.find_thread(job.thread_id, session) if job.thread_id else None
         if thread is not None:
             if session_gone(outcome.error):
@@ -413,9 +385,20 @@ def _finish(context: AgentContext, job: AgentJob, returncode: int | None, now: d
         now,
         returncode,
         capped(outcome.summary),
-        outcome.cost_usd,
+        own.cost_usd,
         outcome.model_used,
     )
+
+
+def _own_usage(session: Session, job: AgentJob, outcome: AgentOutcome) -> Usage:
+    """What this turn spent (ADR 42): Claude Code reports a resumed session's
+    running total, so the previous turn's is taken off; Codex reports a run's
+    own."""
+    reported = Usage(outcome.cost_usd, outcome.input_tokens, outcome.output_tokens)
+    if job.harness is not Harness.CLAUDE or job.thread_id is None or outcome.session_id is None:
+        return reported
+    before = agent_jobs_repo.previous_in_session(session, job.thread_id, outcome.session_id, job.id)
+    return own_usage(reported, before)
 
 
 def _end(
@@ -455,5 +438,6 @@ def _end(
             cost_usd=cost_usd,
             model_used=model_used,
             thread_id=job.thread_id,
+            trigger=job.trigger,
         )
     )

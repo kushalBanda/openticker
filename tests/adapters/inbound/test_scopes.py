@@ -55,8 +55,6 @@ def test_a_reviews_key_never_changes_anything() -> None:
         "schedule_strategy",
         "create_strategy",
         "start_review",
-        "schedule_review",
-        "unschedule_review",
         "list_strategies",
         "get_funds",
     ]
@@ -184,13 +182,23 @@ def test_a_chats_key_cannot_sign_in_to_the_broker_or_run_agent_jobs() -> None:
         "get_broker_login_url",
         "connect_broker",
         "start_review",
-        "schedule_review",
-        "unschedule_review",
         "stop_agent_job",
         "start_debrief",
         "schedule_debrief",
     ):
         assert "chat's key" in (_refusal(scope, tool) or ""), tool
+
+
+def test_the_desk_managers_key_may_start_a_review_only() -> None:
+    def manager(tool: str) -> str | None:
+        method, path = TOOL_ROUTES[tool]
+        return refusal(
+            "chat:thr_m", method, path, {}, RUNS.get, is_manager_key=lambda s: s == "chat:thr_m"
+        )
+
+    assert manager("start_review") is None
+    for tool in ("stop_agent_job", "start_debrief", "set_manager", "wake_manager"):
+        assert "chat's key" in (manager(tool) or ""), tool
 
 
 def test_a_chats_key_reaches_no_route_without_a_tool() -> None:
@@ -238,3 +246,15 @@ def test_a_read_only_chats_key_reads_the_desk_and_changes_nothing() -> None:
     ):
         assert "read-only" in (_refusal(scope, tool) or ""), tool
     assert refusal(scope, "POST", "/api/v1/agent-threads", {}, RUNS.get) is not None
+
+
+def test_the_review_schedule_routes_are_gone() -> None:
+    assert not {"schedule_review", "unschedule_review"} & set(TOOL_ROUTES)
+    assert not any("review-schedule" in path for _, path in TOOL_ROUTES.values())
+
+
+def test_the_managers_days_are_read_by_chats_and_the_manager_not_reviews() -> None:
+    for tool in ("get_manager_day", "list_manager_days"):
+        assert _refusal("chat:thr_1", tool, trading_date="2026-10-14") is None, tool
+        assert _refusal("chat-read:thr_1", tool, trading_date="2026-10-14") is None, tool
+        assert _refusal("review:stg_mine", tool, trading_date="2026-10-14") is not None, tool

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from openticker.core.agents.jobs import AgentJobEndReason, AgentJobKind, Harness
 from openticker.core.agents.threads import Folder
+from openticker.core.agents.transcript import Usage
 from openticker.core.scripts.models import ScriptSchedule, ScriptStopReason
 from openticker.ports.agent_job_port import AgentOutcome
 from openticker.ports.models import EXCHANGE_TIMEZONE
@@ -214,6 +215,7 @@ def seed_chat(straddle_id: str, clock: Callable[[], datetime]) -> None:
             session,
             turn.id,
             AgentOutcome(None, None, "5f0c2a1e", "claude-opus-5-5", 36_210, 2_190, 41_000),
+            Usage(None, 36_210, 2_190),
         )
         agent_jobs_repo.end_job(
             session,

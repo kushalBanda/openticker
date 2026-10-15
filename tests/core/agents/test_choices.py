@@ -8,11 +8,13 @@ from openticker.core.agents.choices import (
     StoredSettings,
     check_choice,
     folder_kind,
+    look_kind,
     resolve,
     resolved_choices,
     run_choice,
 )
 from openticker.core.agents.jobs import AgentJobError, AgentSettings, Harness
+from openticker.core.agents.manager import Tier, WakeReason, tier_of, wake_trigger
 from openticker.core.agents.threads import Folder
 
 CLAUDE, CODEX = Harness.CLAUDE, Harness.CODEX
@@ -84,3 +86,54 @@ def test_without_settings_read_a_run_takes_the_environments_choice() -> None:
         CLAUDE, "haiku", "low", None, timedelta(minutes=15)
     )
     assert folder_kind(Folder.STRATEGY) is FolderKind.STRATEGIES
+
+
+def test_check_ins_are_the_time_it_set_and_the_hourly_look_only() -> None:
+    checks = {reason for reason in WakeReason if tier_of(reason) is Tier.CHECK}
+
+    assert checks == {WakeReason.SCHEDULED, WakeReason.FALLBACK}
+    assert look_kind(wake_trigger(WakeReason.FALLBACK)) is FolderKind.MANAGER_CHECKS
+    assert look_kind(wake_trigger(WakeReason.BROKE)) is FolderKind.MANAGER
+    assert look_kind("ui") is FolderKind.MANAGER  # the user writing in its thread
+
+
+def test_check_ins_fall_back_to_the_managers_own_choice_field_by_field() -> None:
+    env = AgentSettings(model="sonnet", effort="medium", max_budget_usd=2.0)
+    stored = StoredSettings(
+        choices={
+            FolderKind.MANAGER: RunChoice(
+                model="opus", effort="high", timeout=timedelta(minutes=20)
+            ),
+            FolderKind.MANAGER_CHECKS: RunChoice(model="sonnet", effort="low"),
+        }
+    )
+
+    choices = resolved_choices(stored, env)
+
+    assert choices[FolderKind.MANAGER] == RunChoice(
+        CLAUDE, "opus", "high", 2.0, timedelta(minutes=20)
+    )
+    assert choices[FolderKind.MANAGER_CHECKS] == RunChoice(
+        CLAUDE, "sonnet", "low", 2.0, timedelta(minutes=20)
+    )
+    # Unset, check-ins run as the decisive looks do.
+    unset = StoredSettings(choices={FolderKind.MANAGER: RunChoice(model="opus")})
+    assert resolved_choices(unset, env)[FolderKind.MANAGER_CHECKS].model == "opus"
+
+
+def test_check_ins_keep_the_managers_harness_and_drop_a_model_meant_for_the_other() -> None:
+    env = AgentSettings()
+    stored = StoredSettings(
+        harness=CLAUDE,
+        choices={
+            FolderKind.MANAGER: RunChoice(harness=CODEX, model="gpt-5.5"),
+            FolderKind.MANAGER_CHECKS: RunChoice(harness=CLAUDE, model="haiku", effort="low"),
+        },
+        chosen_for={FolderKind.MANAGER_CHECKS: CLAUDE},
+    )
+
+    checks = resolved_choices(stored, env)[FolderKind.MANAGER_CHECKS]
+
+    # One day, one conversation: the Manager runs Codex, so the check-ins do too.
+    assert checks.harness is CODEX
+    assert (checks.model, checks.effort) == ("gpt-5.5", None)

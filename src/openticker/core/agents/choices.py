@@ -13,6 +13,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 from openticker.core.agents.jobs import AgentJobError, AgentJobKind, AgentSettings, Harness
+from openticker.core.agents.manager import Tier, tier_of, wake_reason
 from openticker.core.agents.threads import Folder
 
 # How hard the agent thinks: a level name as the harness takes it ("low",
@@ -56,6 +57,10 @@ class FolderKind(StrEnum):
     SCRIPTS = "scripts"
     REVIEWS = "reviews"
     DEBRIEFS = "debriefs"
+    MANAGER = "manager"  # the desk manager's decisive looks (ADR 41, 42)
+    # Its check-ins: the time it set, the hourly look (ADR 42). Over the
+    # Manager's own choice, on the Manager's harness: one day, one session.
+    MANAGER_CHECKS = "manager-checks"
 
 
 @dataclass(frozen=True)
@@ -156,7 +161,7 @@ def resolved_choices(
 ) -> dict[FolderKind, RunChoice]:
     env = env_choice(settings)
     default = RunChoice(harness=stored.harness)
-    return {
+    resolved: dict[FolderKind, RunChoice] = {
         kind: resolve(
             stored_choice(stored, kind, settings.harness),
             default,
@@ -164,7 +169,27 @@ def resolved_choices(
             default_harness=settings.harness,
         )
         for kind in FolderKind
+        if kind is not FolderKind.MANAGER_CHECKS
     }
+    harness = resolved[FolderKind.MANAGER].harness or settings.harness
+    resolved[FolderKind.MANAGER_CHECKS] = resolve(
+        checks_choice(stored, harness),
+        stored_choice(stored, FolderKind.MANAGER, settings.harness),
+        default,
+        env,
+        default_harness=harness,
+    )
+    return resolved
+
+
+def checks_choice(stored: StoredSettings, manager_harness: Harness) -> RunChoice:
+    """The check-ins' own choice, on the Manager's harness: a model and
+    effort chosen while the Manager ran the other harness mean nothing now."""
+    choice = replace(stored.choices.get(FolderKind.MANAGER_CHECKS, RunChoice()), harness=None)
+    meant = stored.chosen_for.get(FolderKind.MANAGER_CHECKS)
+    if meant is not None and meant is not manager_harness:
+        choice = replace(choice, model=None, effort=None)
+    return replace(choice, harness=manager_harness)
 
 
 _FOLDER_KINDS: Mapping[Folder, FolderKind] = {
@@ -173,6 +198,7 @@ _FOLDER_KINDS: Mapping[Folder, FolderKind] = {
     Folder.SCRIPT: FolderKind.SCRIPTS,
     Folder.REVIEW: FolderKind.REVIEWS,
     Folder.DEBRIEF: FolderKind.DEBRIEFS,
+    Folder.MANAGER: FolderKind.MANAGER,
 }
 
 
@@ -187,3 +213,13 @@ def job_kind_folder(kind: AgentJobKind) -> FolderKind | None:
     if kind is AgentJobKind.DEBRIEF:
         return FolderKind.DEBRIEFS
     return None
+
+
+def look_kind(trigger: str) -> FolderKind:
+    """The settings a desk manager's turn runs under (ADR 42): a check-in's,
+    or the Manager's own for a decisive look and whatever the user asked in
+    its thread."""
+    reason = wake_reason(trigger)
+    if reason is not None and tier_of(reason) is Tier.CHECK:
+        return FolderKind.MANAGER_CHECKS
+    return FolderKind.MANAGER

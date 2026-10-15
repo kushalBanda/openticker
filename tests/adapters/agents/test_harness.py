@@ -224,6 +224,15 @@ def test_claude_chat_command_resumes_with_model_effort_and_context(tmp_path: Pat
     assert not any("expiry days" in part for part in argv)  # the message goes on stdin
 
 
+def test_claude_loads_labs_settings_only_and_codex_is_unchanged(tmp_path: Path) -> None:
+    # The user's personal skills and plugins stay out of every run (ADR 42).
+    for launch in (_chat(tmp_path), _chat(tmp_path, resume_session="sess-1")):
+        argv = command(launch, "/bin/claude")
+        assert argv[argv.index("--setting-sources") + 1] == "project"
+
+    assert "--setting-sources" not in command(_chat(tmp_path, harness=Harness.CODEX), "/bin/codex")
+
+
 def test_claude_first_chat_turn_has_no_resume_and_the_harness_defaults(tmp_path: Path) -> None:
     argv = command(_chat(tmp_path), "/bin/claude")
 

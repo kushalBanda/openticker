@@ -61,6 +61,21 @@ def test_settings_show_stored_env_and_resolved(client: TestClient) -> None:
     assert (body["runs_per_day"], body["runs_per_day_env"]) == (None, 7)
 
 
+def test_the_managers_check_ins_have_their_own_folder_on_its_harness(client: TestClient) -> None:
+    saved = client.put("/api/v1/agents/settings/folders/manager-checks", json={"effort": "low"})
+    harness = client.put(
+        "/api/v1/agents/settings/folders/manager-checks", json={"harness": "codex"}
+    )
+
+    body = client.get("/api/v1/agents/settings").json()
+
+    assert saved.status_code == 200 and harness.status_code == 422
+    assert "Manager's harness" in harness.json()["detail"]
+    checks = _folder(body, "manager-checks")
+    assert checks["stored"]["effort"] == "low" and checks["resolved"]["harness"] == "claude"
+    assert _folder(body, "manager")["resolved"]["effort"] != "low"
+
+
 def test_an_effort_that_isnt_a_level_is_422(client: TestClient) -> None:
     response = client.put("/api/v1/agents/settings/folders/general", json={"effort": "--yolo"})
 

@@ -27,6 +27,8 @@ def _actor(event_type: str, fields: dict[str, Any]) -> str | None:
     if event_type == "AgentJobEnded":
         if fields.get("kind") == "debrief":
             return f"debrief:{fields['subject']}"
+        if fields.get("kind") == "chat":
+            return None  # the server ended a chat's turn; its agent's calls are its own
         return f"review:{fields['strategy_id']}"
     if event_type.startswith("Strategy") and "strategy_id" in fields:
         return f"strategy:{fields['strategy_id']}"

@@ -86,6 +86,30 @@ test("Agents: a folder's effort saves, runs a day steps, and Reset goes back to 
   await expect(runs).toHaveText(String(before));
 });
 
+test("Agents: the manager's check-ins are set apart from its decisive looks", async ({ page }) => {
+  await signIn(page);
+  const agents = page.locator("#agents");
+  await agents.scrollIntoViewIfNeeded();
+  await expect(agents.getByRole("button", { name: /Manager: decisive looks/ })).toBeVisible();
+  const checks = agents.getByRole("button", { name: /Manager: check-ins/ });
+  await checks.click();
+  await agents
+    .getByRole("group", { name: "Manager: check-ins effort" })
+    .getByRole("button", { name: "Low", exact: true })
+    .click();
+  await expect(toast(page, "Saved")).toBeVisible();
+  await expect(checks).toContainText("Low");
+
+  const stored = await page.request.get("/api/v1/agents/settings");
+  const folders: { kind: string; stored: { effort: string | null } }[] = (await stored.json())
+    .folders;
+  expect(folders.find((f) => f.kind === "manager-checks")?.stored.effort).toBe("low");
+  expect(folders.find((f) => f.kind === "manager")?.stored.effort).toBeNull();
+
+  await agents.getByRole("button", { name: "Reset to environment" }).click();
+  await expect(toast(page, "Agent settings reset to the environment")).toBeVisible();
+});
+
 test("proof: disconnect, then connect through the broker's login and its redirect", async ({
   page,
 }) => {

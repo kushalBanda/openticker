@@ -70,6 +70,9 @@ def command(launch: AgentLaunch, executable: str) -> list[str]:
         }
         chat = launch.agent is None
         argv = [executable, "-p"] if chat else [executable, "-p", launch.prompt]
+        # labs' own settings, skills and agents, not the user's personal ones
+        # (ADR 42): sign-in is still found.
+        argv += ["--setting-sources", "project"]
         if launch.agent is not None:
             argv += ["--agent", launch.agent]
         if launch.resume_session is not None:

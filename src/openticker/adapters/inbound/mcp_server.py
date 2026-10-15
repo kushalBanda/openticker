@@ -52,10 +52,18 @@ from openticker.adapters.inbound.mcp_models import (
     FundsResult,
     HindsightInput,
     InstrumentRef,
+    KeptYoursResult,
     LearningResult,
     LessonCheckedResult,
     LessonUseResult,
     LoginUrlResult,
+    ManagerDayResult,
+    ManagerDaysResult,
+    ManagerLineInput,
+    ManagerLineResult,
+    ManagerNumbersResult,
+    ManagerPlanResult,
+    ManagerResult,
     MarginResult,
     MarketDepthResult,
     MarketStatusesResult,
@@ -112,10 +120,11 @@ from openticker.composition import (
     build_event_bus,
     capital_cap,
     order_broker,
+    sandbox_settings,
     script_limits,
 )
 from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
-from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewScheduleError
+from openticker.core.agents.manager import MAX_LINES_PER_CALL, ManagerError
 from openticker.core.brain.lessons import (
     MAX_APPLIES_TO,
     MAX_EVIDENCE,
@@ -166,6 +175,7 @@ from openticker.storage.sqlite.watchlists_repo import (
 from openticker.use_cases import watchlists
 from openticker.use_cases.agent_clients import note_agent_client
 from openticker.use_cases.agents import manage as agent_jobs
+from openticker.use_cases.agents import manager as desk_manager
 from openticker.use_cases.agents.manage import (
     MAX_AGENT_JOBS,
     AgentJobBusyError,
@@ -299,8 +309,8 @@ Typical flow:
    happened. A running strategy can't be edited or deleted; stop it first.
    get_strategy_ledger judges it: every run after charges, with its fills.
    start_review has openticker-serve run the user's own coding agent to
-   review it unattended; schedule_review has it do so every so often, after
-   so many runs or on a drawdown; get_agent_jobs shows how that went, and
+   review it unattended, and the desk manager (get_manager) asks for one
+   when it judges it due; get_agent_jobs shows how that went, and
    stop_agent_job stops one.
 7. Signal strategies: create_signal_strategy saves one whose legs name their
    contracts (stocks, futures, options); rotate_strategy_webhook gives it an
@@ -438,6 +448,10 @@ ExchangeParam = Annotated[
 # these are re-raised as ToolError to reach the agent with their message
 # (ADR 7 in docs/adr).
 _AGENT_FIXABLE_ERRORS = (
+    ManagerError,
+    desk_manager.UnknownLineError,
+    desk_manager.ManagerDayError,
+    desk_manager.ManagerOffError,
     BrokerError,
     HistoryRangeError,
     UnknownInstrumentError,
@@ -460,7 +474,6 @@ _AGENT_FIXABLE_ERRORS = (
     AgentJobCapError,
     UnknownAgentJobError,
     AgentConfigError,
-    ReviewScheduleError,
     UnknownStrategyError,
     UnknownWatchlistError,
     brain.UnknownNoteError,
@@ -1821,61 +1834,6 @@ def start_review(strategy_id: StrategyId) -> StartReviewResult:
 
 
 @mcp.tool(
-    title="Schedule review",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True
-    ),
-)
-def schedule_review(
-    strategy_id: StrategyId,
-    every: Annotated[
-        str | None,
-        Field(description="Review at most this often, like 30m, 4h or 1d (5 minutes to 90 days)."),
-    ] = None,
-    after_runs: Annotated[
-        int | None,
-        Field(
-            ge=1,
-            le=MAX_AFTER_RUNS,
-            description="Review once this many runs have ended after costs since the last review.",
-        ),
-    ] = None,
-    drawdown: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            description="Review when net P&L after charges falls this many rupees below its high.",
-        ),
-    ] = None,
-) -> StrategyResult:
-    """Have openticker-serve review the strategy without being asked, as
-    start_review would, when any trigger given is met. Each counts from the
-    last review, or from now. A review is due only once a run has ended
-    since the last one, so an idle strategy costs nothing. Replaces an
-    earlier schedule; can be set while the strategy runs. Reviews count
-    against the day's cap of agent jobs."""
-    with _agent_facing_errors():
-        stored = agent_jobs.schedule_review(strategy_id, every, after_runs, drawdown, clock())
-    return StrategyResult.of(
-        stored, "unschedule_review turns it off; get_agent_jobs shows reviews."
-    )
-
-
-@mcp.tool(
-    title="Unschedule review",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
-    ),
-)
-def unschedule_review(strategy_id: StrategyId) -> StrategyResult:
-    """Review the strategy only when asked with start_review. A review
-    already waiting or running carries on."""
-    with _agent_facing_errors():
-        stored = agent_jobs.unschedule_review(strategy_id)
-    return StrategyResult.of(stored)
-
-
-@mcp.tool(
     title="Get agent jobs",
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
 )
@@ -2371,8 +2329,8 @@ def record_lesson_use(
     purpose: Annotated[
         UsePurpose,
         Field(
-            description="design (a strategy), review, debrief, or answer (a question the "
-            "user asked)."
+            description="design (a strategy), review, debrief, answer (a question the "
+            "user asked), or manage (the desk manager's decisions)."
         ),
     ],
     how: Annotated[
@@ -2567,6 +2525,212 @@ def get_learning(
     many lessons held more often than not."""
     with _agent_facing_errors():
         return LearningResult.of(brain.get_learning(days, clock()))
+
+
+@mcp.tool(
+    title="Get desk manager",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_manager() -> ManagerResult:
+    """The desk manager (ADR 41): whether it's on, when it looks next and
+    why, today's plan, and every line it set (capital and stop for the desk,
+    its own trades, each strategy and script) with who set it and net today.
+    A line set by "you" is the user's: it stands over the manager's."""
+    with _agent_facing_errors():
+        view = desk_manager.get_manager(
+            sandbox_settings(os.environ).starting_capital, load_calendar(), clock()
+        )
+    return ManagerResult.of(view)
+
+
+@mcp.tool(
+    title="Get desk manager day",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def get_manager_day(
+    trading_date: Annotated[
+        date, Field(description="An exchange-local trading date, today or before.")
+    ],
+) -> ManagerDayResult:
+    """One trading day of the desk manager's, read back from what was kept
+    (ADR 43): whether it ran and that day's threads. Today is live; a past
+    day is as it closed. Refused for a day that wasn't a trading day or
+    hasn't happened."""
+    with _agent_facing_errors():
+        day = desk_manager.get_manager_day(trading_date, load_calendar(), clock())
+    return ManagerDayResult.of(day)
+
+
+@mcp.tool(
+    title="List desk manager days",
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
+)
+def list_manager_days(
+    start: Annotated[date, Field(description="The first exchange-local date to list.")],
+    end: Annotated[
+        date | None,
+        Field(
+            description=f"The last date to list, at most {desk_manager.MAX_DAYS} days after "
+            "start; default today."
+        ),
+    ] = None,
+) -> ManagerDaysResult:
+    """Every trading day from start to end, oldest first, with whether the
+    desk manager ran that day (ADR 43). Read one with get_manager_day."""
+    with _agent_facing_errors():
+        now = clock()
+        days = desk_manager.list_manager_days(
+            start, end or now.astimezone(EXCHANGE_TIMEZONE).date(), load_calendar(), now
+        )
+    return ManagerDaysResult.of(days)
+
+
+@mcp.tool(
+    title="Set desk manager numbers",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def set_manager_numbers(
+    lines: Annotated[
+        list[ManagerLineInput],
+        Field(
+            min_length=1,
+            max_length=MAX_LINES_PER_CALL,
+            description="The lines to set; each replaces that line's capital and stop.",
+        ),
+    ],
+) -> ManagerNumbersResult:
+    """Set the capital and stop the desk manager gives the desk, its own
+    trades, a strategy or a script (ADR 41). A line the user set stands:
+    the manager's numbers for it are kept beside it and returned in
+    kept_yours. Numbers set from anywhere but the manager's own day are the
+    user's, and stand until they hand them back."""
+    with _agent_facing_errors():
+        views, kept = desk_manager.set_manager_numbers(
+            [desk_manager.LineChange(l.key, l.capital, l.stop, l.reason) for l in lines],
+            event_bus(),
+            _who(),
+            load_calendar(),
+            clock(),
+        )
+    return ManagerNumbersResult(
+        lines=[ManagerLineResult.of(v) for v in views],
+        kept_yours=[KeptYoursResult.of(k) for k in kept],
+    )
+
+
+@mcp.tool(
+    title="Clear desk manager override",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+def clear_manager_override(
+    key: Annotated[str, Field(description="The line: desk, own, strategy:<id> or script:<id>.")],
+) -> ManagerLineResult:
+    """Hand a line the user set back to the desk manager: it takes the
+    numbers the manager last wanted for it. Only when the user asks."""
+    with _agent_facing_errors():
+        view = desk_manager.clear_override(key, event_bus(), _who(), load_calendar(), clock())
+    return ManagerLineResult.of(view)
+
+
+@mcp.tool(
+    title="Set desk manager next wake",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def set_next_wake(
+    at: Annotated[
+        datetime,
+        Field(
+            description="When to look next, today, with its offset (2026-09-22T11:40:00+05:30): "
+            "at least 2 minutes ahead and before the close wake, which comes on its own."
+        ),
+    ],
+    reason: Annotated[
+        str, Field(max_length=500, description="Why then, in a sentence the user reads.")
+    ],
+) -> ManagerResult:
+    """The desk manager's next look (ADR 41), replacing the one set before.
+    Something breaking wakes it sooner on its own; without a time set, it
+    looks once an hour in session."""
+    with _agent_facing_errors():
+        desk_manager.set_next_wake(at, reason, load_calendar(), clock())
+        view = desk_manager.get_manager(
+            sandbox_settings(os.environ).starting_capital, load_calendar(), clock()
+        )
+    return ManagerResult.of(view)
+
+
+@mcp.tool(
+    title="Set desk manager plan",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def set_manager_plan(
+    text: Annotated[
+        str,
+        Field(
+            max_length=4000,
+            description="Today's plan in a few sentences: what runs, with how much, and why.",
+        ),
+    ],
+    lesson_ids: Annotated[
+        list[str],
+        Field(max_length=20, description="The brain's lessons it relied on, from search_brain."),
+    ] = [],  # noqa: B006 — never mutated; the SDK needs a literal default
+) -> ManagerPlanResult:
+    """The desk manager's plan for today (ADR 41), shown on the Manager page
+    with the lessons it relied on. Replaces the one set before."""
+    with _agent_facing_errors():
+        plan = desk_manager.set_plan(text, lesson_ids, event_bus(), _who(), clock())
+    return ManagerPlanResult.of(plan)
+
+
+@mcp.tool(
+    title="Switch desk manager",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+def set_manager(
+    enabled: Annotated[bool, Field(description="On: it wakes on its own. Off: it doesn't.")],
+    wakes_per_day: Annotated[
+        int | None,
+        Field(ge=1, le=200, description="The most turns it takes a day; omit to keep it."),
+    ] = None,
+) -> ManagerResult:
+    """Turn the desk manager on or off (ADR 41). Off stops its wakes; a turn
+    already running finishes and nothing it started is stopped. Only when
+    the user asks."""
+    with _agent_facing_errors():
+        desk_manager.set_manager(enabled, wakes_per_day, event_bus(), _who(), clock())
+        view = desk_manager.get_manager(
+            sandbox_settings(os.environ).starting_capital, load_calendar(), clock()
+        )
+    return ManagerResult.of(view)
+
+
+@mcp.tool(
+    title="Wake desk manager",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+def wake_manager() -> AgentJobResult:
+    """Ask the desk manager to look at the desk now (ADR 41): a turn of
+    today's thread, run by openticker-serve with the user's own coding
+    agent. Counts against its wakes a day. Refused while it's off or
+    already looking. Only when the user asks."""
+    with _agent_facing_errors():
+        job = desk_manager.wake_manager(
+            resolved_settings(agent_settings(os.environ)), event_bus(), _who(), clock()
+        )
+    return AgentJobResult.of(job, {})
 
 
 def main() -> None:

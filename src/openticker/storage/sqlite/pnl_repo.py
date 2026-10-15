@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -92,16 +92,34 @@ def points_on(trading_date: date) -> list[IntradayPoint]:
         .order_by(IntradayPnlRow.minute)
     )
     with Session(get_engine()) as session:
-        return [
-            IntradayPoint(
-                minute=time.fromisoformat(row.minute),
-                net_pnl=row.net_pnl,
-                realized_pnl=row.realized_pnl,
-                charges=row.charges,
-                unrealized_pnl=row.unrealized_pnl,
-            )
-            for row in session.scalars(statement)
-        ]
+        return [_point(row) for row in session.scalars(statement)]
+
+
+def last_points_between(start: date, end: date) -> dict[date, IntradayPoint]:
+    """Each day's last recorded minute, in one read for the range."""
+    last = (
+        select(IntradayPnlRow.trading_date, func.max(IntradayPnlRow.minute).label("minute"))
+        .where(IntradayPnlRow.trading_date >= start, IntradayPnlRow.trading_date <= end)
+        .group_by(IntradayPnlRow.trading_date)
+        .subquery()
+    )
+    statement = select(IntradayPnlRow).join(
+        last,
+        (IntradayPnlRow.trading_date == last.c.trading_date)
+        & (IntradayPnlRow.minute == last.c.minute),
+    )
+    with Session(get_engine()) as session:
+        return {row.trading_date: _point(row) for row in session.scalars(statement)}
+
+
+def _point(row: IntradayPnlRow) -> IntradayPoint:
+    return IntradayPoint(
+        minute=time.fromisoformat(row.minute),
+        net_pnl=row.net_pnl,
+        realized_pnl=row.realized_pnl,
+        charges=row.charges,
+        unrealized_pnl=row.unrealized_pnl,
+    )
 
 
 def prune_points(before: date) -> int:

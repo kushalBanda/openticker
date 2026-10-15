@@ -29,8 +29,8 @@ function useSecondsSince(on: boolean): number | null {
 /**
  * Under the status bar, only when something needs the user (DESIGN.md
  * Banners): the broker session expired, live prices lost, a strategy killed
- * or stopped by a fault. A strategy's banner stays until dismissed or read
- * in the bell.
+ * or stopped by a fault, the desk manager stalled. A strategy's or the
+ * manager's banner stays until dismissed or read in the bell.
  */
 export function Banners() {
   const { status, state } = useLive();
@@ -93,10 +93,11 @@ export function Banners() {
               <OctagonX size={18} aria-hidden />
               <span className="grow">
                 <b>{said.text}</b> at {istClock(new Date(entry.occurred_at))}.
+                {entry.event_type === "ManagerStalled" && ` ${String(entry.details.detail ?? "")}`}
               </span>
               {open && (
                 <button type="button" className="btn" data-size="sm" onClick={open.run}>
-                  Open strategy
+                  {entry.event_type === "ManagerStalled" ? "Open manager" : "Open strategy"}
                 </button>
               )}
               <button

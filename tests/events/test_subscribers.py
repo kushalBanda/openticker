@@ -268,3 +268,39 @@ def test_actor_for_review_job_unchanged() -> None:
 
     [entry] = list_audit(limit=10)
     assert entry.triggered_by == "review:stg_1"
+
+
+def test_actor_for_chat_turn_is_the_server_not_a_review() -> None:
+    record_event(_ended("chat", None, None))
+
+    [entry] = list_audit(limit=10)
+    assert entry.triggered_by is None
+
+
+def _turn(reason: str, trigger: str) -> object:
+    from dataclasses import replace
+
+    return replace(_ended("chat", None, None), reason=reason, trigger=trigger, summary="Held.")  # type: ignore[type-var]
+
+
+def test_finished_manager_wake_turn_not_notified() -> None:
+    assert describe(_turn("finished", "manager-wake:fallback")) is None
+    assert describe(_turn("finished", "ui")) is not None  # the user's own chat still is
+
+
+def test_failed_manager_wake_turn_notified() -> None:
+    subject, _ = describe(_turn("failed", "manager-wake:plan")) or ("", "")
+    assert subject == "t failed"
+
+
+def test_manager_stalled_notifies() -> None:
+    from openticker.events.types import ManagerStalled
+
+    assert ManagerStalled in NOTIFIED_EVENTS
+    channel = _Channel()
+    notifier([channel])(ManagerStalled("failing", "Its last 3 turns failed.", "thr_1"))
+    notifier([channel])(ManagerStalled("capped", "It used its 40 wakes today.", None))
+    assert channel.sent == [
+        ("Desk manager stalled: its turns keep failing", "Its last 3 turns failed."),
+        ("Desk manager: today's wakes are used up", "It used its 40 wakes today."),
+    ]

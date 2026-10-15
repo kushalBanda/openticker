@@ -20,7 +20,7 @@ from openticker.core.agents.jobs import (
     job_title,
     verdict_of,
 )
-from openticker.core.agents.reviews import MAX_AFTER_RUNS, ReviewSchedule, every_text
+from openticker.core.agents.manager import ManagerPlan
 from openticker.core.agents.threads import FAILED_ENDS, Access, Folder, is_unread
 from openticker.core.agents.transcript import Step, StepKind
 from openticker.core.brain.lessons import CheckOutcome, Override, UsePurpose
@@ -43,7 +43,7 @@ from openticker.core.orders.models import (
     Trade,
 )
 from openticker.core.orders.sandbox import PaperMargin
-from openticker.core.pnl import DayPnl, Source, source_of
+from openticker.core.pnl import DayFigure, DayPnl, Source, source_of
 from openticker.core.risk.models import (
     BreachReason,
     LockMode,
@@ -114,6 +114,13 @@ from openticker.storage.sqlite.signals_repo import StoredWebhook
 from openticker.storage.sqlite.strategies_repo import StoredStrategy
 from openticker.storage.sqlite.watchlists_repo import Watchlist
 from openticker.use_cases.agents.manage import AgentJobLog
+from openticker.use_cases.agents.manager import (
+    KeptYours,
+    LineView,
+    ManagerDay,
+    ManagerDaySummary,
+    ManagerView,
+)
 from openticker.use_cases.agents.settings import AgentSettingsView, FolderSettings
 from openticker.use_cases.agents.threads import FolderCount, ThreadHit, ThreadView, Turn
 from openticker.use_cases.brain.read import (
@@ -135,7 +142,7 @@ from openticker.use_cases.position_holders import Holder, Holding, PositionKey, 
 from openticker.use_cases.preview_charges import ChargePreview
 from openticker.use_cases.preview_payoff import PayoffLegRequest, PayoffPreview
 from openticker.use_cases.scripts.manage import ScriptDetail, ScriptLog, ScriptSummary
-from openticker.use_cases.strategies.board import BoardRow, Segment, StrategyState
+from openticker.use_cases.strategies.board import BoardRow, RunEnd, Segment, StrategyState
 from openticker.use_cases.strategies.control import RunDetail, SignalsDetail
 from openticker.use_cases.strategies.define import StrategyPreview
 from openticker.use_cases.strategies.ledger import StrategyLedger
@@ -1582,45 +1589,6 @@ class SignalStrategyDefinition(_LimitFields):
         )
 
 
-class ReviewScheduleDefinition(BaseModel):
-    """When openticker-serve reviews a strategy without being asked. Any
-    trigger met is enough; each counts from the last review, or from when
-    the schedule was set. A review is due only once a run has ended since
-    the last one."""
-
-    every: str | None = Field(
-        default=None,
-        description="A review at most this often, like 30m, 4h or 1d (5 minutes to 90 days).",
-    )
-    after_runs: int | None = Field(
-        default=None,
-        ge=1,
-        le=MAX_AFTER_RUNS,
-        description="A review once this many runs have ended after costs since the last one.",
-    )
-    drawdown: float | None = Field(
-        default=None,
-        gt=0,
-        description="A review when net P&L after charges falls this many rupees below its high.",
-    )
-
-
-class ReviewScheduleResult(BaseModel):
-    every: str | None
-    after_runs: int | None
-    drawdown: float | None
-    set_at: datetime
-
-    @classmethod
-    def of(cls, schedule: ReviewSchedule) -> "ReviewScheduleResult":
-        return cls(
-            every=every_text(schedule.every) if schedule.every is not None else None,
-            after_runs=schedule.after_runs,
-            drawdown=schedule.drawdown,
-            set_at=schedule.set_at.astimezone(EXCHANGE_TIMEZONE),
-        )
-
-
 class StrategyResult(BaseModel):
     strategy_id: str = Field(description="Pass this to the other strategy tools.")
     name: str
@@ -1633,10 +1601,6 @@ class StrategyResult(BaseModel):
     scheduled_broker: str | None = Field(
         description="The broker its scheduled entries go through; null when it enters only "
         "on start_strategy."
-    )
-    review_schedule: ReviewScheduleResult | None = Field(
-        description="When openticker-serve reviews it without being asked; null when only "
-        "start_review does."
     )
     definition: StrategyDefinition | SignalStrategyDefinition
     created_at: datetime
@@ -1652,9 +1616,6 @@ class StrategyResult(BaseModel):
             mode=stored.mode,
             locked=stored.locked,
             scheduled_broker=stored.scheduled_broker,
-            review_schedule=ReviewScheduleResult.of(stored.review_schedule)
-            if stored.review_schedule is not None
-            else None,
             definition=SignalStrategyDefinition.of(stored.spec)
             if isinstance(stored.spec, SignalStrategySpec)
             else StrategyDefinition.of(stored.spec),
@@ -1662,6 +1623,19 @@ class StrategyResult(BaseModel):
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
             next_step=next_step,
         )
+
+
+class RunEndResult(BaseModel):
+    reason: StrategyStopReason | None = Field(
+        description="Why it ended: tick_stale means its prices were lost; null before reasons "
+        "were recorded."
+    )
+    detail: str | None = Field(description="The stop in words, as the run recorded it.")
+    at: datetime | None = Field(description="When it ended.")
+
+    @classmethod
+    def of(cls, end: RunEnd) -> "RunEndResult":
+        return cls(reason=end.reason, detail=end.detail, at=_local(end.at))
 
 
 class StrategySummary(BaseModel):
@@ -1675,7 +1649,6 @@ class StrategySummary(BaseModel):
     horizon: Horizon
     locked: bool
     scheduled: bool = Field(description="True when it enters on its schedule.")
-    review_scheduled: bool = Field(description="True when it is reviewed on a schedule.")
     updated_at: datetime
     state: StrategyState = Field(
         description="killed: its kill switch is on. running: a run is open, or a start is "
@@ -1690,8 +1663,19 @@ class StrategySummary(BaseModel):
         description="A start, stop, kill or close_leg openticker-serve hasn't carried out yet."
     )
     today_pnl: float = Field(
-        description="Runs started today and the open run: realized P&L less charges, rupees. "
-        "Open legs' unrealized P&L is not in it."
+        description="Today's fills, whenever their run started: today_gross less today_charges, "
+        "rupees. A positional run closed today counts today. Open legs' unrealized P&L is not "
+        "in it."
+    )
+    today_gross: float = Field(
+        description="Market P&L today's fills closed, at their fill prices, before charges."
+    )
+    today_charges: float = Field(
+        description="Charges and taxes today's fills paid: brokerage, STT, fees, stamp duty, GST."
+    )
+    daily_used_before: float = Field(
+        description="Realized P&L of its other runs started today. The daily loss limit counts "
+        "this plus the open run's P&L, before charges."
     )
     net_pnl: float = Field(description="Every run after costs, less charges (as the ledger).")
     runs: int = Field(description="Every run it has had.")
@@ -1699,6 +1683,7 @@ class StrategySummary(BaseModel):
     wins: int
     max_drawdown: float = Field(description="Deepest fall of net P&L from its high, run by run.")
     last_run_at: datetime | None = Field(description="When the newest run started.")
+    last_run_end: RunEndResult | None = Field(description="How its newest ended run ended.")
     has_alert_url: bool = Field(description="A signal strategy with an alert URL.")
     last_review: "ReviewBriefResult | None" = Field(description="The newest review that answered.")
 
@@ -1717,7 +1702,6 @@ class StrategySummary(BaseModel):
             horizon=stored.spec.horizon,
             locked=stored.locked,
             scheduled=stored.scheduled_broker is not None,
-            review_scheduled=stored.review_schedule is not None,
             updated_at=stored.updated_at.astimezone(EXCHANGE_TIMEZONE),
             state=row.state,
             segments=list(row.segments),
@@ -1725,13 +1709,17 @@ class StrategySummary(BaseModel):
             exit_time=stored.spec.schedule.exit_time,
             active_run=ActiveRunResult.of(row.active_run) if row.active_run else None,
             pending=row.pending,
-            today_pnl=row.today_net,
+            today_pnl=row.today.net,
+            today_gross=row.today.gross,
+            today_charges=row.today.charges,
+            daily_used_before=row.day_used_before,
             net_pnl=row.net_pnl,
             runs=row.runs,
             judged_runs=row.judged,
             wins=row.wins,
             max_drawdown=row.max_drawdown,
             last_run_at=_local(row.last_run_at),
+            last_run_end=RunEndResult.of(row.last_end) if row.last_end else None,
             has_alert_url=row.has_alert_url,
             last_review=ReviewBriefResult.of(row.review) if row.review else None,
         )
@@ -3632,3 +3620,305 @@ class LessonCheckedResult(BaseModel):
             check=LessonCheckResult.of(check),
             replaced=LessonCheckResult.of(replaced) if replaced else None,
         )
+
+
+# The desk manager (ADR 41 in docs/adr).
+
+
+class DayFigureResult(BaseModel):
+    """Today's money with the market apart from the charges (ADR 42 in docs/adr)."""
+
+    gross: float = Field(
+        description="Market P&L on trades closed today, at their fill prices, before charges."
+    )
+    charges: float = Field(
+        description="Charges and taxes today's fills paid: brokerage, STT, fees, stamp duty, GST."
+    )
+    open: float | None = Field(
+        description="Market P&L on what is still open, rupees; null where it isn't counted "
+        "(a strategy line's figure is its closed trades only)."
+    )
+    net: float = Field(description="gross + open - charges: what the stop is checked against.")
+
+    @classmethod
+    def of(cls, figure: DayFigure) -> "DayFigureResult":
+        return cls(gross=figure.gross, charges=figure.charges, open=figure.open, net=figure.net)
+
+
+class ManagerLineResult(BaseModel):
+    key: str = Field(description="desk, own (its own trades), strategy:<id> or script:<id>.")
+    name: str | None = Field(description="The strategy's or script's name; None for desk and own.")
+    capital: float | None = Field(description="Rupees given to it; None: not set.")
+    stop: float | None = Field(
+        description="Rupees, 0 or less: net today at or below it is crossed; None: no stop."
+    )
+    reason: str
+    set_by: Literal["manager", "you"] = Field(
+        description="you: the user's value, which stands until they hand it back."
+    )
+    manager_capital: float | None = Field(
+        description="What the manager last wanted, kept while the user's value stands."
+    )
+    manager_stop: float | None
+    today: DayFigureResult | None = Field(
+        description="Today's money, market and charges apart; null: no figure for it (scripts, "
+        "its own trades)."
+    )
+    crossed: bool = Field(description="today.net is at or below the stop.")
+    set_at: datetime
+    triggered_by: str
+
+    @classmethod
+    def of(cls, view: LineView) -> "ManagerLineResult":
+        line = view.line
+        return cls(
+            key=str(line.key),
+            name=view.name,
+            capital=line.capital,
+            stop=line.stop,
+            reason=line.reason,
+            set_by=line.set_by.value,
+            manager_capital=line.manager_capital,
+            manager_stop=line.manager_stop,
+            today=DayFigureResult.of(view.today) if view.today else None,
+            crossed=view.crossed,
+            set_at=line.set_at.astimezone(EXCHANGE_TIMEZONE),
+            triggered_by=line.triggered_by,
+        )
+
+
+class ManagerPlanResult(BaseModel):
+    day: date = Field(description="The trading day it is for.")
+    text: str
+    lesson_ids: list[str] = Field(description="The brain's lessons it relied on.")
+    at: datetime
+
+    @classmethod
+    def of(cls, plan: ManagerPlan) -> "ManagerPlanResult":
+        return cls(
+            day=plan.day,
+            text=plan.text,
+            lesson_ids=list(plan.lesson_ids),
+            at=plan.at.astimezone(EXCHANGE_TIMEZONE),
+        )
+
+
+class ManagerResult(BaseModel):
+    enabled: bool = Field(description="Whether it wakes on its own.")
+    wakes_per_day: int = Field(description="The most turns it takes a day.")
+    wakes_today: int
+    next_wake_at: datetime | None = Field(description="When it set itself to look next.")
+    next_wake_reason: str | None
+    last_wake_at: datetime | None
+    thread_id: str | None = Field(description="Today's chat thread; None before its first wake.")
+    failures: int = Field(description="Its last turns today that failed in a row.")
+    stalled: str | None = Field(
+        description="failing: its last turns failed; capped: today's wakes are used up."
+    )
+    plan: ManagerPlanResult | None = Field(description="The latest plan it set.")
+    lines: list[ManagerLineResult]
+    account: float = Field(description="The paper account's capital, rupees.")
+    given: float = Field(description="Capital given to strategies, scripts and its own trades.")
+    desk_today: DayFigureResult | None = Field(
+        description="The desk's money today at the latest recorded minute: closed trades "
+        "(gross), open positions (open), charges, and net; null before the first minute."
+    )
+
+    @classmethod
+    def of(cls, view: ManagerView) -> "ManagerResult":
+        state = view.state
+        return cls(
+            enabled=state.enabled,
+            wakes_per_day=state.wakes_per_day,
+            wakes_today=view.wakes_today,
+            next_wake_at=_local(state.next_wake_at),
+            next_wake_reason=state.next_wake_reason,
+            last_wake_at=_local(state.last_wake_at),
+            thread_id=view.thread_id,
+            failures=view.failures,
+            stalled=state.stalled,
+            plan=ManagerPlanResult.of(state.plan) if state.plan else None,
+            lines=[ManagerLineResult.of(line) for line in view.lines],
+            account=view.account,
+            given=view.given,
+            desk_today=DayFigureResult.of(view.desk_today) if view.desk_today else None,
+        )
+
+
+class DayModelResult(BaseModel):
+    tier: Literal["decisive", "check"] = Field(
+        description="decisive: the plan, the close, a breakage, a line, Look now; check: the "
+        "time it set, the hourly look."
+    )
+    model: str | None = Field(description="As the harness reported it; None: its default.")
+    effort: str | None
+    looks: int
+
+
+class LineChangeResult(BaseModel):
+    at: datetime
+    capital: float | None
+    stop: float | None
+    set_by: Literal["manager", "you"]
+    kept_yours: bool = Field(
+        description="The manager wanted these numbers on a line the user set; the user's stood."
+    )
+    reason: str
+    after_close: bool = Field(description="Set after the session's close, for the next day.")
+
+
+class ManagerDayLineResult(BaseModel):
+    key: str = Field(description="desk, own (its own trades), strategy:<id> or script:<id>.")
+    name: str | None = Field(description="The strategy's or script's name; None for desk and own.")
+    capital: float | None = Field(description="Rupees given to it at the close; None: not set.")
+    stop: float | None = Field(description="Rupees, 0 or less, at the close; None: no stop.")
+    set_by: Literal["manager", "you"]
+    reason: str
+    stood: bool = Field(description="It stood at the close; false: first set after it.")
+    figure: DayFigureResult | None = Field(
+        description="That day's money, market and charges apart: a strategy's from its fills, "
+        "the desk's from the record; null for scripts and its own trades."
+    )
+    crossed: bool = Field(description="figure.net was at or below the stop at the close.")
+    changes: list[LineChangeResult] = Field(description="That day's changes, oldest first.")
+
+
+class ManagerDayResult(BaseModel):
+    """One trading day of the desk manager's, read back from what was kept
+    (ADR 43 in docs/adr)."""
+
+    trading_date: date
+    live: bool = Field(description="Today: still moving. A past day is as it closed.")
+    ran: bool = Field(description="Whether the manager had a thread that day.")
+    thread_ids: list[str] = Field(
+        description="That day's chat threads, oldest first, as the web app's Agents page "
+        "lists them."
+    )
+    desk: DayFigureResult | None = Field(
+        description="The desk's money that day, market apart from charges: the record written "
+        "after its close, else its last recorded minute; null when neither was kept."
+    )
+    looks: int = Field(description="The manager's looks that day.")
+    cost_usd: float = Field(description="What that day's turns cost, dollars.")
+    models: list[DayModelResult] = Field(description="What its looks ran on, by tier.")
+    lines: list[ManagerDayLineResult] = Field(
+        description="Every line as it stood at the session's close, with that day's changes."
+    )
+    plan: ManagerPlanResult | None = Field(description="The newest plan it set for that day.")
+    debrief: bool = Field(description="The brain's note of that day has a debrief.")
+
+    @classmethod
+    def of(cls, day: ManagerDay) -> "ManagerDayResult":
+        return cls(
+            trading_date=day.trading_date,
+            live=day.live,
+            ran=day.ran,
+            thread_ids=day.thread_ids,
+            desk=DayFigureResult.of(day.desk) if day.desk else None,
+            looks=day.use.looks,
+            cost_usd=day.use.cost_usd,
+            models=[
+                DayModelResult(tier=m.tier.value, model=m.model, effort=m.effort, looks=m.looks)
+                for m in day.use.models
+            ],
+            lines=[
+                ManagerDayLineResult(
+                    key=str(l.line.key),
+                    name=l.line.name,
+                    capital=l.line.capital,
+                    stop=l.line.stop,
+                    set_by=l.line.set_by.value,
+                    reason=l.line.reason,
+                    stood=l.line.stood,
+                    figure=DayFigureResult.of(l.figure) if l.figure else None,
+                    crossed=l.crossed,
+                    changes=[
+                        LineChangeResult(
+                            at=c.at.astimezone(EXCHANGE_TIMEZONE),
+                            capital=c.capital,
+                            stop=c.stop,
+                            set_by=c.set_by.value,
+                            kept_yours=c.kept_yours,
+                            reason=c.reason,
+                            after_close=c.at > day.close,
+                        )
+                        for c in l.line.changes
+                    ],
+                )
+                for l in day.lines
+            ],
+            plan=ManagerPlanResult.of(day.plan) if day.plan else None,
+            debrief=day.debrief,
+        )
+
+
+class ManagerDaySummaryResult(BaseModel):
+    trading_date: date
+    ran: bool = Field(description="Whether the manager had a thread that day.")
+    net: float | None = Field(
+        description="The desk's money that day after charges; null when it wasn't kept."
+    )
+    looks: int
+    cost_usd: float = Field(description="What that day's turns cost, dollars.")
+
+
+class ManagerDaysResult(BaseModel):
+    days: list[ManagerDaySummaryResult] = Field(description="Trading days, oldest first.")
+
+    @classmethod
+    def of(cls, days: list[ManagerDaySummary]) -> "ManagerDaysResult":
+        return cls(
+            days=[
+                ManagerDaySummaryResult(
+                    trading_date=d.trading_date,
+                    ran=d.ran,
+                    net=d.net,
+                    looks=d.looks,
+                    cost_usd=d.cost_usd,
+                )
+                for d in days
+            ]
+        )
+
+
+class ManagerLineInput(BaseModel):
+    key: str = Field(description="desk, own (its own trades), strategy:<id> or script:<id>.")
+    capital: float | None = Field(
+        default=None, ge=0, description="Rupees to give it; null: none set."
+    )
+    stop: float | None = Field(
+        default=None,
+        le=0,
+        description="Net loss today to stop it at, rupees, 0 or less; null: no stop.",
+    )
+    reason: str = Field(
+        default="",
+        max_length=500,
+        description="Why these numbers, in a sentence the user reads. The manager must give one.",
+    )
+
+
+class KeptYoursResult(BaseModel):
+    key: str
+    capital: float | None = Field(description="The user's capital, which stands.")
+    stop: float | None = Field(description="The user's stop, which stands.")
+    wanted_capital: float | None = Field(description="What you asked for, kept beside it.")
+    wanted_stop: float | None
+
+    @classmethod
+    def of(cls, kept: KeptYours) -> "KeptYoursResult":
+        return cls(
+            key=kept.key,
+            capital=kept.capital,
+            stop=kept.stop,
+            wanted_capital=kept.wanted_capital,
+            wanted_stop=kept.wanted_stop,
+        )
+
+
+class ManagerNumbersResult(BaseModel):
+    lines: list[ManagerLineResult] = Field(description="The lines as they now stand.")
+    kept_yours: list[KeptYoursResult] = Field(
+        description="Lines the user set, left as they are: say in your answer that you "
+        "disagree and why, and don't ask again."
+    )

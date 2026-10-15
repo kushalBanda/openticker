@@ -20,9 +20,11 @@ from openticker.core.agents.jobs import (
     AgentJobStatus,
     Harness,
 )
+from openticker.core.agents.threads import Folder
+from openticker.core.agents.transcript import Usage
 from openticker.ports.agent_job_port import AgentOutcome
 from openticker.storage.sqlite.engine import get_engine
-from openticker.storage.sqlite.models import AgentJobRow
+from openticker.storage.sqlite.models import AgentJobRow, AgentThreadRow
 
 _ACTIVE = (AgentJobStatus.RUNNING.value, AgentJobStatus.STOPPING.value)
 _DESK = ""  # a desk job's strategy_id
@@ -92,17 +94,6 @@ def debrief_for(session: Session, trading_date: date) -> AgentJob | None:
     return _job(row) if row else None
 
 
-def open_debrief(session: Session) -> AgentJob | None:
-    """A debrief job pending or running, of any day."""
-    row = session.scalars(
-        select(AgentJobRow).where(
-            AgentJobRow.kind == AgentJobKind.DEBRIEF.value,
-            AgentJobRow.status != AgentJobStatus.ENDED.value,
-        )
-    ).first()
-    return _job(row) if row else None
-
-
 def open_job_of(session: Session, strategy_id: str) -> AgentJob | None:
     """Its job that is pending or running, if any."""
     row = session.scalars(
@@ -113,22 +104,6 @@ def open_job_of(session: Session, strategy_id: str) -> AgentJob | None:
         )
     ).first()
     return _job(row) if row else None
-
-
-def last_asked_at(strategy_id: str) -> datetime | None:
-    """When its newest job was asked for, however it went, leaving out one
-    refused before it started: that was no review."""
-    statement = select(func.max(AgentJobRow.created_at)).where(
-        AgentJobRow.kind == AgentJobKind.REVIEW.value,
-        AgentJobRow.strategy_id == strategy_id,
-        or_(
-            AgentJobRow.end_reason.is_(None),
-            AgentJobRow.end_reason != AgentJobEndReason.REFUSED.value,
-        ),
-    )
-    with Session(get_engine()) as session:
-        latest = session.scalar(statement)
-    return latest.replace(tzinfo=UTC) if latest is not None else None
 
 
 # Background jobs (reviews, debriefs) and chat turns run in separate lanes
@@ -217,6 +192,34 @@ def turns_of(thread_id: str, session: Session | None = None) -> list[AgentJob]:
         return [_job(row) for row in own.scalars(statement).all()]
 
 
+def manager_turns_between(start: date, end: date) -> dict[date, list[AgentJob]]:
+    """Every live desk-manager thread's turns by its trading day, first asked
+    first, in one read for the whole range; a day with a thread and no turn
+    yet has an empty list (ADR 41)."""
+    threads = select(AgentThreadRow.id, AgentThreadRow.subject).where(
+        AgentThreadRow.deleted_at.is_(None),
+        AgentThreadRow.folder == Folder.MANAGER.value,
+        AgentThreadRow.subject >= start.isoformat(),
+        AgentThreadRow.subject <= end.isoformat(),
+    )
+    with Session(get_engine()) as session:
+        day_of = {
+            thread_id: date.fromisoformat(subject)
+            for thread_id, subject in session.execute(threads)
+            if subject is not None
+        }
+        days: dict[date, list[AgentJob]] = {day: [] for day in sorted(set(day_of.values()))}
+        rows = session.scalars(
+            select(AgentJobRow)
+            .where(AgentJobRow.thread_id.in_(list(day_of)))
+            .order_by(AgentJobRow.created_at, literal_column("rowid"))
+        )
+        for row in rows:
+            if row.thread_id is not None:
+                days[day_of[row.thread_id]].append(_job(row))
+    return days
+
+
 def thread_job_ids(live_threads: Iterable[str]) -> set[str]:
     """The ids of every job in these threads."""
     wanted = list(live_threads)
@@ -227,14 +230,46 @@ def thread_job_ids(live_threads: Iterable[str]) -> set[str]:
         return set(session.scalars(statement).all())
 
 
-def mark_outcome(session: Session, job_id: str, outcome: AgentOutcome) -> None:
-    """What ran, as the harness reported it (ADR 40)."""
+def mark_outcome(session: Session, job_id: str, outcome: AgentOutcome, own: Usage) -> None:
+    """What ran (ADR 40): the tokens the turn itself used, and what the
+    harness reported, kept for the next turn of the session (ADR 42)."""
     row = session.get(AgentJobRow, job_id)
     assert row is not None
     row.session_id = outcome.session_id
     row.model_used = outcome.model_used
-    row.input_tokens, row.output_tokens = outcome.input_tokens, outcome.output_tokens
+    row.input_tokens, row.output_tokens = own.input_tokens, own.output_tokens
+    row.session_cost_usd = outcome.cost_usd
+    row.session_input_tokens = outcome.input_tokens
+    row.session_output_tokens = outcome.output_tokens
     row.duration_ms = outcome.duration_ms
+
+
+def previous_in_session(
+    session: Session, thread_id: str, session_id: str, before_job_id: str
+) -> Usage | None:
+    """The harness's running totals at the newest earlier turn of the same
+    conversation that reported any. A turn from before they were kept (NULL)
+    stored the harness's report as its own, so that is read instead."""
+    statement = (
+        select(AgentJobRow)
+        .where(
+            AgentJobRow.thread_id == thread_id,
+            AgentJobRow.session_id == session_id,
+            AgentJobRow.id != before_job_id,
+            AgentJobRow.status == AgentJobStatus.ENDED.value,
+        )
+        .order_by(AgentJobRow.created_at.desc(), literal_column("rowid").desc())
+    )
+    for row in session.scalars(statement):
+        kept = row.session_cost_usd is not None or row.session_input_tokens is not None
+        usage = (
+            Usage(row.session_cost_usd, row.session_input_tokens, row.session_output_tokens)
+            if kept
+            else Usage(row.cost_usd, row.input_tokens, row.output_tokens)
+        )
+        if usage != Usage():
+            return usage
+    return None
 
 
 def mark_running(session: Session, job_id: str, pid: int, now: datetime) -> None:
@@ -286,22 +321,6 @@ def find_job(job_id: str) -> AgentJob | None:
     with Session(get_engine()) as session:
         row = session.get(AgentJobRow, job_id)
         return _job(row) if row else None
-
-
-def runs_without_model(since: datetime) -> tuple[int, int]:
-    """Of the runs started since `since` that have ended, chats and
-    background jobs alike: how many have no model recorded, and how many
-    there are (ADR 40). A run stopped before it started never ran."""
-    ran = (
-        AgentJobRow.started_at >= _naive(since),
-        AgentJobRow.status == AgentJobStatus.ENDED.value,
-    )
-    missing = select(func.count()).where(*ran, AgentJobRow.model_used.is_(None))
-    with Session(get_engine()) as session:
-        return (
-            int(session.scalar(missing) or 0),
-            int(session.scalar(select(func.count()).where(*ran)) or 0),
-        )
 
 
 def recent_jobs(limit: int, strategy_id: str | None = None) -> list[AgentJob]:

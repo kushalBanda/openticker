@@ -4,7 +4,7 @@ import type { Strategy } from "./strategies";
 
 // What the Agents workspace says about chats and their turns (ADR 40).
 
-export type FolderKind = "general" | "strategy" | "script" | "review" | "debrief";
+export type FolderKind = "general" | "strategy" | "script" | "review" | "debrief" | "manager";
 
 const FOLDERS: Record<FolderKind, string> = {
   general: "General",
@@ -12,9 +12,17 @@ const FOLDERS: Record<FolderKind, string> = {
   script: "Scripts",
   review: "Reviews",
   debrief: "Debriefs",
+  manager: "Manager",
 };
 
-export const FOLDER_ORDER: FolderKind[] = ["general", "strategy", "script", "review", "debrief"];
+export const FOLDER_ORDER: FolderKind[] = [
+  "general",
+  "strategy",
+  "script",
+  "review",
+  "debrief",
+  "manager",
+];
 
 export function folderName(folder: FolderKind): string {
   return FOLDERS[folder];
@@ -26,6 +34,7 @@ const CHOICE_KINDS: Record<FolderKind, ChoiceKind> = {
   script: "scripts",
   review: "reviews",
   debrief: "debriefs",
+  manager: "manager",
 };
 
 /** The Settings default a chat in this folder starts from. */
@@ -37,6 +46,7 @@ export function choiceKind(folder: string): ChoiceKind {
 export function whereLabel(thread: AgentThreadSummary): string {
   if (thread.folder === "general") return "General";
   if (thread.folder === "debrief") return thread.subject_name ?? "Debriefs";
+  if (thread.folder === "manager") return "Manager";
   return thread.subject_name ?? `${FOLDERS[thread.folder as FolderKind]} · deleted`;
 }
 

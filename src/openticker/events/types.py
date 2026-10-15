@@ -295,6 +295,7 @@ class AgentJobEnded:
     cost_usd: float | None
     model_used: str | None = None  # as the harness reported it (ADR 40)
     thread_id: str | None = None  # a chat turn's chat; its title is the chat's
+    trigger: str | None = None  # who asked for the job: a desk manager's wake is "manager-wake:…"
     occurred_at: datetime = field(default_factory=_now)
 
 
@@ -373,6 +374,66 @@ class ProposalDecided:
     decision: str  # accept, reject, later
     reason: str | None
     triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ManagerNumbersChanged:
+    """A line of the desk manager's changed (ADR 41): its capital and stop for
+    the desk, its own trades, a strategy or a script. `kept_yours`: the
+    manager wanted these numbers on a line the user set, which stands."""
+
+    key: str
+    name: str | None
+    capital: float | None
+    stop: float | None
+    set_by: str  # manager or you
+    kept_yours: bool
+    reason: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ManagerWoke:
+    """The desk manager woke: a turn of its day's thread is queued (ADR 41)."""
+
+    reason: str  # plan, asked, broke, line, scheduled, fallback, close
+    detail: str
+    thread_id: str
+    job_id: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ManagerPlanSet:
+    """The desk manager set the day's plan, with the lessons it relied on."""
+
+    trading_date: date
+    text: str
+    lesson_ids: tuple[str, ...]
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ManagerSwitched:
+    """The user turned the desk manager on or off, or changed its wakes a day."""
+
+    enabled: bool
+    wakes_per_day: int
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ManagerStalled:
+    """The desk manager can't go on today on its own: its last turns failed,
+    or today's wakes are used up. Told once each; the user must act."""
+
+    why: str  # "failing" or "capped"
+    detail: str
+    thread_id: str | None
     occurred_at: datetime = field(default_factory=_now)
 
 

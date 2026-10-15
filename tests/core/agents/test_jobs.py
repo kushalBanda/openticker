@@ -32,18 +32,12 @@ def test_settings_refuse_what_cant_run() -> None:
 
 
 def test_a_review_prompt_names_the_strategy_its_note_and_the_job() -> None:
-    prompt = review_prompt("nifty condor", "stg_1", "job_9", "mcp")
+    prompt = review_prompt("nifty condor", "stg_1", "job_9")
 
     assert "'nifty condor' (stg_1)" in prompt and "notes/nifty condor.md" in prompt
     assert "review-strategy" in prompt and "unattended" in prompt
     assert "schedule" not in prompt
     assert prompt.endswith("(OpenTicker agent job job_9)")
-
-
-def test_a_scheduled_review_is_told_why_it_is_due() -> None:
-    prompt = review_prompt("nifty condor", "stg_1", "job_9", "schedule: every 1d")
-
-    assert "due on its review schedule: every 1d." in prompt
 
 
 def test_a_long_answer_is_capped() -> None:

@@ -89,6 +89,7 @@ def _fills_by_run(trades: list[StoredTrade]) -> dict[str, list[LedgerFill]]:
                     filled_at=trade.filled_at,
                     expected_price=trade.expected_price,
                     charges=trade.charges,
+                    realized_pnl=trade.realized_pnl,
                 )
             )
     return fills

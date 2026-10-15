@@ -22,7 +22,8 @@ both: an MCP call is allowed exactly when its tool's route would be.
   user's own session does, but broker sign-in, starting, scheduling or
   stopping agent jobs, and the routes with no tool (API keys, settings,
   chats): the user asked, so it may trade on paper and run strategies, and
-  no agent starts another.
+  no agent starts another, but the desk manager's day (ADR 41), which may
+  start a review of a strategy it runs.
 - A read-only chat's key (`chat-read:<thread_id>`, ADR 40) reaches the
   chat's tools that change nothing: the tools annotated read-only, and
   historical bars, which only fill the local cache.
@@ -95,8 +96,6 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "get_strategy_ledger": ("GET", "/api/v1/strategies/{strategy_id}/ledger"),
     "get_strategy_run": ("GET", "/api/v1/runs/{run_id}"),
     "start_review": ("POST", "/api/v1/strategies/{strategy_id}/review"),
-    "schedule_review": ("POST", "/api/v1/strategies/{strategy_id}/review-schedule"),
-    "unschedule_review": ("DELETE", "/api/v1/strategies/{strategy_id}/review-schedule"),
     "get_agent_jobs": ("GET", "/api/v1/agent-jobs"),
     "get_agent_job_log": ("GET", "/api/v1/agent-jobs/{job_id}/log"),
     "stop_agent_job": ("POST", "/api/v1/agent-jobs/{job_id}/stop"),
@@ -131,6 +130,15 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "schedule_debrief": ("PUT", "/api/v1/brain/debrief-schedule"),
     "get_debrief_schedule": ("GET", "/api/v1/brain/debrief-schedule"),
     "get_learning": ("GET", "/api/v1/brain/learning"),
+    "get_manager": ("GET", "/api/v1/manager"),
+    "get_manager_day": ("GET", "/api/v1/manager/days/{trading_date}"),
+    "list_manager_days": ("GET", "/api/v1/manager/days"),
+    "set_manager": ("PUT", "/api/v1/manager"),
+    "wake_manager": ("POST", "/api/v1/manager/wake"),
+    "set_next_wake": ("PUT", "/api/v1/manager/next-wake"),
+    "set_manager_plan": ("PUT", "/api/v1/manager/plan"),
+    "set_manager_numbers": ("PUT", "/api/v1/manager/numbers"),
+    "clear_manager_override": ("DELETE", "/api/v1/manager/numbers/{key}/override"),
 }
 
 # Routes with no MCP tool: the user's own text on a note is theirs to edit,
@@ -265,11 +273,11 @@ _NOT_FOR_CHATS = (
     "get_broker_login_url",
     "connect_broker",
     "start_review",
-    "schedule_review",
-    "unschedule_review",
     "stop_agent_job",
     "start_debrief",
     "schedule_debrief",
+    "set_manager",
+    "wake_manager",
 )
 CHAT_ROUTES = frozenset(TOOL_ROUTES.values()) - {TOOL_ROUTES[t] for t in _NOT_FOR_CHATS}
 
@@ -289,6 +297,8 @@ CHAT_READ_TOOLS = (
     "get_debrief_schedule",
     "get_funds",
     "get_learning",
+    "get_manager",
+    "get_manager_day",
     "get_margin",
     "get_market_depth",
     "get_market_status",
@@ -307,6 +317,7 @@ CHAT_READ_TOOLS = (
     "get_strategy_runs",
     "get_strategy_signals",
     "get_tradebook",
+    "list_manager_days",
     "list_scripts",
     "list_strategies",
     "list_watchlists",
@@ -332,10 +343,12 @@ def refusal(
     strategy_of_run: Callable[[str], str | None],
     *,
     whole_call: bool = True,
+    is_manager_key: Callable[[str], bool] = lambda _: False,
 ) -> str | None:
     """Why a key with `scope` may not make this call, or None when it may.
     `params` are the call's path parameters (REST) or arguments (MCP);
-    `strategy_of_run` finds which strategy a run belongs to. `whole_call` is
+    `strategy_of_run` finds which strategy a run belongs to; `is_manager_key`
+    whether a chat's key is the desk manager's. `whole_call` is
     False when only part of the call is known: a tool being listed, or a
     REST request whose body is checked later by its route."""
     if scope == FULL_SCOPE:
@@ -371,6 +384,8 @@ def refusal(
         return None
     if scope.startswith(CHAT_SCOPE_PREFIX):
         if route in CHAT_ROUTES:
+            return None
+        if route == TOOL_ROUTES["start_review"] and is_manager_key(scope):
             return None
         return "a chat's key reaches neither broker sign-in, API keys nor agent jobs"
     if scope.startswith(CHAT_READ_SCOPE_PREFIX):

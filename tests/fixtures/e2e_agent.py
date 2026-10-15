@@ -7,6 +7,7 @@ reach the server only through the audit log.
     uv run python -m tests.fixtures.e2e_agent --home <dir> end-runs
     uv run python -m tests.fixtures.e2e_agent --home <dir> later
     uv run python -m tests.fixtures.e2e_agent --home <dir> watch
+    uv run python -m tests.fixtures.e2e_agent --home <dir> manage
 
 `order`: Claude Code buys 5 TCS through the MCP tools, as an in-memory MCP
 client named "Claude Code" (the stdio transport is the only difference).
@@ -18,6 +19,8 @@ after a stop.
 starts a new visit (ADR 31); the unused sign-in links are made again.
 `watch`: Claude Code adds RELIANCE to the Core watchlist through the MCP
 tools (ADR 36).
+`manage`: the desk manager gives its own trades ₹2,00,000 and a ₹2,000 stop,
+as its day's calls are recorded (ADR 41).
 """
 
 import argparse
@@ -34,8 +37,10 @@ from openticker.adapters.inbound import mcp_server
 from openticker.composition import build_event_bus
 from openticker.core.strategies.runs import RunStatus
 from openticker.events.types import StrategyStopped
+from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite import runs_repo
 from openticker.storage.sqlite.strategies_repo import list_strategies
+from openticker.use_cases.agents.manager import LineChange, set_manager_numbers
 from openticker.use_cases.web_sessions import create_sign_in_link
 from tests.fixtures.e2e_server import CLOCK_FILE, E2E_ENV, Clock, E2EBroker
 
@@ -88,6 +93,23 @@ def _kill(home: Path) -> None:
     events.close()
 
 
+def _manage(home: Path) -> None:
+    events = build_event_bus({})
+    [straddle] = [s for s in list_strategies() if s.name == "NIFTY short straddle"]
+    set_manager_numbers(
+        [
+            LineChange("own", 200000.0, -2000.0, "a hedge budget: 1% of the account"),
+            LineChange(f"strategy:{straddle.id}", 300000.0, -6000.0, "one lot's worst day"),
+            LineChange("desk", None, -30000.0, "3% of the account"),
+        ],
+        events,
+        "manager:claude:thr_e2e_desk",
+        load_calendar(),
+        Clock(home)(),
+    )
+    events.close()
+
+
 def _end_runs() -> None:
     for run in runs_repo.active_runs():
         runs_repo.save_run(replace(run, status=RunStatus.ENDED))
@@ -107,7 +129,7 @@ def _later(home: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", required=True)
-    parser.add_argument("what", choices=["order", "kill", "end-runs", "later", "watch"])
+    parser.add_argument("what", choices=["order", "kill", "end-runs", "later", "watch", "manage"])
     args = parser.parse_args()
     os.environ["OPENTICKER_HOME"] = args.home
     os.environ.update(E2E_ENV)
@@ -119,6 +141,8 @@ def main() -> None:
         _kill(Path(args.home))
     elif args.what == "watch":
         asyncio.run(_watch())
+    elif args.what == "manage":
+        _manage(Path(args.home))
     elif args.what == "end-runs":
         _end_runs()
     else:
