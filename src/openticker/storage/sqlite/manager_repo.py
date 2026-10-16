@@ -2,6 +2,7 @@
 row reads as off; NULLs read as their defaults (ADR 18)."""
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from openticker.core.agents.manager import (
     SetBy,
     line_order,
     parse_key,
+    plan_items,
 )
 from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import ManagerLineRow, ManagerStateRow
@@ -52,6 +54,8 @@ def save_state(session: Session, state: ManagerState) -> None:
     row.plan_text = plan.text if plan else None
     row.plan_lessons = json.dumps(list(plan.lesson_ids)) if plan else None
     row.plan_at = _naive(plan.at) if plan else None
+    row.plan_items = json.dumps([asdict(item) for item in plan.items]) if plan else None
+    row.plan_watch = json.dumps(list(plan.watch)) if plan else None
     row.updated_at = _naive(state.updated_at)
     row.undone_told = json.dumps(sorted(state.undone_told)) if state.undone_told else None
 
@@ -97,6 +101,8 @@ def _state(row: ManagerStateRow | None) -> ManagerState:
             text=row.plan_text,
             lesson_ids=tuple(json.loads(row.plan_lessons or "[]")),
             at=row.plan_at.replace(tzinfo=UTC),
+            items=plan_items(json.loads(row.plan_items or "[]")),
+            watch=tuple(str(thing) for thing in json.loads(row.plan_watch or "[]")),
         )
     return ManagerState(
         enabled=row.enabled,

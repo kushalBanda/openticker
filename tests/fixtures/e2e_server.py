@@ -82,7 +82,7 @@ from openticker.core.strategies.runs import LegStatus, Run, RunLeg, RunStatus, l
 from openticker.events import types as event_types
 from openticker.events.bus import EventPublisher
 from openticker.events.subscribers.audit_log import record_event
-from openticker.events.types import ManagerNumbersChanged, ManagerPlanSet
+from openticker.events.types import ManagerNumbersChanged, ManagerPlanSet, PlannedCall
 from openticker.ports.agent_job_port import AgentOutcome
 from openticker.ports.models import (
     EXCHANGE_TIMEZONE,
@@ -752,6 +752,13 @@ def _seed_manager_history(now: datetime) -> None:
             (),
             f"manager:claude:{thread.id}",
             occurred_at=at(9, 3),
+            items=(
+                PlannedCall(
+                    f"strategy:{first.id}", first.name, "runs", "1.8x its median losing run"
+                ),
+                PlannedCall("own", None, "sits_out", "no edge of its own today"),
+            ),
+            watch=("The RELIANCE holding has no stop or owner",),
         )
     )
 

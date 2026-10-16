@@ -1147,10 +1147,10 @@ def test_manager_switch_next_wake_and_plan_over_rest(events: EventBus, client: T
         "/api/v1/manager/next-wake", json={"at": "2026-09-22T09:31:00+05:30", "reason": "x"}
     )
     assert too_soon.status_code == 422 and "2 minutes" in too_soon.json()["detail"]
-    plan = client.put("/api/v1/manager/plan", json={"text": "Run small on expiry."}).json()
+    plan = client.put("/api/v1/manager/plan", json={"headline": "Run small on expiry."}).json()
     assert plan["day"] == "2026-09-22" and plan["lesson_ids"] == []
     assert client.get("/api/v1/manager").json()["plan"]["text"] == "Run small on expiry."
-    unknown = client.put("/api/v1/manager/plan", json={"text": "x", "lesson_ids": ["les_x"]})
+    unknown = client.put("/api/v1/manager/plan", json={"headline": "x", "lesson_ids": ["les_x"]})
     assert unknown.status_code == 404
 
     with write_transaction() as session:
@@ -1163,7 +1163,7 @@ def test_manager_switch_next_wake_and_plan_over_rest(events: EventBus, client: T
     )
     refused = managers.put("/api/v1/manager", json={"enabled": False})
     assert refused.status_code == 403
-    assert managers.put("/api/v1/manager/plan", json={"text": "mine"}).status_code == 200
+    assert managers.put("/api/v1/manager/plan", json={"headline": "mine"}).status_code == 200
     assert (
         client.get("/api/v1/audit", params={"source": "manager"}).json()["entries"][0]["event_type"]
         == "ManagerPlanSet"

@@ -341,3 +341,60 @@ export function changeText(change: LineChange, before?: LineChange): string {
   const when = change.after_close ? ", for the next day" : "";
   return `${at} ${parts.join(", ") || "no change"} ${who}${why}${when}`;
 }
+
+export type ManagerPlan = Schemas["ManagerPlanResult"];
+export type PlanItem = Schemas["PlanItemResult"];
+export type PlanCall = PlanItem["call"];
+
+/** The plan's groups, in the order the page shows them (ADR 45). */
+export const PLAN_CALLS: { call: PlanCall; title: string }[] = [
+  { call: "runs", title: "Runs" },
+  { call: "holds", title: "Holds open legs" },
+  { call: "sits_out", title: "Sits out" },
+];
+
+/** An item's name: the strategy's or script's when the plan was set, else what it stands for. */
+export function planItemLabel(item: Pick<PlanItem, "key" | "name">): string {
+  if (item.key === "own") return "Its own trades";
+  return item.name ?? item.key.replace(/^(strategy|script):/, "");
+}
+
+/** Where an item's page is, when it has one. */
+export function planItemHref(key: string): string | null {
+  const [kind, id] = key.split(":");
+  if (!id) return null;
+  return kind === "strategy" ? `/strategies/${id}` : kind === "script" ? `/scripts/${id}` : null;
+}
+
+/**
+ * The plan's items grouped by their call, each with its line now (today's
+ * plan only: a past day's lines at the close are the table below it).
+ * Groups with nothing in them are left out.
+ */
+export function planGroups(
+  items: PlanItem[],
+  lines: ManagerLine[] | null,
+): { call: PlanCall; title: string; items: { item: PlanItem; line: ManagerLine | null }[] }[] {
+  const byKey = new Map((lines ?? []).map((l) => [l.key, l]));
+  return PLAN_CALLS.map(({ call, title }) => ({
+    call,
+    title,
+    items: items
+      .filter((i) => i.call === call)
+      .map((item) => ({ item, line: byKey.get(item.key) ?? null })),
+  })).filter((g) => g.items.length > 0);
+}
+
+/**
+ * The desk's net today against its stop: how much of the stop is used (0
+ * to 1) and the rupees left before it's crossed. Null without a stop or a
+ * figure.
+ */
+export function deskRoom(
+  net: number | null | undefined,
+  stop: number | null | undefined,
+): { used: number; left: number } | null {
+  if (net == null || stop == null || stop >= 0) return null;
+  const used = Math.min(Math.max(net / stop, 0), 1);
+  return { used, left: Math.max(net - stop, 0) };
+}

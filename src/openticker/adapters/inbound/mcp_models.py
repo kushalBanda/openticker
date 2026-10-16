@@ -20,7 +20,13 @@ from openticker.core.agents.jobs import (
     job_title,
     verdict_of,
 )
-from openticker.core.agents.manager import ManagerPlan, Undone
+from openticker.core.agents.manager import (
+    MAX_WHY_CHARS,
+    ManagerPlan,
+    PlanCall,
+    PlanItem,
+    Undone,
+)
 from openticker.core.agents.threads import FAILED_ENDS, Access, Folder, is_unread
 from openticker.core.agents.transcript import Step, StepKind
 from openticker.core.brain.lessons import CheckOutcome, Override, UsePurpose
@@ -3703,9 +3709,24 @@ class ManagerLineResult(BaseModel):
         )
 
 
+class PlanItemResult(BaseModel):
+    key: str = Field(description="own, strategy:<id> or script:<id>.")
+    name: str | None = Field(description="The strategy's or script's name when the plan was set.")
+    call: Literal["runs", "holds", "sits_out"]
+    why: str
+
+    @classmethod
+    def of(cls, item: PlanItem) -> "PlanItemResult":
+        return cls(key=item.key, name=item.name, call=item.call.value, why=item.why)
+
+
 class ManagerPlanResult(BaseModel):
     day: date = Field(description="The trading day it is for.")
-    text: str
+    text: str = Field(
+        description="The day's decision in a sentence; a plan set before items, the whole plan."
+    )
+    items: list[PlanItemResult] = Field(description="Each one's call today, and why.")
+    watch: list[str] = Field(description="What it keeps an eye on today.")
     lesson_ids: list[str] = Field(description="The brain's lessons it relied on.")
     at: datetime
 
@@ -3714,6 +3735,8 @@ class ManagerPlanResult(BaseModel):
         return cls(
             day=plan.day,
             text=plan.text,
+            items=[PlanItemResult.of(item) for item in plan.items],
+            watch=list(plan.watch),
             lesson_ids=list(plan.lesson_ids),
             at=plan.at.astimezone(EXCHANGE_TIMEZONE),
         )
@@ -3925,6 +3948,21 @@ class ManagerDaysResult(BaseModel):
                 for d in days
             ]
         )
+
+
+class PlanItemInput(BaseModel):
+    key: str = Field(description="own (its own trades), strategy:<id> or script:<id>.")
+    call: Literal["runs", "holds", "sits_out"] = Field(
+        description="runs: enters or trades today. holds: keeps what's open, enters nothing "
+        "new. sits_out: doesn't trade today."
+    )
+    why: str = Field(
+        max_length=MAX_WHY_CHARS,
+        description="Why, in a short clause the user reads, with the figure behind it.",
+    )
+
+    def to_item(self) -> PlanItem:
+        return PlanItem(self.key, PlanCall(self.call), self.why)
 
 
 class ManagerLineInput(BaseModel):

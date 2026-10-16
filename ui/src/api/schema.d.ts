@@ -940,7 +940,8 @@ export interface paths {
         get?: never;
         /**
          * Set Manager Plan
-         * @description Today's plan, with the lessons it relied on.
+         * @description Today's plan: its headline, each one's call, what it watches, and
+         *     the lessons it relied on.
          */
         put: operations["set_manager_plan_api_v1_manager_plan_put"];
         post?: never;
@@ -4719,8 +4720,12 @@ export interface components {
         };
         /** ManagerPlanBody */
         ManagerPlanBody: {
-            /** Text */
-            text: string;
+            /** Headline */
+            headline: string;
+            /** Items */
+            items?: components["schemas"]["PlanItemInput"][];
+            /** Watch */
+            watch?: string[];
             /** Lesson Ids */
             lesson_ids?: string[];
         };
@@ -4732,8 +4737,21 @@ export interface components {
              * @description The trading day it is for.
              */
             day: string;
-            /** Text */
+            /**
+             * Text
+             * @description The day's decision in a sentence; a plan set before items, the whole plan.
+             */
             text: string;
+            /**
+             * Items
+             * @description Each one's call today, and why.
+             */
+            items: components["schemas"]["PlanItemResult"][];
+            /**
+             * Watch
+             * @description What it keeps an eye on today.
+             */
+            watch: string[];
             /**
              * Lesson Ids
              * @description The brain's lessons it relied on.
@@ -5497,6 +5515,45 @@ export interface components {
             reason: string | null;
             /** Next Step */
             next_step: string;
+        };
+        /** PlanItemInput */
+        PlanItemInput: {
+            /**
+             * Key
+             * @description own (its own trades), strategy:<id> or script:<id>.
+             */
+            key: string;
+            /**
+             * Call
+             * @description runs: enters or trades today. holds: keeps what's open, enters nothing new. sits_out: doesn't trade today.
+             * @enum {string}
+             */
+            call: "runs" | "holds" | "sits_out";
+            /**
+             * Why
+             * @description Why, in a short clause the user reads, with the figure behind it.
+             */
+            why: string;
+        };
+        /** PlanItemResult */
+        PlanItemResult: {
+            /**
+             * Key
+             * @description own, strategy:<id> or script:<id>.
+             */
+            key: string;
+            /**
+             * Name
+             * @description The strategy's or script's name when the plan was set.
+             */
+            name: string | null;
+            /**
+             * Call
+             * @enum {string}
+             */
+            call: "runs" | "holds" | "sits_out";
+            /** Why */
+            why: string;
         };
         /** PnlHistoryResult */
         PnlHistoryResult: {
