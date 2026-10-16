@@ -4,6 +4,7 @@ import {
   asStop,
   changeText,
   daysBefore,
+  deskRoom,
   disagreement,
   effortLevel,
   endedToday,
@@ -16,7 +17,11 @@ import {
   market,
   nextLook,
   nowDoing,
+  type PlanItem,
   parseRupees,
+  planGroups,
+  planItemHref,
+  planItemLabel,
   railLooks,
   setByLabel,
   spent,
@@ -425,5 +430,45 @@ describe("a line's change in a phrase", () => {
     expect(changeText(change({ after_close: true, stop: null, reason: "" }), change({}))).toBe(
       "13:52 stop none by the manager, for the next day",
     );
+  });
+});
+
+describe("the plan (ADR 45)", () => {
+  const item = (key: string, call: PlanItem["call"], name: string | null = null): PlanItem => ({
+    key,
+    name,
+    call,
+    why: "x",
+  });
+
+  it("groups items runs, holds, sits out, each beside its line, leaving empty groups out", () => {
+    const line = { key: "strategy:a", stop: -9000 } as ManagerLine;
+    const groups = planGroups(
+      [item("strategy:b", "sits_out"), item("strategy:a", "holds"), item("own", "sits_out")],
+      [line],
+    );
+    expect(groups.map((g) => [g.call, g.items.map((i) => i.item.key)])).toEqual([
+      ["holds", ["strategy:a"]],
+      ["sits_out", ["strategy:b", "own"]],
+    ]);
+    expect(groups[0]?.items[0]?.line).toBe(line);
+    expect(planGroups([item("own", "runs")], null)[0]?.items[0]?.line).toBeNull();
+  });
+
+  it("names and links an item", () => {
+    expect(planItemLabel(item("own", "runs"))).toBe("Its own trades");
+    expect(planItemLabel(item("strategy:stg_1", "runs", "Straddle"))).toBe("Straddle");
+    expect(planItemLabel(item("script:scr_1", "runs"))).toBe("scr_1");
+    expect(planItemHref("strategy:stg_1")).toBe("/strategies/stg_1");
+    expect(planItemHref("script:scr_1")).toBe("/scripts/scr_1");
+    expect(planItemHref("own")).toBeNull();
+  });
+
+  it("gives the desk's room before its stop", () => {
+    expect(deskRoom(-16721, -40000)).toEqual({ used: 16721 / 40000, left: 23279 });
+    expect(deskRoom(5000, -40000)).toEqual({ used: 0, left: 45000 });
+    expect(deskRoom(-50000, -40000)).toEqual({ used: 1, left: 0 });
+    expect(deskRoom(-100, null)).toBeNull();
+    expect(deskRoom(null, -40000)).toBeNull();
   });
 });

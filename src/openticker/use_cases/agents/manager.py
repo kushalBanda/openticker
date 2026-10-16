@@ -41,6 +41,7 @@ from openticker.core.agents.manager import (
     ManagerLine,
     ManagerPlan,
     ManagerState,
+    PlanItem,
     SetBy,
     Stalled,
     Undone,
@@ -57,6 +58,7 @@ from openticker.core.agents.manager import (
     is_wake,
     lines_at,
     parse_key,
+    plan_items,
     retry_gap,
     retry_message,
     stalled,
@@ -81,6 +83,7 @@ from openticker.events.types import (
     ManagerStalled,
     ManagerSwitched,
     ManagerWoke,
+    PlannedCall,
 )
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 from openticker.storage.calendar_file import load_calendar
@@ -244,12 +247,15 @@ def _plan_of(day: date) -> ManagerPlan | None:
     ):  # newest first
         payload = _payload(entry)
         lessons = payload.get("lesson_ids")
+        watch = payload.get("watch")
         if payload.get("trading_date") == day.isoformat():
             return ManagerPlan(
                 day,
                 str(payload.get("text", "")),
                 tuple(str(i) for i in lessons) if isinstance(lessons, list) else (),
                 entry.occurred_at,
+                plan_items(payload.get("items")),
+                tuple(str(w) for w in watch) if isinstance(watch, list) else (),
             )
     return None
 
@@ -670,12 +676,16 @@ def _day(day: date, session: Session | None = None) -> _Day:
 
 
 def _name(line: ManagerLine) -> str | None:
-    if line.key.id is None:
+    return _key_name(line.key)
+
+
+def _key_name(key: LineKey) -> str | None:
+    if key.id is None:
         return None
-    if line.key.kind is LineKind.STRATEGY:
-        strategy = find_strategy(line.key.id)
+    if key.kind is LineKind.STRATEGY:
+        strategy = find_strategy(key.id)
         return strategy.name if strategy else None
-    script = find_script(line.key.id)
+    script = find_script(key.id)
     return script.name if script else None
 
 
@@ -979,25 +989,46 @@ def set_next_wake(
 
 
 def set_plan(
-    text: str,
+    headline: str,
+    items: Sequence[PlanItem],
+    watch: Sequence[str],
     lesson_ids: Sequence[str],
     events: EventPublisher,
     triggered_by: str,
     now: datetime,
 ) -> ManagerPlan:
-    """Today's plan, with the brain's lessons it relied on."""
-    text = text.strip()
+    """Today's plan: its headline, each strategy's, script's or its own
+    trades' call and why, what it watches, and the brain's lessons it
+    relied on."""
+    headline = headline.strip()
+    items = [replace(item, key=item.key.strip(), why=item.why.strip()) for item in items]
+    watch = [thing.strip() for thing in watch]
     ids = tuple(dict.fromkeys(i.strip() for i in lesson_ids if i.strip()))
-    check_plan(text, ids)
+    check_plan(headline, items, watch, ids)
+    named = []
+    for item in items:
+        key = parse_key(item.key)
+        _check_exists(key)
+        named.append(replace(item, key=str(key), name=_key_name(key)))
     for lesson_id in ids:
         note = brain_repo.get_note(lesson_id)
         if note is None or note.kind is not NoteKind.LESSON:
             raise UnknownNoteError(f"no lesson {lesson_id}; search_brain(kind=lesson) finds them")
-    plan = ManagerPlan(now.astimezone(EXCHANGE_TIMEZONE).date(), text, ids, now)
+    day = now.astimezone(EXCHANGE_TIMEZONE).date()
+    plan = ManagerPlan(day, headline, ids, now, tuple(named), tuple(watch))
     with write_transaction() as session:
         state = manager_repo.get_state(session)
         manager_repo.save_state(session, replace(state, plan=plan, updated_at=now))
-    events.publish(ManagerPlanSet(plan.day, text, ids, triggered_by))
+    events.publish(
+        ManagerPlanSet(
+            plan.day,
+            headline,
+            ids,
+            triggered_by,
+            items=tuple(PlannedCall(i.key, i.name, i.call.value, i.why) for i in plan.items),
+            watch=plan.watch,
+        )
+    )
     return plan
 
 

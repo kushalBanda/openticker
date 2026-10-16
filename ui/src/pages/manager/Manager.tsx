@@ -173,6 +173,8 @@ function TodayBody({ today }: { today: string }) {
             <HowItRuns manager={data} />
             <Plan
               plan={data.plan?.day === today ? data.plan : null}
+              lines={data.lines}
+              desk={data.desk_today}
               title="Today's plan"
               empty={
                 data.enabled

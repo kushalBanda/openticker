@@ -24,6 +24,8 @@ from openticker.core.agents.manager import (
     ManagerError,
     ManagerLine,
     ManagerState,
+    PlanCall,
+    PlanItem,
     SetBy,
     Stalled,
     Tier,
@@ -45,6 +47,7 @@ from openticker.core.agents.manager import (
     manager_context,
     manager_triggered_by,
     parse_key,
+    plan_items,
     retry_message,
     stalled,
     tier_of,
@@ -254,11 +257,36 @@ def test_check_next_wake_takes_a_time_in_range() -> None:
 
 def test_check_plan_refuses_blank_long_and_too_many_lessons() -> None:
     with pytest.raises(ManagerError, match="blank"):
-        check_plan(" ", [])
-    with pytest.raises(ManagerError, match="at most 4,000"):
-        check_plan("x" * 4001, [])
+        check_plan(" ", [], [], [])
+    with pytest.raises(ManagerError, match="at most 300 characters: one sentence"):
+        check_plan("x" * 301, [], [], [])
     with pytest.raises(ManagerError, match="at most 20 lessons"):
-        check_plan("ok", [f"l{n}" for n in range(21)])
+        check_plan("ok", [], [], [f"l{n}" for n in range(21)])
+
+
+def test_check_plan_refuses_the_desk_a_twice_named_item_and_a_missing_why() -> None:
+    runs = PlanItem("strategy:stg_1", PlanCall.RUNS, "its record")
+    with pytest.raises(ManagerError, match="the desk isn't an item"):
+        check_plan("ok", [PlanItem("desk", PlanCall.RUNS, "x")], [], [])
+    with pytest.raises(ManagerError, match="strategy:stg_1 is in items twice"):
+        check_plan("ok", [runs, runs], [], [])
+    with pytest.raises(ManagerError, match="say why own sits out"):
+        check_plan("ok", [PlanItem("own", PlanCall.SITS_OUT, " ")], [], [])
+    with pytest.raises(ManagerError, match="a line's key is"):
+        check_plan("ok", [PlanItem("nifty", PlanCall.RUNS, "x")], [], [])
+    with pytest.raises(ManagerError, match="watch at most 8"):
+        check_plan("ok", [], ["x"] * 9, [])
+    check_plan("ok", [runs], ["RELIANCE has no stop"], [])
+
+
+def test_plan_items_pass_over_what_does_not_read() -> None:
+    raw = [
+        {"key": "own", "call": "holds", "why": "keeps RELIANCE", "name": None},
+        {"key": "own", "call": "maybe", "why": "x"},
+        "junk",
+    ]
+    assert plan_items(raw) == (PlanItem("own", PlanCall.HOLDS, "keeps RELIANCE"),)
+    assert plan_items(None) == ()
 
 
 def test_wake_message_says_why_in_its_tag_and_ends_with_the_task() -> None:

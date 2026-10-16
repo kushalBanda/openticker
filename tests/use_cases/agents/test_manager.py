@@ -7,7 +7,7 @@ import pytest
 
 from openticker.core.agents.choices import FolderKind, RunChoice
 from openticker.core.agents.jobs import AgentJobEndReason, Harness
-from openticker.core.agents.manager import ManagerError, SetBy
+from openticker.core.agents.manager import ManagerError, PlanCall, PlanItem, SetBy
 from openticker.core.agents.threads import Folder
 from openticker.core.brain.notes import Debrief
 from openticker.core.calendar.models import MarketCalendar
@@ -385,10 +385,47 @@ def test_set_next_wake_validates_and_replaces() -> None:
 def test_set_plan_refuses_unknown_lesson_and_keeps_the_plan() -> None:
     events = _Events()
     with pytest.raises(UnknownNoteError, match="no lesson les_x"):
-        set_plan("Run small.", ["les_x"], events, MANAGER, _ist(9))
-    plan = set_plan("Run small on expiry.", [], events, MANAGER, _ist(9))
+        set_plan("Run small.", [], [], ["les_x"], events, MANAGER, _ist(9))
+    plan = set_plan("Run small on expiry.", [], [], [], events, MANAGER, _ist(9))
     assert get_state().plan == plan and plan.day == DAY
     assert [p.text for p in events.of(ManagerPlanSet)] == ["Run small on expiry."]  # type: ignore[attr-defined]
+
+
+def test_set_plan_names_each_call_and_keeps_them() -> None:
+    events = _Events()
+    stg = insert_strategy("Straddle", STRADDLE, NOW)
+    with pytest.raises(UnknownLineError, match="no strategy stg_x"):
+        set_plan(
+            "Nothing new.",
+            [PlanItem("strategy:stg_x", PlanCall.SITS_OUT, "gone")],
+            [],
+            [],
+            events,
+            MANAGER,
+            _ist(9),
+        )
+    plan = set_plan(
+        " Straddle runs small. ",
+        [
+            PlanItem(f" strategy:{stg.id}", PlanCall.RUNS, " half its capital "),
+            PlanItem("own", PlanCall.SITS_OUT, "no edge today"),
+        ],
+        [" RELIANCE CNC has no stop "],
+        [],
+        events,
+        MANAGER,
+        _ist(9),
+    )
+    assert plan.text == "Straddle runs small."
+    assert plan.items == (
+        PlanItem(f"strategy:{stg.id}", PlanCall.RUNS, "half its capital", "Straddle"),
+        PlanItem("own", PlanCall.SITS_OUT, "no edge today"),
+    )
+    assert plan.watch == ("RELIANCE CNC has no stop",)
+    assert get_state().plan == plan
+    set_ = events.of(ManagerPlanSet)[-1]
+    record_event(replace(set_, occurred_at=_ist(9)))  # type: ignore[type-var]
+    assert get_manager_day(DAY, CALENDAR, NOW + timedelta(days=1)).plan == plan
 
 
 def _planned(tmp_path: Path, events: _Events) -> AgentContext:
@@ -414,7 +451,7 @@ def test_queue_wakes_restored_when_the_user_signs_in_after_a_blind_plan(tmp_path
     events = _Events()
     _broker("BrokerSessionExpired", datetime(2026, 9, 21, 20, 0, tzinfo=EXCHANGE_TIMEZONE))
     context = _planned(tmp_path, events)
-    set_plan("Nothing trades: no prices.", [], events, MANAGER, _ist(9, 4))
+    set_plan("Nothing trades: no prices.", [], [], [], events, MANAGER, _ist(9, 4))
     assert queue_due_manager_wake(context, _ist(9, 10)) is None  # still down
 
     _broker("BrokerConnected", _ist(9, 18))
@@ -434,7 +471,7 @@ def test_a_plan_made_with_prices_is_not_blind(tmp_path: Path) -> None:
     _broker("BrokerSessionExpired", datetime(2026, 9, 21, 20, 0, tzinfo=EXCHANGE_TIMEZONE))
     _broker("BrokerConnected", _ist(8, 50))
     context = _planned(tmp_path, events)
-    set_plan("Run small.", [], events, MANAGER, _ist(9, 4))
+    set_plan("Run small.", [], [], [], events, MANAGER, _ist(9, 4))
     _broker("BrokerConnected", _ist(9, 18))  # signed in again
     assert queue_due_manager_wake(context, _ist(9, 19)) is None
 

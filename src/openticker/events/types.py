@@ -406,14 +406,28 @@ class ManagerWoke:
 
 
 @dataclass(frozen=True)
+class PlannedCall:
+    """One strategy's, script's or its own trades' call in a plan: runs,
+    holds or sits_out, and why."""
+
+    key: str
+    name: str | None
+    call: str
+    why: str
+
+
+@dataclass(frozen=True)
 class ManagerPlanSet:
-    """The desk manager set the day's plan, with the lessons it relied on."""
+    """The desk manager set the day's plan: its headline, each one's call,
+    what it watches, and the lessons it relied on."""
 
     trading_date: date
     text: str
     lesson_ids: tuple[str, ...]
     triggered_by: str
     occurred_at: datetime = field(default_factory=_now)
+    items: tuple[PlannedCall, ...] = ()
+    watch: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

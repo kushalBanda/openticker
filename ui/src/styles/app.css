@@ -5439,6 +5439,155 @@
     margin: 6px 0 0;
     padding-left: 18px;
   }
+  /* The plan (ADR 45): headline, the desk's room, each call grouped, what it watches. */
+  .mgr-plan {
+    display: grid;
+    gap: 18px;
+    padding: 0 24px 20px;
+    min-width: 0;
+  }
+  .mgr-plan-headline {
+    margin: 0;
+    max-width: 60ch;
+    font: 600 17px / 24px var(--font-display);
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    text-wrap: pretty;
+  }
+  .mgr-plan-prose {
+    margin: 0;
+    max-width: 70ch;
+  }
+  .mgr-plan-desk {
+    display: grid;
+    gap: 8px;
+  }
+  .mgr-plan-desk-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    font-size: 13px;
+  }
+  .mgr-plan-desk-head b {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .mgr-plan-meter {
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: var(--fill);
+    overflow: hidden;
+  }
+  .mgr-plan-meter > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--ink-muted);
+  }
+  .mgr-plan-meter[data-tone="warn"] > span {
+    background: var(--warn);
+  }
+  .mgr-plan-meter[data-tone="down"] > span {
+    background: var(--down);
+  }
+  .mgr-plan-group {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .mgr-plan-group h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mgr-plan-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-muted);
+    font-weight: 400;
+  }
+  .mgr-plan-group > ul:not(.mgr-lessons) {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .mgr-plan-none {
+    margin: 0;
+  }
+  .mgr-plan-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 12px;
+    padding: 8px 0;
+    box-shadow: inset 0 -1px 0 var(--line);
+  }
+  .mgr-plan-item:last-child {
+    box-shadow: none;
+  }
+  .mgr-plan-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .mgr-plan-link {
+    color: var(--ink);
+  }
+  .mgr-plan-link:hover {
+    color: var(--link);
+  }
+  .mgr-plan-meta {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  .mgr-plan-meta b {
+    font-weight: 600;
+  }
+  .mgr-plan-meta [data-crossed] {
+    color: var(--down);
+  }
+  .mgr-plan-nostop {
+    color: var(--warn);
+  }
+  .mgr-plan-why {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--ink-muted);
+  }
+  .mgr-plan-group[data-call="sits_out"] .mgr-plan-name,
+  .mgr-plan-group[data-call="sits_out"] .mgr-plan-link {
+    color: var(--ink-muted);
+  }
+  .mgr-plan-watch {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .mgr-plan-watch-item {
+    position: relative;
+    padding-left: 14px;
+  }
+  .mgr-plan-watch-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--warn);
+  }
   /* Its days as a tape (ADR 43): each trading day a cell, a dot where it ran. */
   .mgr-tape {
     display: grid;

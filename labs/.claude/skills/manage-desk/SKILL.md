@@ -63,7 +63,7 @@ The plan wake (`plan`) comes 15 minutes before the open; `restored` (prices back
    - **it doesn't**: capital 0, then `unschedule_strategy` or `stop_strategy`.
 9. Carry out step 8: `start_strategy`, `schedule_strategy`, `unschedule_strategy`, `stop_strategy`, `start_script`, each with its reason in your answer.
 10. Set every line in one `set_manager_numbers` call: those strategies, each script you run or don't, `own` for your trades, and `desk` for the whole desk's stop. Its reply's `undone` checks steps 8 to 10: empty, or you say why each item stays.
-11. `set_manager_plan`: a few sentences, what runs, with how much and why, with the `lesson_ids` you relied on. Then `record_lesson_use(purpose=manage)` for each.
+11. `set_manager_plan`, which the user reads as a page, not prose: `headline`, the day's decision in one sentence with the figure behind it; `items`, every strategy and script from step 8 with its call (`runs`; `holds`: keeps what's open, enters nothing new; `sits_out`) and why in a short clause, plus `own` if you trade (their capital and stop are already their lines: don't repeat them); `watch`, what you keep an eye on today (a holding with no stop, what to revisit tomorrow), one short sentence each; and the `lesson_ids` you relied on. Then `record_lesson_use(purpose=manage)` for each.
 12. A next look only if something needs one before anything else would wake you (see Next look).
 
 ## Each wake's own steps

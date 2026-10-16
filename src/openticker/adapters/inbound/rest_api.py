@@ -92,6 +92,7 @@ from openticker.adapters.inbound.mcp_models import (
     PayoffLegInput,
     PayoffResult,
     PlaceOrderResult,
+    PlanItemInput,
     PnlHistoryResult,
     PositionsResult,
     QuoteResult,
@@ -148,7 +149,13 @@ from openticker.composition import (
 from openticker.core.agents.choices import MAX_RUNS_PER_DAY, Effort, FolderKind, RunChoice
 from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
 from openticker.core.agents.jobs import AgentSettings, Harness
-from openticker.core.agents.manager import MAX_LINES_PER_CALL, ManagerError
+from openticker.core.agents.manager import (
+    MAX_HEADLINE_CHARS,
+    MAX_LINES_PER_CALL,
+    MAX_PLAN_ITEMS,
+    MAX_WATCH,
+    ManagerError,
+)
 from openticker.core.agents.threads import Access, Folder
 from openticker.core.brain.lessons import (
     MAX_APPLIES_TO,
@@ -572,7 +579,9 @@ class NextWakeBody(BaseModel):
 
 
 class ManagerPlanBody(BaseModel):
-    text: str = Field(max_length=4000)
+    headline: str = Field(max_length=MAX_HEADLINE_CHARS)
+    items: list[PlanItemInput] = Field(default_factory=list, max_length=MAX_PLAN_ITEMS)
+    watch: list[str] = Field(default_factory=list, max_length=MAX_WATCH)
     lesson_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -1316,9 +1325,18 @@ def create_app(
 
     @api.put("/manager/plan")
     def set_manager_plan(body: ManagerPlanBody, caller: Caller) -> ManagerPlanResult:
-        """Today's plan, with the lessons it relied on."""
+        """Today's plan: its headline, each one's call, what it watches, and
+        the lessons it relied on."""
         return ManagerPlanResult.of(
-            desk_manager.set_plan(body.text, body.lesson_ids, events, caller.triggered_by, clock())
+            desk_manager.set_plan(
+                body.headline,
+                [item.to_item() for item in body.items],
+                body.watch,
+                body.lesson_ids,
+                events,
+                caller.triggered_by,
+                clock(),
+            )
         )
 
     @api.put("/manager/numbers")

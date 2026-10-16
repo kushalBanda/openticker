@@ -40,7 +40,10 @@ DEFAULT_WAKES_PER_DAY = 40
 MAX_WAKES_PER_DAY = 200
 MAX_REASON_CHARS = 500
 MAX_LINES_PER_CALL = 50
-MAX_PLAN_CHARS = 4000
+MAX_HEADLINE_CHARS = 300
+MAX_PLAN_ITEMS = 50
+MAX_WHY_CHARS = 300
+MAX_WATCH = 8
 MAX_PLAN_LESSONS = 20
 
 PLAN_LEAD = timedelta(minutes=15)  # the plan wake, before the open: 09:00 on a normal day
@@ -161,12 +164,30 @@ def check_line(capital: float | None, stop: float | None, reason: str, by_manage
         raise ManagerError(f"a reason is at most {MAX_REASON_CHARS} characters")
 
 
+class PlanCall(StrEnum):
+    """What the plan says one strategy, script or its own trades do today."""
+
+    RUNS = "runs"  # enters or trades today
+    HOLDS = "holds"  # keeps what's open, enters nothing new
+    SITS_OUT = "sits_out"  # doesn't trade today
+
+
+@dataclass(frozen=True)
+class PlanItem:
+    key: str  # "own", "strategy:<id>" or "script:<id>"
+    call: PlanCall
+    why: str
+    name: str | None = None  # the strategy's or script's, when the plan was set
+
+
 @dataclass(frozen=True)
 class ManagerPlan:
     day: date  # exchange-local trading date
-    text: str
+    text: str  # the day's decision in a sentence; a plan set before items, the whole plan
     lesson_ids: tuple[str, ...]
     at: datetime
+    items: tuple[PlanItem, ...] = ()
+    watch: tuple[str, ...] = ()  # what it keeps an eye on today
 
 
 @dataclass(frozen=True)
@@ -587,11 +608,55 @@ def check_next_wake(at: datetime, now: datetime, hours: SessionHours | None) -> 
         )
 
 
-def check_plan(text: str, lesson_ids: Sequence[str]) -> None:
-    if not text.strip():
-        raise ManagerError("the plan is blank: say what the desk does today and why")
-    if len(text) > MAX_PLAN_CHARS:
-        raise ManagerError(f"a plan is at most {MAX_PLAN_CHARS:,} characters")
+def plan_items(raw: object) -> tuple[PlanItem, ...]:
+    """Items read back from JSON (the state row, an audit payload); an entry
+    that doesn't read as one is passed over."""
+    if not isinstance(raw, list):
+        return ()
+    found: list[PlanItem] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        key, call, why, name = (entry.get(k) for k in ("key", "call", "why", "name"))
+        if not isinstance(key, str) or not isinstance(why, str):
+            continue
+        if call not in {c.value for c in PlanCall}:
+            continue
+        found.append(PlanItem(key, PlanCall(call), why, name if isinstance(name, str) else None))
+    return tuple(found)
+
+
+def check_plan(
+    headline: str, items: Sequence[PlanItem], watch: Sequence[str], lesson_ids: Sequence[str]
+) -> None:
+    if not headline.strip():
+        raise ManagerError("the headline is blank: say in a sentence what the desk does today")
+    if len(headline) > MAX_HEADLINE_CHARS:
+        raise ManagerError(
+            f"a headline is at most {MAX_HEADLINE_CHARS} characters: one sentence; "
+            "each strategy's call goes in items, the rest in watch"
+        )
+    if len(items) > MAX_PLAN_ITEMS:
+        raise ManagerError(f"name at most {MAX_PLAN_ITEMS} items")
+    seen: set[LineKey] = set()
+    for item in items:
+        key = parse_key(item.key)
+        if key.kind is LineKind.DESK:
+            raise ManagerError("the desk isn't an item: its stop is a line (set_manager_numbers)")
+        if key in seen:
+            raise ManagerError(f"{key} is in items twice: give it one call")
+        seen.add(key)
+        if not item.why.strip():
+            raise ManagerError(f"say why {key} {item.call.value.replace('_', ' ')}")
+        if len(item.why) > MAX_WHY_CHARS:
+            raise ManagerError(f"a why is at most {MAX_WHY_CHARS} characters")
+    if len(watch) > MAX_WATCH:
+        raise ManagerError(f"watch at most {MAX_WATCH} things")
+    for thing in watch:
+        if not thing.strip():
+            raise ManagerError("a watch entry is blank")
+        if len(thing) > MAX_WHY_CHARS:
+            raise ManagerError(f"a watch entry is at most {MAX_WHY_CHARS} characters")
     if len(lesson_ids) > MAX_PLAN_LESSONS:
         raise ManagerError(f"name at most {MAX_PLAN_LESSONS} lessons")
 

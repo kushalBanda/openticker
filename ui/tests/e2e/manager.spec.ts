@@ -203,9 +203,18 @@ test("the tape lists its days; a past day opens as it closed and comes back", as
   await expect(ran.locator(".mgr-run-look")).toHaveCount(3);
   await expect(ran).toContainText("× 2");
   await expect(ran).toContainText("$0.28");
-  await expect(
-    page.locator(".tile").filter({ has: page.getByRole("heading", { name: "The plan" }) }),
-  ).toContainText("nothing new starts");
+  const plan = page
+    .locator(".tile")
+    .filter({ has: page.getByRole("heading", { name: "The plan" }) });
+  await expect(plan.locator(".mgr-plan-headline")).toContainText("nothing new starts");
+  // Each call in its group, with why; what it watched.
+  const runs = plan.locator('.mgr-plan-group[data-call="runs"]');
+  await expect(runs.locator(".mgr-plan-item")).toHaveCount(1);
+  await expect(runs).toContainText("1.8x its median losing run");
+  await expect(plan.locator('.mgr-plan-group[data-call="sits_out"]')).toContainText(
+    "Its own trades",
+  );
+  await expect(plan.locator(".mgr-plan-watch")).toContainText("RELIANCE holding has no stop");
   await expect(page.getByText("Not debriefed")).toBeVisible();
   await expect(page.getByRole("link", { name: "The day in the brain ›" }).first()).toHaveAttribute(
     "href",

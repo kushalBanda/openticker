@@ -82,7 +82,7 @@ def _plan(
     with write_transaction() as session:
         session.delete(session.get_one(AgentJobRow, job.id))
     set_manager_numbers(list(changes), desk.events, MANAGER, load_calendar(), at)
-    set_plan(text, [], desk.events, MANAGER, at)
+    set_plan(text, [], [], [], desk.events, MANAGER, at)
 
 
 def _on(desk: EvalDesk) -> None:

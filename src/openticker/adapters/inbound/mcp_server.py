@@ -78,6 +78,7 @@ from openticker.adapters.inbound.mcp_models import (
     PayoffLegInput,
     PayoffResult,
     PlaceOrderResult,
+    PlanItemInput,
     PnlHistoryResult,
     PositionsResult,
     QuoteResult,
@@ -125,7 +126,13 @@ from openticker.composition import (
     script_limits,
 )
 from openticker.core.agents.debriefs import DebriefScheduleError, parse_at
-from openticker.core.agents.manager import MAX_LINES_PER_CALL, ManagerError
+from openticker.core.agents.manager import (
+    MAX_HEADLINE_CHARS,
+    MAX_LINES_PER_CALL,
+    MAX_PLAN_ITEMS,
+    MAX_WATCH,
+    ManagerError,
+)
 from openticker.core.brain.lessons import (
     MAX_APPLIES_TO,
     MAX_EVIDENCE,
@@ -2676,22 +2683,48 @@ def set_next_wake(
     ),
 )
 def set_manager_plan(
-    text: Annotated[
+    headline: Annotated[
         str,
         Field(
-            max_length=4000,
-            description="Today's plan in a few sentences: what runs, with how much, and why.",
+            max_length=MAX_HEADLINE_CHARS,
+            description="The day's decision in one sentence, with the figure that drove it.",
         ),
     ],
+    items: Annotated[
+        list[PlanItemInput],
+        Field(
+            max_length=MAX_PLAN_ITEMS,
+            description="Each strategy and script that could trade today, and own if it "
+            "trades: its call (runs, holds, sits_out) and why. Its capital and stop are its "
+            "line (set_manager_numbers); don't repeat them here.",
+        ),
+    ] = [],  # noqa: B006 — never mutated; the SDK needs a literal default
+    watch: Annotated[
+        list[str],
+        Field(
+            max_length=MAX_WATCH,
+            description="What you keep an eye on today, one short sentence each: a holding "
+            "with no stop, a figure due at a known minute, what to revisit tomorrow.",
+        ),
+    ] = [],  # noqa: B006 — never mutated; the SDK needs a literal default
     lesson_ids: Annotated[
         list[str],
         Field(max_length=20, description="The brain's lessons it relied on, from search_brain."),
     ] = [],  # noqa: B006 — never mutated; the SDK needs a literal default
 ) -> ManagerPlanResult:
-    """The desk manager's plan for today (ADR 41), shown on the Manager page
-    with the lessons it relied on. Replaces the one set before."""
+    """The desk manager's plan for today (ADR 41, 45), shown on the Manager
+    page: the headline, each one's call grouped beside its line, what it
+    watches, and the lessons it relied on. Replaces the one set before."""
     with _agent_facing_errors():
-        plan = desk_manager.set_plan(text, lesson_ids, event_bus(), _who(), clock())
+        plan = desk_manager.set_plan(
+            headline,
+            [item.to_item() for item in items],
+            watch,
+            lesson_ids,
+            event_bus(),
+            _who(),
+            clock(),
+        )
     return ManagerPlanResult.of(plan)
 
 
