@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { useBrainNote } from "../../api/queries";
 import { Tile } from "../../components/Tile";
@@ -44,8 +44,9 @@ export function Plan({
       title={title}
       actions={plan && <span className="note">{istMinute(new Date(plan.at))}</span>}
       flush
+      className="mgr-plan-tile"
     >
-      <div className="mgr-plan">
+      <div className="mgr-plan scroll">
         {!plan ? (
           <p className="note" style={{ margin: 0 }}>
             {empty}
@@ -63,16 +64,7 @@ export function Plan({
                   </section>
                 )}
                 {groups.map((group) => (
-                  <section key={group.call} className="mgr-plan-group" data-call={group.call}>
-                    <h3 className="label">
-                      {group.title} <span className="mgr-plan-count">{group.items.length}</span>
-                    </h3>
-                    <ul>
-                      {group.items.map(({ item, line }) => (
-                        <Item key={item.key} item={item} line={line} live={lines != null} />
-                      ))}
-                    </ul>
-                  </section>
+                  <Group key={group.call} group={group} live={lines != null} />
                 ))}
               </>
             )}
@@ -103,6 +95,39 @@ export function Plan({
       </div>
       {children}
     </Tile>
+  );
+}
+
+// A long list of who sits out shows its first few; the calls that act stay whole.
+const FOLDED = 3;
+
+function Group({ group, live }: { group: ReturnType<typeof planGroups>[number]; live: boolean }) {
+  const [all, setAll] = useState(false);
+  const folds = group.call === "sits_out" && group.items.length > FOLDED + 1;
+  const shown = folds && !all ? group.items.slice(0, FOLDED) : group.items;
+  return (
+    <section className="mgr-plan-group" data-call={group.call}>
+      <h3 className="label">
+        {group.title} <span className="mgr-plan-count">{group.items.length}</span>
+      </h3>
+      <ul>
+        {shown.map(({ item, line }) => (
+          <Item key={item.key} item={item} line={line} live={live} />
+        ))}
+      </ul>
+      {folds && (
+        <button
+          type="button"
+          className="btn mgr-plan-more"
+          data-variant="ghost"
+          data-size="sm"
+          aria-expanded={all}
+          onClick={() => setAll(!all)}
+        >
+          {all ? "Show fewer" : `Show all ${group.items.length}`}
+        </button>
+      )}
+    </section>
   );
 }
 

@@ -5086,6 +5086,22 @@
     margin-top: 0;
     height: 100%;
   }
+  /* The plan never sets the pair's height: it takes how it runs' and
+     scrolls inside, so a long plan leaves no empty box beside it. */
+  .mgr-plan-tile {
+    display: flex;
+    flex-direction: column;
+  }
+  :where(.mgr-plan-tile) > .mgr-plan {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+  }
+  .mgr-pair:not([data-single]) > .mgr-plan-tile {
+    contain: size;
+    min-height: 420px;
+  }
   /* As tall as the page beside it, never taller: its list scrolls inside. */
   .mgr-panel {
     position: relative;
@@ -5227,6 +5243,11 @@
   @media (max-width: 900px) {
     .mgr-pair {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .mgr-pair:not([data-single]) > .mgr-plan-tile {
+      contain: none;
+      min-height: 0;
+      max-height: 640px;
     }
   }
   /* How it runs (ADR 42): next look, the day as a rail, two choices, what it used. */
@@ -5727,6 +5748,10 @@
     display: grid;
     gap: 6px;
     min-width: 0;
+  }
+  .mgr-plan-more {
+    justify-self: start;
+    margin-left: -8px;
   }
   .mgr-plan-group h3 {
     margin: 0;
