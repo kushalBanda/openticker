@@ -3,6 +3,7 @@
 // the exchange's clock time written as UTC: the axis reads IST with no zone.
 
 import type { Interval } from "../api/queries";
+import { IST_OFFSET_MS, OPEN } from "./session";
 
 export interface Candle {
   time: number; // seconds, exchange clock time as UTC
@@ -39,12 +40,13 @@ export const CHOICES: Choice[] = [
 export const choiceOf = (key: string): Choice =>
   CHOICES.find((c) => c.key === key) ?? (CHOICES[1] as Choice);
 
-const IST_MS = 330 * 60_000;
-const OPEN_MINUTE = 9 * 60 + 15; // candles count from 09:15, as Kite's do
+// Candles count from the open, 09:15, as Kite's do.
 
 /** An instant as exchange clock time in seconds ("10:30 IST" becomes 10:30 UTC). */
 export function clockSeconds(at: string | Date): number {
-  return Math.floor(((typeof at === "string" ? Date.parse(at) : at.getTime()) + IST_MS) / 1000);
+  return Math.floor(
+    ((typeof at === "string" ? Date.parse(at) : at.getTime()) + IST_OFFSET_MS) / 1000,
+  );
 }
 
 /** The start of the candle `at` falls in. */
@@ -54,8 +56,8 @@ export function bucket(at: string | Date, choice: Choice): number {
   if (choice.weekly) return monday(day);
   if (choice.minutes === 0) return day;
   const minute = Math.floor((seconds - day) / 60);
-  const since = minute - OPEN_MINUTE;
-  const start = OPEN_MINUTE + Math.floor(since / choice.minutes) * choice.minutes;
+  const since = minute - OPEN;
+  const start = OPEN + Math.floor(since / choice.minutes) * choice.minutes;
   return day + start * 60;
 }
 

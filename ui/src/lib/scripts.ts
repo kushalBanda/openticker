@@ -1,5 +1,6 @@
 import type { Schemas } from "../api/client";
 import { istClock, istDate, qty } from "./format";
+import { istDay } from "./session";
 import { weekdaysText } from "./strategies";
 
 // What the Scripts pages say about a hosted script (ADR 25): its state, its
@@ -89,9 +90,6 @@ export function runtime(run: Run, now: Date): string {
   const end = run.ended_at ? new Date(run.ended_at) : now;
   return duration(end.getTime() - new Date(run.started_at).getTime());
 }
-
-const istDay = (at: Date | string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(at));
 
 /** 09:16:00 today, "yesterday 10:02", else "19 Sep 10:02". */
 export function stamp(at: string, now: Date): string {

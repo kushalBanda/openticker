@@ -1,7 +1,9 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { type ManagerDaySummary, useManagerDays } from "../../api/queries";
+import { Calendar, type DayMark, monthOf, monthSpan, shiftMonth } from "../../components/Calendar";
+import { Popover } from "../../components/Popover";
 import { dayTitle } from "../../lib/brain";
 import { direction, rupees } from "../../lib/format";
 import { tapeHeights, tapeWeeks, tapeWindow } from "../../lib/manager";
@@ -28,7 +30,8 @@ export function DayTape({ selected, today }: { selected: string; today: string }
   const navigate = useNavigate();
   const [start, end] = tapeWindow(selected, today, REACH);
   const days = useManagerDays(start, end);
-  const picker = useRef<HTMLInputElement>(null);
+  const pickerButton = useRef<HTMLButtonElement>(null);
+  const [picking, setPicking] = useState(false);
   const [hovered, setHovered] = useState<ManagerDaySummary | null>(null);
   const list = days.data?.days ?? [];
   const at = list.findIndex((d) => d.trading_date === selected);
@@ -112,35 +115,34 @@ export function DayTape({ selected, today }: { selected: string; today: string }
       >
         <ChevronRight size={16} aria-hidden />
       </button>
-      {/* Any day further back: the browser's own date picker. */}
+      {/* Any day further back: a trading calendar. */}
       <span className="mgr-tape-pick">
         <button
+          ref={pickerButton}
           type="button"
           className="mgr-tape-step"
           aria-label="Pick a day"
           title="Pick a day"
-          onClick={() => {
-            const input = picker.current;
-            if (!input) return;
-            try {
-              input.showPicker();
-            } catch {
-              input.focus();
-            }
-          }}
+          aria-expanded={picking}
+          onClick={() => setPicking((open) => !open)}
         >
           <CalendarDays size={16} aria-hidden />
         </button>
-        <input
-          ref={picker}
-          type="date"
-          className="mgr-tape-date"
-          aria-label="A day to open"
-          tabIndex={-1}
-          max={today}
-          value={selected}
-          onChange={(event) => pick(event.target.value || undefined)}
-        />
+        <Popover
+          anchor={pickerButton}
+          open={picking}
+          onClose={() => setPicking(false)}
+          label="Pick a day"
+        >
+          <DayPicker
+            selected={selected}
+            today={today}
+            onPick={(day) => {
+              setPicking(false);
+              pick(day);
+            }}
+          />
+        </Popover>
       </span>
       {/* The day under the pointer, else the days it managed together. */}
       <div className="mgr-tape-sum" aria-live="polite">
@@ -171,5 +173,83 @@ export function DayTape({ selected, today }: { selected: string; today: string }
         )}
       </div>
     </nav>
+  );
+}
+
+/**
+ * Any of its days, a month at a time: each trading day tinted by what the
+ * desk made, dotted where the manager ran; quick ways to today, the day
+ * before and a month back.
+ */
+function DayPicker({
+  selected,
+  today,
+  onPick,
+}: {
+  selected: string;
+  today: string;
+  onPick: (day: string) => void;
+}) {
+  const [month, setMonth] = useState(monthOf(selected));
+  const [start, end] = monthSpan(month);
+  const days = useManagerDays(start, end < today ? end : today);
+  const before = useManagerDays(...monthSpan(shiftMonth(monthOf(today), -1)));
+  const marks = useMemo(() => {
+    if (!days.data) return undefined;
+    return new Map<string, DayMark>(
+      days.data.days.map((d) => [
+        d.trading_date,
+        {
+          net: d.net,
+          dot: d.ran,
+          detail: [
+            d.net == null ? "not recorded" : rupees(d.net, { sign: true }),
+            d.ran ? `${d.looks} looks` : "manager off",
+          ].join(" · "),
+        },
+      ]),
+    );
+  }, [days.data]);
+  // The trading day before today, from this month's days or last month's.
+  const previous = [...(days.data?.days ?? []), ...(before.data?.days ?? [])]
+    .map((d) => d.trading_date)
+    .filter((d) => d < today)
+    .sort()
+    .at(-1);
+  const jump = (day: string | undefined) => day && onPick(day);
+  return (
+    <Calendar
+      month={month}
+      onMonth={setMonth}
+      value={selected}
+      onPick={onPick}
+      marks={marks}
+      max={today}
+      today={today}
+      footer={
+        <>
+          <button type="button" className="chip" onClick={() => jump(today)}>
+            Today
+          </button>
+          <button
+            type="button"
+            className="chip"
+            disabled={!previous}
+            onClick={() => jump(previous)}
+          >
+            Previous day
+          </button>
+          <button
+            type="button"
+            className="chip"
+            onClick={() => {
+              setMonth(shiftMonth(monthOf(today), -1));
+            }}
+          >
+            Last month
+          </button>
+        </>
+      }
+    />
   );
 }

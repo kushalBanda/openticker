@@ -49,7 +49,7 @@ function NoteBody({ point }: { point: Point }) {
   const failure = failureOf(query);
   const record = recordHref(point.kind, point.key);
   return (
-    <div className="brain-sheet-body">
+    <div className="brain-sheet-body scroll">
       <div className="brain-sheet-meta">
         {point.status && (
           <span className="badge" data-tone={statusTone(point.status)}>

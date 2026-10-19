@@ -3,6 +3,7 @@ import { type ManagerDay, useManagerDay } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { loaded, StatCard } from "../../components/StatCard";
 import { failureOf, TableEmpty, TableFailed, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { dayTitle } from "../../lib/brain";
 import { direction, MISSING, rupees } from "../../lib/format";
 import { changeText, lineLabel, market, setByLabel, tableOrder } from "../../lib/manager";
@@ -94,51 +95,71 @@ export function PastDay({ day }: { day: string }) {
   const stops = stood.filter((l) => l.stop != null);
   const crossed = stops.filter((l) => l.crossed).length;
   return (
-    <section className="mgr-day" aria-labelledby="mgr-day-title">
-      <div className="mgr-day-head">
-        <h2 id="mgr-day-title">{dayTitle(day)}</h2>
-        <p>
-          {found.isError
-            ? `This day didn't load: ${found.error.message}`
-            : !data
-              ? "Loading the day…"
-              : data.ran
-                ? "As it closed: what stood at 15:30, and what changed it."
-                : "The manager was off this day. The desk's money is from the P&L record."}
-        </p>
-      </div>
-      <div className="stats">
-        <StatCard
-          label="That day"
-          value={loaded(found, (d) =>
-            d.desk ? rupees(d.desk.net, { sign: true }) : "Not recorded",
-          )}
-          tone={direction(data?.desk?.net)}
-          note={data?.desk ? <Split figure={data.desk} /> : data && "No P&L was recorded that day"}
-        />
-        <StatCard
-          label="Given to strategies"
-          value={loaded(found, () => (stood.length ? rupees(given, { decimals: 0 }) : "None"))}
-          note={data && (stood.length ? "at the close" : "No numbers stood")}
-        />
-        <StatCard
-          label="Looks"
-          value={loaded(found, (d) => (d.ran ? d.looks : "None"))}
-          note={data && (data.ran ? `$${data.cost_usd.toFixed(2)} spent` : "It wasn't on")}
-        />
-        <StatCard
-          label="Stops crossed"
-          value={loaded(found, () => (stops.length ? `${crossed} of ${stops.length}` : "None"))}
-          tone={crossed ? "down" : undefined}
-          note={data && (stops.length ? "at the close" : "No stops stood")}
-        />
-      </div>
-      <div className="tile" data-flush="true">
-        <div className="tile-head">
-          <h2>Its numbers</h2>
-          <span className="flex-1" />
-          <span className="note">As they stood at the close. Read only.</span>
+    <>
+      <section className="mgr-main mgr-day" aria-labelledby="mgr-day-title">
+        <div className="mgr-day-head">
+          <h2 id="mgr-day-title">{dayTitle(day)}</h2>
+          <p>
+            {found.isError
+              ? `This day didn't load: ${found.error.message}`
+              : !data
+                ? "Loading the day…"
+                : data.ran
+                  ? "As it closed: what stood at 15:30, and what changed it."
+                  : "The manager was off this day. The desk's money is from the P&L record."}
+          </p>
         </div>
+        <div className="stats">
+          <StatCard
+            label="That day"
+            value={loaded(found, (d) =>
+              d.desk ? rupees(d.desk.net, { sign: true }) : "Not recorded",
+            )}
+            tone={direction(data?.desk?.net)}
+            note={
+              data?.desk ? <Split figure={data.desk} /> : data && "No P&L was recorded that day"
+            }
+          />
+          <StatCard
+            label="Given to strategies"
+            value={loaded(found, () => (stood.length ? rupees(given, { decimals: 0 }) : "None"))}
+            note={data && (stood.length ? "at the close" : "No numbers stood")}
+          />
+          <StatCard
+            label="Looks"
+            value={loaded(found, (d) => (d.ran ? d.looks : "None"))}
+            note={data && (data.ran ? `$${data.cost_usd.toFixed(2)} spent` : "It wasn't on")}
+          />
+          <StatCard
+            label="Stops crossed"
+            value={loaded(found, () => (stops.length ? `${crossed} of ${stops.length}` : "None"))}
+            tone={crossed ? "down" : undefined}
+            note={data && (stops.length ? "at the close" : "No stops stood")}
+          />
+        </div>
+        {data && (
+          <div className="mgr-pair" data-single={!data.ran || undefined}>
+            <Plan
+              plan={data.plan}
+              title="The plan"
+              empty={data.ran ? "It set no plan that day." : "No plan: it wasn't on."}
+            >
+              <div className="mgr-brain-link">
+                <span className="muted">{data.debrief ? "Debriefed" : "Not debriefed"}</span>
+                <Link to={`/brain/days/${day}`}>The day in the brain ›</Link>
+              </div>
+            </Plan>
+            {data.ran && <HowItRan day={data} />}
+          </div>
+        )}
+      </section>
+      <Decisions threadId={data ? (data.thread_ids.at(-1) ?? null) : undefined} past />
+      <Tile
+        title="Its numbers"
+        className="mgr-wide"
+        actions={<span className="note">As they stood at the close. Read only.</span>}
+        flush
+      >
         {failure ? (
           <TableFailed what="This day" failure={failure} />
         ) : !data ? (
@@ -158,25 +179,7 @@ export function PastDay({ day }: { day: string }) {
             />
           </div>
         )}
-      </div>
-      {data && (
-        <div className="mgr-row">
-          <Decisions threadId={data.thread_ids.at(-1) ?? null} past />
-          <div className="mgr-side">
-            {data.ran && <HowItRan day={data} />}
-            <Plan
-              plan={data.plan}
-              title="The plan"
-              empty={data.ran ? "It set no plan that day." : "No plan: it wasn't on."}
-            >
-              <div className="mgr-brain-link">
-                <span className="muted">{data.debrief ? "Debriefed" : "Not debriefed"}</span>
-                <Link to={`/brain/days/${day}`}>The day in the brain ›</Link>
-              </div>
-            </Plan>
-          </div>
-        </div>
-      )}
-    </section>
+      </Tile>
+    </>
   );
 }

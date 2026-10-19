@@ -65,7 +65,7 @@ export function NewChat() {
 
   return (
     <>
-      <div className="aw-scroll">
+      <div className="aw-scroll scroll">
         <div className="aw-empty">
           <SquareTerminal className="aw-glyph" aria-hidden />
           <h2>What should we look into?</h2>

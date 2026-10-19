@@ -4,6 +4,7 @@
 import type { Schemas } from "../api/client";
 import { symbolName } from "./events";
 import { istClock, rupees } from "./format";
+import { OPEN, toClock, toMinutes } from "./session";
 
 type Since = Schemas["SinceResult"];
 type Entry = Since["events"][number];
@@ -143,13 +144,6 @@ export interface PnlCandle {
   close: number;
 }
 
-const toMinutes = (hhmm: string) => {
-  const [h, m] = hhmm.split(":").map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-};
-const toClock = (minutes: number) =>
-  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-
 /**
  * The minute line as candles of `every` minutes from 09:15. The P&L is a
  * point a minute, so high and low are the highest and lowest of those
@@ -157,7 +151,7 @@ const toClock = (minutes: number) =>
  * after a gap with no points it opens at its own first point.
  */
 export function pnlCandles(points: { minute: string; net_pnl: number }[], every = 5): PnlCandle[] {
-  const start = toMinutes("09:15");
+  const start = OPEN;
   const candles: PnlCandle[] = [];
   for (const point of points) {
     const minutes = toMinutes(point.minute);

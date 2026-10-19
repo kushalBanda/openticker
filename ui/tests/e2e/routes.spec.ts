@@ -102,8 +102,12 @@ for (const theme of ["light", "dark"] as const) {
     const check = async (where: string) => {
       // Colours as they settle: axe reads a colour mid-transition as it
       // stands (a highlighted row fading in blends its text and ground).
+      // A scroll-driven animation (a Scroll box's edge fade) follows the
+      // scroll, not the clock, so it never settles: only the clock's count.
       await page.waitForFunction(() =>
-        document.getAnimations().every((a) => a.playState !== "running"),
+        document
+          .getAnimations()
+          .every((a) => a.playState !== "running" || !(a.timeline instanceof DocumentTimeline)),
       );
       await page.waitForTimeout(100);
       const { violations } = await new AxeBuilder({ page })

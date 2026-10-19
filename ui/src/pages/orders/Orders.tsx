@@ -3,6 +3,7 @@ import { useOrders } from "../../api/queries";
 import { Page } from "../../components/Page";
 import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
+import { FailedTile } from "../../components/Tile";
 import { type PlacerFilter, placedByAny } from "../../lib/orders";
 import { useLive } from "../../stream/StreamProvider";
 import { OrderBook } from "./OrderBook";
@@ -36,31 +37,19 @@ export function Orders() {
       }
     >
       {orders.isError ? (
-        <div className="tile empty" role="alert">
-          <h2>Orders didn't load</h2>
-          <p className="note">{orders.error.message}</p>
-          <button type="button" className="btn" onClick={() => orders.refetch()}>
-            Try again
-          </button>
-        </div>
+        <FailedTile what="Orders" error={orders.error} retry={orders.refetch} />
       ) : (
-        <>
-          <OrderBook
-            broker={broker}
-            orders={all.filter((order) => placedByAny(order, placer))}
-            all={all}
-            loading={loading}
-            noneYet={
-              all.length === 0
-                ? "No orders today. Press ⌘K to find an instrument and place a paper order, or ask your agent to."
-                : "No orders from them today."
-            }
-          />
-          <p className="note" style={{ marginTop: 16 }}>
-            Today's paper orders. Open orders fill when a live price reaches them; unfilled ones are
-            cancelled at the session's end.
-          </p>
-        </>
+        <OrderBook
+          broker={broker}
+          orders={all.filter((order) => placedByAny(order, placer))}
+          all={all}
+          loading={loading}
+          noneYet={
+            all.length === 0
+              ? "No orders today. Press ⌘K to find an instrument and place a paper order, or ask your agent to."
+              : "No orders from them today."
+          }
+        />
       )}
     </Page>
   );

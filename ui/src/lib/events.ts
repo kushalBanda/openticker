@@ -16,6 +16,7 @@ import {
   sourceLabel,
 } from "./format";
 import { isWake, wakeLabel } from "./manager";
+import { istDay } from "./session";
 import { contractOf } from "./strategies";
 
 export type Tier = "must-act" | "worth-knowing" | "record";
@@ -588,8 +589,7 @@ export type Range = "today" | "7d" | "30d";
 /** The first exchange-local day a range covers, YYYY-MM-DD, counted from `now`. */
 export function fromDate(range: Range, now: Date): string {
   const back = range === "today" ? 0 : range === "7d" ? 6 : 29;
-  const day = new Date(now.getTime() + 5.5 * 3_600_000 - back * 86_400_000);
-  return day.toISOString().slice(0, 10);
+  return istDay(new Date(now.getTime() - back * 86_400_000));
 }
 
 /** "Manager: Straddle at ₹6,00,000, stop -₹6,000"; a line the user set that

@@ -7,6 +7,7 @@ import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import { direction, MISSING, qty, rupees, signed } from "../../lib/format";
 import {
   ago,
@@ -297,21 +298,12 @@ export function Strategies() {
         {list.isPending ? (
           <TableSkeleton label="Loading strategies" rows={3} />
         ) : list.isError ? (
-          <div className="empty" role="alert">
-            <h2>Strategies didn't load</h2>
-            <p className="note">{list.error.message}</p>
-            <button type="button" className="btn" onClick={() => list.refetch()}>
-              Try again
-            </button>
-          </div>
+          <FailedTile inset what="Strategies" error={list.error} retry={list.refetch} />
         ) : all.length === 0 ? (
-          <div className="empty">
-            <h2>No strategies yet</h2>
-            <p className="note">
-              Your agent writes them: ask Claude Code or Codex for an options strategy or one driven
-              by TradingView alerts.
-            </p>
-          </div>
+          <EmptyTile inset title="No strategies yet">
+            Your agent writes them: ask Claude Code or Codex for an options strategy or one driven
+            by TradingView alerts.
+          </EmptyTile>
         ) : rows.length === 0 ? (
           <TableEmpty>No strategy matches these filters.</TableEmpty>
         ) : (
@@ -365,7 +357,7 @@ export function Strategies() {
           />
         )}
       </div>
-      <p className="note" style={{ marginTop: 16 }}>
+      <p className="note page-note">
         Strategies are written and changed by your agent. Here you start, stop, schedule and kill
         them. Today counts trades closed today, whenever the run started, and open legs live, after
         charges.

@@ -11,6 +11,7 @@ import {
 import { type Column, DataTable } from "../../components/DataTable";
 import { Page } from "../../components/Page";
 import { TableSkeleton } from "../../components/TableStates";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import { MISSING, qty } from "../../lib/format";
 import {
   atLimit,
@@ -206,21 +207,12 @@ export function Scripts() {
         {list.isPending ? (
           <TableSkeleton label="Loading scripts" rows={3} />
         ) : list.isError ? (
-          <div className="empty" role="alert">
-            <h2>Scripts didn't load</h2>
-            <p className="note">{list.error.message}</p>
-            <button type="button" className="btn" onClick={() => list.refetch()}>
-              Try again
-            </button>
-          </div>
+          <FailedTile inset what="Scripts" error={list.error} retry={list.refetch} />
         ) : scripts?.length === 0 ? (
-          <div className="empty">
-            <h2>No scripts yet</h2>
-            <p className="note">
-              Your agent writes and uploads them: ask Claude Code or Codex for a script that trails
-              a stop, scans for gaps, or anything else in Python.
-            </p>
-          </div>
+          <EmptyTile inset title="No scripts yet">
+            Your agent writes and uploads them: ask Claude Code or Codex for a script that trails a
+            stop, scans for gaps, or anything else in Python.
+          </EmptyTile>
         ) : (
           <DataTable
             label="Scripts"
@@ -257,7 +249,7 @@ export function Scripts() {
           />
         )}
       </div>
-      <p className="note" style={{ marginTop: 16 }}>
+      <p className="note page-note">
         Scripts are written and changed by your agent. Here you start, stop and schedule them, and
         read what they print.
       </p>

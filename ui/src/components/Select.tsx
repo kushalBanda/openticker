@@ -187,7 +187,7 @@ export function Select<T extends string>({
               aria-label={label}
               aria-activedescendant={optionId(active)}
               tabIndex={-1}
-              className="select-list"
+              className="select-list scroll"
               data-up={at.up}
               style={{
                 left: at.left,

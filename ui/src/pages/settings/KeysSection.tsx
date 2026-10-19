@@ -4,6 +4,7 @@ import { CopyLine } from "../../components/CopyLine";
 import { type Column, DataTable } from "../../components/DataTable";
 import { HoldButton } from "../../components/HoldButton";
 import { TableEmpty } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { istDate } from "../../lib/format";
 import { useActions } from "../../shell/actions";
 
@@ -81,11 +82,10 @@ export function KeysSection() {
   const rows = keys.data?.keys ?? [];
 
   return (
-    <section className="tile" data-flush="true" id="keys" aria-labelledby="keys-title">
-      <div className="tile-head">
-        <h2 id="keys-title">API keys</h2>
-        <span className="flex-1" />
-        {!adding && (
+    <Tile
+      title="API keys"
+      actions={
+        !adding && (
           <button
             type="button"
             className="btn"
@@ -96,8 +96,11 @@ export function KeysSection() {
           >
             Create key
           </button>
-        )}
-      </div>
+        )
+      }
+      flush
+      id="keys"
+    >
       {adding && (
         <form
           className="settings-row settings-pad"
@@ -167,6 +170,6 @@ export function KeysSection() {
       ) : (
         <DataTable label="API keys" columns={columns} rows={rows} rowKey={(k) => k.name} />
       )}
-    </section>
+    </Tile>
   );
 }

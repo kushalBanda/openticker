@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
 import type { DayPnl } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { Instrument, useOpenSymbol } from "../../components/Instrument";
 import { type Failure, TableEmpty, TableFailed } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
+import { Timeline } from "../../components/Timeline";
 import { byLabel, describe } from "../../lib/events";
 import {
   dayMonth,
@@ -89,14 +91,7 @@ export function OpenPositionsTile({
     },
   ];
   return (
-    <section className="tile" data-flush="true" aria-labelledby="open-positions">
-      <div className="tile-head">
-        <h2 id="open-positions">Open positions</h2>
-        <span className="flex-1" />
-        <Link to="/positions" className="more-link">
-          All positions ›
-        </Link>
-      </div>
+    <Tile title="Open positions" more={{ to: "/positions", label: "All positions" }} flush>
       {failed ? (
         <TableFailed what="Positions" failure={failed} />
       ) : !loading && rows.length === 0 ? (
@@ -115,7 +110,7 @@ export function OpenPositionsTile({
           }}
         />
       )}
-    </section>
+    </Tile>
   );
 }
 
@@ -199,7 +194,13 @@ export function DailyCalendar({
     net: d.net_pnl ?? null,
     estimated: d.estimated,
   }));
-  const grid = weeks(calendar, from, to);
+  // The grid starts at the first recorded week, not the window's start: a
+  // short history is a few bold weeks, not a field of empty cells.
+  const firstRecorded = calendar.find((d) => d.net !== null)?.date;
+  const start = firstRecorded ? laterOf(from, mondayOf(firstRecorded)) : from;
+  const grid = weeks(calendar, start, to);
+  // Cells grow as weeks get fewer, up to a size a finger could press.
+  const cell = grid.length <= 8 ? 34 : grid.length <= 12 ? 28 : 22;
   const stats = dayStats(calendar);
   const scale = Math.max(1, ...calendar.map((d) => Math.abs(d.net ?? 0)));
   const first = days[0]?.trading_date;
@@ -220,7 +221,7 @@ export function DailyCalendar({
 
   return (
     <section className="tile" aria-labelledby="daily-title">
-      <div className="settings-head">
+      <div className="tile-head">
         <h2 className="tile-title" id="daily-title">
           Daily P&L
         </h2>
@@ -230,7 +231,13 @@ export function DailyCalendar({
         </span>
       </div>
       <div className="calendar-body">
-        <div className="calendar-grid">
+        <div className="calendar-grid" style={{ "--cell": `${cell}px` } as CSSProperties}>
+          <div className="heatmap-weekdays" aria-hidden>
+            {["Mon", "", "Wed", "", "Fri"].map((name, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: five fixed weekday rows
+              <span key={i}>{name}</span>
+            ))}
+          </div>
           <div className="heatmap-months" aria-hidden>
             {monthLabels.map((label, w) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: weeks are fixed columns
@@ -339,6 +346,15 @@ const CHARGE_NAMES: Record<string, string> = {
   stamp_duty: "Stamp",
   gst: "GST",
 };
+/** The Monday of the week a date falls in. */
+function mondayOf(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+const laterOf = (a: string, b: string) => (a > b ? a : b);
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function ChargesTile({
@@ -355,7 +371,7 @@ export function ChargesTile({
   const shown = months.find((m) => m.month === picked) ?? months.at(-1);
   return (
     <section className="tile" aria-labelledby="charges-month-title">
-      <div className="settings-head">
+      <div className="tile-head">
         <h2 className="tile-title" id="charges-month-title">
           Charges by month
         </h2>
@@ -440,14 +456,7 @@ export function StrategiesTile({
   const shown = [...(strategies ?? [])].sort((a, b) => order[a.state] - order[b.state]).slice(0, 5);
   const navigate = useNavigate();
   return (
-    <section className="tile" data-flush="true" aria-labelledby="dash-strategies">
-      <div className="tile-head">
-        <h2 id="dash-strategies">Strategies</h2>
-        <span className="flex-1" />
-        <Link to="/strategies" className="more-link">
-          All strategies ›
-        </Link>
-      </div>
+    <Tile title="Strategies" more={{ to: "/strategies", label: "All strategies" }} flush>
       {failed ? (
         <TableFailed what="Strategies" failure={failed} />
       ) : strategies && shown.length === 0 ? (
@@ -461,7 +470,7 @@ export function StrategiesTile({
           onSelect={(id) => navigate(`/strategies/${id}`)}
         />
       )}
-    </section>
+    </Tile>
   );
 }
 
@@ -513,37 +522,39 @@ export function RecentEventsTile({
   failed?: Failure;
 }) {
   return (
-    <section className="tile" data-flush="true" aria-labelledby="dash-events">
-      <div className="tile-head">
-        <h2 id="dash-events">Recent events</h2>
-        <span className="flex-1" />
-        <Link to="/activity" className="more-link">
-          Activity ›
-        </Link>
-      </div>
+    <Tile title="Recent events" more={{ to: "/activity", label: "Activity" }} flush>
       {failed ? (
         <TableFailed what="Recent events" failure={failed} />
       ) : entries && entries.length === 0 ? (
         <TableEmpty>Nothing yet. Orders, fills, strategies and reviews show up here.</TableEmpty>
       ) : (
-        <ul className="dash-list">
-          {(entries ?? []).map((entry) => {
+        <Timeline
+          label="Recent events"
+          dense
+          entries={(entries ?? []).map((entry) => {
             const said = describe(entry, names);
-            return (
-              <li key={entry.id}>
-                <span className="tabular muted dash-time">
-                  {istClock(new Date(entry.occurred_at))}
-                </span>
-                <span className="badge" data-tone={said.tone}>
-                  {said.kind}
-                </span>
-                <span className="dash-text">{said.text}</span>
-                <span className="note">{byLabel(entry, names)}</span>
-              </li>
-            );
+            const at = new Date(entry.occurred_at);
+            // "Manager" twice on one line says nothing the tag didn't.
+            const who = byLabel(entry, names);
+            const by = who.toLowerCase() === said.kind.toLowerCase() ? null : who;
+            return {
+              key: String(entry.id),
+              time: istClock(at).slice(0, 5),
+              at,
+              tone: said.tone,
+              body: (
+                <>
+                  <span className="badge" data-tone={said.tone}>
+                    {said.kind}
+                  </span>
+                  <span className="dash-text">{said.text}</span>
+                  {by && <span className="note">{by}</span>}
+                </>
+              ),
+            };
           })}
-        </ul>
+        />
       )}
-    </section>
+    </Tile>
   );
 }

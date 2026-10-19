@@ -12,6 +12,7 @@ import { Markdown } from "../../components/Markdown";
 import { Page } from "../../components/Page";
 import { StatCard } from "../../components/StatCard";
 import { failureOf, TableEmpty, TableFailed } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import {
   dayTitle,
   heldText,
@@ -172,11 +173,7 @@ export function Lesson() {
             <Markdown text={note.body} linkTo={pageHref([...note.links_out, ...note.backlinks])} />
           </section>
 
-          <section className="tile" data-flush="true" aria-labelledby="checks">
-            <div className="tile-head">
-              <h2 id="checks">Checks since it was written</h2>
-              <span className="count">{lesson.checks.length}</span>
-            </div>
+          <Tile title="Checks since it was written" count={lesson.checks.length} flush>
             {lesson.checks.length === 0 ? (
               <TableEmpty>
                 No checks yet. Each ended run or order it applies to is owed one; the debrief
@@ -194,15 +191,11 @@ export function Lesson() {
               Each check is judged by the agent that gave it, from the figure it observed.
               OpenTicker decides which runs and orders count and when the status moves.
             </p>
-          </section>
+          </Tile>
 
           <div className="overview-grid">
             <div className="flex flex-col gap-6">
-              <section className="tile" data-flush="true" aria-labelledby="owed">
-                <div className="tile-head">
-                  <h2 id="owed">Owed checks</h2>
-                  <span className="count">{lesson.owed.length}</span>
-                </div>
+              <Tile title="Owed checks" count={lesson.owed.length} flush>
                 {note.status === "retired" ? (
                   <TableEmpty>Retired lessons aren't owed checks.</TableEmpty>
                 ) : lesson.owed.length === 0 ? (
@@ -217,7 +210,7 @@ export function Lesson() {
                     rowKey={(o) => o.run_id ?? o.order_id ?? ""}
                   />
                 )}
-              </section>
+              </Tile>
               <NoteEditor note={note} />
             </div>
 

@@ -1,5 +1,6 @@
 import type { Schemas } from "../api/client";
 import { rupees } from "./format";
+import { istDay } from "./session";
 
 // What the strategies pages say about a strategy: its state and what comes
 // next, its definition in words, a review's verdict, and its open legs'
@@ -64,9 +65,6 @@ const istParts = (at: string) => {
     time: `${get("hour")}:${get("minute")}`,
   };
 };
-
-const istDay = (at: Date | string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(at));
 
 /** True when `at` falls on today's date in IST. */
 export function isToday(at: string, now: Date): boolean {

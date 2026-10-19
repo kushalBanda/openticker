@@ -12,6 +12,7 @@ import {
 } from "../../api/queries";
 import { CommitInput, FolderFields, installState } from "../../components/AgentChoice";
 import { HarnessLogo } from "../../components/HarnessLogo";
+import { Tile } from "../../components/Tile";
 import { effortLabel, effortsOf, findModel, harnessLabel, modelName } from "../../lib/agents";
 import { effortLevel, nextLook, nowDoing, railLooks, spent } from "../../lib/manager";
 import { tokens } from "../../lib/threads";
@@ -68,20 +69,17 @@ export function HowItRuns({ manager }: { manager: Manager }) {
   const name = (model: string) => modelName(info?.models, model);
 
   return (
-    <section
-      className="tile mgr-run"
-      data-flush="true"
-      data-testid="how-it-runs"
-      aria-labelledby="mgr-run-title"
-    >
-      <div className="tile-head">
-        <h2 id="mgr-run-title">How it runs</h2>
-        <span className="flex-1" />
+    <Tile
+      title="How it runs"
+      actions={
         <span className="badge" data-tone={manager.enabled ? "accent" : undefined}>
           {manager.enabled ? "On" : "Off"}
         </span>
-      </div>
-
+      }
+      flush
+      className="mgr-run"
+      testId="how-it-runs"
+    >
       <div className="mgr-run-next" role="status">
         <span className="mgr-run-label">{looking.tone ? "Now" : "Next look"}</span>
         <span className="mgr-run-when">{looking.tone ? "Looking" : next.when}</span>
@@ -183,7 +181,7 @@ export function HowItRuns({ manager }: { manager: Manager }) {
         Both choices run in one conversation a day. A retry runs like the look it repeats; check-ins
         left unset run as the decisive looks. A change applies from the next look.
       </p>
-    </section>
+    </Tile>
   );
 }
 

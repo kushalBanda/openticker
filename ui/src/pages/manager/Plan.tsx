@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useBrainNote } from "../../api/queries";
+import { Tile } from "../../components/Tile";
 import { direction, istMinute, rupees } from "../../lib/format";
 import {
   type DayFigure,
@@ -39,12 +40,11 @@ export function Plan({
   const groups = plan ? planGroups(plan.items, lines) : [];
   const deskStop = lines?.find((l) => l.key === "desk")?.stop;
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>{title}</h2>
-        <span className="flex-1" />
-        {plan && <span className="note">{istMinute(new Date(plan.at))}</span>}
-      </div>
+    <Tile
+      title={title}
+      actions={plan && <span className="note">{istMinute(new Date(plan.at))}</span>}
+      flush
+    >
       <div className="mgr-plan">
         {!plan ? (
           <p className="note" style={{ margin: 0 }}>
@@ -102,7 +102,7 @@ export function Plan({
         )}
       </div>
       {children}
-    </div>
+    </Tile>
   );
 }
 

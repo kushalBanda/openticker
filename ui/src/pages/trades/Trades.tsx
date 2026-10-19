@@ -10,6 +10,7 @@ import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { FailedTile } from "../../components/Tile";
 import {
   direction,
   type InstrumentType,
@@ -188,13 +189,7 @@ export function Trades() {
       </div>
 
       {trades.isError ? (
-        <div className="tile empty" role="alert">
-          <h2>Trades didn't load</h2>
-          <p className="note">{trades.error.message}</p>
-          <button type="button" className="btn" onClick={() => trades.refetch()}>
-            Try again
-          </button>
-        </div>
+        <FailedTile what="Trades" error={trades.error} retry={trades.refetch} />
       ) : (
         <section className="tile" data-flush="true" aria-label="Fills">
           {loading ? (

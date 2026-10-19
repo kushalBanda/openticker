@@ -18,9 +18,18 @@ import {
 import { type Column, DataTable } from "../../components/DataTable";
 import type { From } from "../../components/Instrument";
 import { Page } from "../../components/Page";
+import { SideBadge } from "../../components/PlacedBy";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
-import { type Failure, failureOf, TableFailed, TableSkeleton } from "../../components/TableStates";
+import {
+  type Failure,
+  failureOf,
+  TableEmpty,
+  TableFailed,
+  TableSkeleton,
+} from "../../components/TableStates";
+import { EmptyTile, Tile } from "../../components/Tile";
+import { Timeline } from "../../components/Timeline";
 import { chainPath } from "../../lib/basket";
 import {
   type Candle,
@@ -35,20 +44,22 @@ import {
   direction,
   type InstrumentType,
   instrumentName,
+  istClock,
   MISSING,
   price,
   qty,
   rupees,
 } from "../../lib/format";
-import type { Exchange, OrderDraft, Side } from "../../lib/orders";
+import type { Exchange, Order, OrderDraft, Side } from "../../lib/orders";
 import { markToMarket } from "../../lib/pnl";
+import { istDay } from "../../lib/session";
 import { pickList, savedListId } from "../../lib/watchlists";
 import { useActions } from "../../shell/actions";
 import { useSideKeys } from "../../shell/keys";
 import type { InstrumentKey } from "../../stream/connection";
 import { usePrice } from "../../stream/prices";
 import { useLive, useServerNow } from "../../stream/StreamProvider";
-import { OrderBook } from "../orders/OrderBook";
+import { OrderBook, Status } from "../orders/OrderBook";
 
 // lightweight-charts loads with the first chart, not with the app.
 const CandleChart = lazy(() =>
@@ -101,6 +112,80 @@ const DEPTH_COLUMNS: Column<Level>[] = [
   { key: "ask-qty", head: "Qty.", cell: (l) => cell(l.ask?.quantity, qty) },
 ];
 
+/**
+ * Today's orders for this instrument beside its chart, newest first: the
+ * side, how much at what, and where it stands. The Orders tab has them all.
+ */
+function TodayOrdersTile({
+  name,
+  orders,
+  loading,
+  failed,
+  onAll,
+}: {
+  name: string;
+  orders: Order[];
+  loading: boolean;
+  failed?: Failure;
+  onAll: () => void;
+}) {
+  const shown = [...orders]
+    .sort((a, b) => b.placed_at.localeCompare(a.placed_at))
+    .slice(0, SIDE_ORDERS);
+  return (
+    <Tile
+      title="Orders today"
+      count={loading || failed ? undefined : orders.length}
+      flush
+      actions={
+        orders.length > SIDE_ORDERS && (
+          <button type="button" className="more-link link-button" onClick={onAll}>
+            All orders ›
+          </button>
+        )
+      }
+    >
+      {failed ? (
+        <TableFailed what="Orders" failure={failed} />
+      ) : loading ? (
+        <TableSkeleton label="Loading orders" />
+      ) : shown.length === 0 ? (
+        <TableEmpty>{`No orders for ${name} today. Press B or S to place one.`}</TableEmpty>
+      ) : (
+        <Timeline
+          label={`Orders for ${name} today`}
+          dense
+          entries={shown.map((order) => {
+            const at = new Date(order.placed_at);
+            const atPrice = order.fill_price ?? order.price;
+            return {
+              key: order.order_id,
+              time: istClock(at).slice(0, 5),
+              at,
+              tone: order.side === "BUY" ? "up" : "down",
+              live: order.status === "PENDING",
+              body: (
+                <>
+                  <SideBadge side={order.side} />
+                  <span className="dash-text tabular">
+                    {qty(order.quantity)}
+                    {atPrice !== null
+                      ? ` @ ${price(atPrice)}`
+                      : order.trigger_price !== null && ` @ ${price(order.trigger_price)} trg.`}
+                  </span>
+                  <Status order={order} />
+                </>
+              ),
+            };
+          })}
+        />
+      )}
+    </Tile>
+  );
+}
+
+const SIDE_ORDERS = 5;
+
 function DepthTile({
   depth,
   loading,
@@ -116,10 +201,7 @@ function DepthTile({
     ask: depth?.asks[n],
   }));
   return (
-    <section className="tile depth-tile" data-flush="true" aria-labelledby="depth-title">
-      <div className="tile-head">
-        <h2 id="depth-title">Market depth</h2>
-      </div>
+    <Tile title="Market depth" flush className="depth-tile">
       {failed ? (
         <TableFailed what="Market depth" failure={failed} />
       ) : loading ? (
@@ -142,7 +224,7 @@ function DepthTile({
           </div>
         </>
       )}
-    </section>
+    </Tile>
   );
 }
 
@@ -266,7 +348,7 @@ export function SymbolPage() {
   const contract = listings.data?.find((i) => i.exchange === exchange);
   const depth = useDepth(contract ? broker : undefined, exchange, symbol);
   const tick = usePrice(`${exchange}:${symbol}` as InstrumentKey);
-  const today = new Date(now().getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const today = istDay(now());
   const bars = useBars(
     contract ? broker : undefined,
     exchange,
@@ -356,15 +438,10 @@ export function SymbolPage() {
   if (listings.isSuccess && !contract) {
     return (
       <Page title={symbol || "Symbol"} back={back}>
-        <div className="tile empty">
-          <h2>
-            No {symbol} on {exchange}
-          </h2>
-          <p className="note">
-            It isn't in the instrument list. If it's new or a fresh expiry, sync instruments in{" "}
-            <Link to="/settings#instruments">Settings</Link>, or press ⌘K to search.
-          </p>
-        </div>
+        <EmptyTile title={`No ${symbol} on ${exchange}`}>
+          It isn't in the instrument list. If it's new or a fresh expiry, sync instruments in{" "}
+          <Link to="/settings#instruments">Settings</Link>, or press ⌘K to search.
+        </EmptyTile>
       </Page>
     );
   }
@@ -527,7 +604,16 @@ export function SymbolPage() {
               month. Wheel to zoom, drag to pan.
             </p>
           </section>
-          <DepthTile depth={depth.data} loading={depth.isPending} failed={failureOf(depth)} />
+          <div className="symbol-side">
+            <DepthTile depth={depth.data} loading={depth.isPending} failed={failureOf(depth)} />
+            <TodayOrdersTile
+              name={name}
+              orders={mine}
+              loading={orders.isPending}
+              failed={failureOf(orders)}
+              onAll={() => setTab("orders")}
+            />
+          </div>
         </div>
       ) : failureOf(orders) ? (
         <div className="tile" data-flush="true">

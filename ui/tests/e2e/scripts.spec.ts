@@ -61,8 +61,10 @@ test("schedule a script: change its days and stop time, then turn it off", async
 
   await page.getByRole("button", { name: "Schedule…" }).click();
   const dialog = page.getByRole("dialog", { name: "Schedule gap_scanner.py" });
-  await expect(dialog.getByLabel("Start")).toHaveValue("09:10");
-  await expect(dialog.getByLabel("Stop (optional)")).toHaveValue("");
+  const start = dialog.getByRole("group", { name: "Start", exact: true });
+  const stop = dialog.getByRole("group", { name: "Stop (optional)" });
+  await expect(start).toHaveAttribute("data-value", "09:10");
+  await expect(stop).toHaveAttribute("data-value", "");
   for (const day of ["Mon", "Tue", "Wed", "Thu", "Fri"]) {
     await expect(dialog.getByRole("button", { name: day })).toHaveAttribute("aria-pressed", "true");
   }
@@ -72,7 +74,11 @@ test("schedule a script: change its days and stop time, then turn it off", async
   );
 
   await dialog.getByRole("button", { name: "Fri" }).click(); // Mon-Thu only
-  await dialog.getByLabel("Stop (optional)").fill("10:00");
+  // Typed as on a clock: the hour fills, then the minutes.
+  await stop.getByRole("spinbutton", { name: "Hour" }).focus();
+  await page.keyboard.type("1000");
+  await expect(stop).toHaveAttribute("data-value", "10:00");
+  await expect(dialog.getByRole("slider", { name: "Stop on the session" })).toBeVisible();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(toast(page, "gap_scanner.py's schedule saved.")).toBeVisible();
   await expect(page.getByText("Mon, Tue, Wed, Thu 09:10–10:00", { exact: false })).toBeVisible();

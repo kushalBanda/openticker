@@ -186,11 +186,11 @@ export function Thread({
   onPanel: () => void;
 }) {
   if (query.isPending) {
-    return <div className="aw-scroll" aria-busy="true" />;
+    return <div className="aw-scroll scroll" aria-busy="true" />;
   }
   if (query.isError) {
     return (
-      <div className="aw-scroll">
+      <div className="aw-scroll scroll">
         <p className="note aw-thread" role="alert">
           This chat didn't load: {query.error.message}
         </p>
@@ -226,7 +226,7 @@ export function Thread({
         </button>
         <DeleteChat thread={thread} working={Boolean(live)} />
       </header>
-      <div className="aw-scroll">
+      <div className="aw-scroll scroll">
         <div className="aw-thread">
           {thread.turns.map((turn) =>
             turn === queued ? (

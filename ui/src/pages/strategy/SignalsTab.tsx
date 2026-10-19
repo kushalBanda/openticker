@@ -2,6 +2,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import type { Schemas } from "../../api/client";
 import { type Column, DataTable } from "../../components/DataTable";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { istClock, istDate, MISSING } from "../../lib/format";
 import { AlertResult } from "./Overview";
 
@@ -30,10 +31,7 @@ export function SignalsTab({ signals }: { signals: UseQueryResult<Signals> }) {
     },
   ];
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>Alerts</h2>
-      </div>
+    <Tile title="Alerts" flush>
       {signals.isPending ? (
         <TableSkeleton label="Loading alerts" />
       ) : signals.isError ? (
@@ -48,6 +46,6 @@ export function SignalsTab({ signals }: { signals: UseQueryResult<Signals> }) {
           rowKey={(c) => `${c.received_at}:${c.message}`}
         />
       )}
-    </div>
+    </Tile>
   );
 }

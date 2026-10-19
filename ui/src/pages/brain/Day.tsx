@@ -13,6 +13,7 @@ import { Page } from "../../components/Page";
 import { PlacedBy } from "../../components/PlacedBy";
 import { StatCard } from "../../components/StatCard";
 import { failureOf, TableEmpty, TableFailed } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { dayTitle, OUTCOME, pageHref, subjectText } from "../../lib/brain";
 import {
   direction,
@@ -207,11 +208,7 @@ export function Day() {
             )}
           </section>
 
-          <section className="tile" data-flush="true" aria-labelledby="trades">
-            <div className="tile-head">
-              <h2 id="trades">Trades and trade-offs</h2>
-              {data && <span className="count">{data.trades.length}</span>}
-            </div>
+          <Tile title="Trades and trade-offs" count={data?.trades.length} flush>
             {!data ? (
               <p className="note" style={{ padding: "0 24px 20px" }} role="status">
                 Loading the trades…
@@ -229,7 +226,7 @@ export function Day() {
             {data?.truncated && (
               <TableEmpty>More fills than fit here: the trade book has them all.</TableEmpty>
             )}
-          </section>
+          </Tile>
 
           <div className="overview-grid">
             <div className="flex flex-col gap-6">
