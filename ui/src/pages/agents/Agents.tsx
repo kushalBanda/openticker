@@ -17,6 +17,7 @@ import { Markdown } from "../../components/Markdown";
 import { Page } from "../../components/Page";
 import { Select } from "../../components/Select";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import {
   CONNECT,
   clientLabel,
@@ -310,11 +311,7 @@ export function Agents() {
         <Clients />
         <Reviews jobs={list} />
       </div>
-      <div className="tile" data-flush="true">
-        <div className="tile-head">
-          <h2>Jobs</h2>
-          <span className="note">newest first</span>
-        </div>
+      <Tile title="Jobs" note="newest first" flush>
         {jobs.isPending ? (
           <TableSkeleton label="Loading jobs" rows={3} />
         ) : jobs.isError ? (
@@ -356,7 +353,7 @@ export function Agents() {
             }
           />
         )}
-      </div>
+      </Tile>
       <JobDialog job={reading} onClose={() => setReading(null)} />
     </Page>
   );

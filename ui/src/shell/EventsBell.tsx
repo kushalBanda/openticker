@@ -80,7 +80,7 @@ export function EventsBell() {
               <div className="menu-note">Nothing yet. Fills, stops and reviews show up here.</div>
             ) : (
               // biome-ignore lint/a11y/noNoninteractiveTabindex: it scrolls when long, and a keyboard must reach it to scroll it (WCAG 2.1.1).
-              <ul className="bell-list" tabIndex={0} aria-label="Latest events">
+              <ul className="bell-list scroll" tabIndex={0} aria-label="Latest events">
                 {entries.slice(0, SHOWN).map((entry) => {
                   const said = describe(entry, names);
                   const at = new Date(entry.occurred_at);

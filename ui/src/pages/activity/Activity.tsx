@@ -5,6 +5,7 @@ import { type Column, DataTable } from "../../components/DataTable";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { FailedTile } from "../../components/Tile";
 import {
   byLabel,
   describe,
@@ -150,13 +151,7 @@ export function Activity() {
         {activity.isPending ? (
           <TableSkeleton label="Loading activity" rows={6} />
         ) : activity.isError ? (
-          <div className="empty" role="alert">
-            <h2>Activity didn't load</h2>
-            <p className="note">{activity.error.message}</p>
-            <button type="button" className="btn" onClick={() => activity.refetch()}>
-              Try again
-            </button>
-          </div>
+          <FailedTile inset what="Activity" error={activity.error} retry={activity.refetch} />
         ) : rows.length === 0 ? (
           <TableEmpty>
             {kind === "all" && who === "anyone"

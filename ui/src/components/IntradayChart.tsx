@@ -13,7 +13,9 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
+import { baselineColours, candleColours, chartFrame, onThemeChange, token } from "../lib/chart";
 import { rupees } from "../lib/format";
+import { sessionAt, sessionMinutes, toClock, toMinutes } from "../lib/session";
 import { pnlCandles } from "../lib/today";
 
 export type IntradayStyle = "line" | "candles";
@@ -24,14 +26,10 @@ export interface MinutePoint {
 }
 
 // Where each mark sits along the session, 09:15 to 15:30.
-const MARKS = [
-  { label: "09:15", at: 0 },
-  { label: "12:00", at: 165 / 375 },
-  { label: "15:30", at: 1 },
-];
-
-const token = (name: string) =>
-  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const MARKS = ["09:15", "12:00", "15:30"].map((label) => ({
+  label,
+  at: sessionAt(toMinutes(label)),
+}));
 
 // The chart shows its times as UTC: each minute is stored as that same
 // clock time in UTC, so the axis reads exchange time without a zone.
@@ -43,68 +41,13 @@ function at(day: string, minute: string): UTCTimestamp {
 
 const clock = (time: Time) => {
   const date = new Date((time as number) * 1000);
-  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+  return toClock(date.getUTCHours() * 60 + date.getUTCMinutes());
 };
 
-function sessionMinutes(): string[] {
-  const out: string[] = [];
-  for (let t = 9 * 60 + 15; t <= 15 * 60 + 30; t++) {
-    out.push(`${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
-  }
-  return out;
-}
 const SESSION = sessionMinutes();
 const EVERY = 5; // minutes a candle
 const SLOTS = SESSION.filter((_, i) => i % EVERY === 0);
 const slotOf = (minute: string) => SLOTS[Math.floor(SESSION.indexOf(minute) / EVERY)];
-
-function colours() {
-  return {
-    layout: {
-      // TradingView is credited in Settings → App instead (the library's license allows it).
-      attributionLogo: false,
-      background: { color: "transparent" },
-      textColor: token("--ink-muted"),
-      fontFamily: getComputedStyle(document.body).fontFamily,
-      fontSize: 11,
-    },
-    grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-    rightPriceScale: { visible: false },
-    timeScale: { borderVisible: false },
-    crosshair: {
-      vertLine: {
-        color: token("--ink-muted"),
-        style: LineStyle.Dashed,
-        labelBackgroundColor: token("--ink"),
-      },
-      horzLine: { visible: false, labelVisible: false },
-    },
-  };
-}
-
-function candleColours() {
-  const up = token("--up");
-  const down = token("--down");
-  return {
-    upColor: up,
-    borderUpColor: up,
-    wickUpColor: up,
-    downColor: down,
-    borderDownColor: down,
-    wickDownColor: down,
-  };
-}
-
-function seriesColours() {
-  return {
-    topLineColor: token("--up"),
-    topFillColor1: token("--up-soft"),
-    topFillColor2: "transparent",
-    bottomLineColor: token("--down"),
-    bottomFillColor1: "transparent",
-    bottomFillColor2: token("--down-soft"),
-  };
-}
 
 /**
  * The day's P&L after charges, a point a minute (DESIGN.md Today Hero): the
@@ -139,7 +82,7 @@ export function IntradayChart({
   useEffect(() => {
     if (!box.current) return;
     const made = createChart(box.current, {
-      ...colours(),
+      ...chartFrame({ grid: "none", bare: true }),
       height,
       autoSize: true,
       handleScroll: false,
@@ -165,7 +108,7 @@ export function IntradayChart({
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerRadius: 3,
-            ...seriesColours(),
+            ...baselineColours({ fade: true }),
           });
     const slots = style === "candles" ? SLOTS : SESSION;
     line.createPriceLine({
@@ -212,14 +155,15 @@ export function IntradayChart({
       const half = el.offsetWidth / 2;
       el.style.left = `${Math.min(Math.max(move.point.x, half), width - half)}px`;
     });
-    const theme = new MutationObserver(() => {
-      made.applyOptions(colours());
-      series.current?.applyOptions(style === "candles" ? candleColours() : seriesColours());
+    const stop = onThemeChange(() => {
+      made.applyOptions(chartFrame({ grid: "none", bare: true }));
+      series.current?.applyOptions(
+        style === "candles" ? candleColours() : baselineColours({ fade: true }),
+      );
     });
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
       size.disconnect();
-      theme.disconnect();
+      stop();
       made.remove();
       chart.current = null;
       series.current = null;

@@ -2,6 +2,7 @@
 
 import type { Schemas } from "../api/client";
 import { istMinute, rupees } from "./format";
+import { CLOSE, istDay, istMinutes, istShift, OPEN, toClock } from "./session";
 import { reasonLabel } from "./strategies";
 
 export type ManagerLine = Schemas["ManagerLineResult"];
@@ -172,13 +173,7 @@ export function lookTier(trigger: string): LookTier | null {
 }
 
 /** The day the rail draws: from the plan, 15 minutes before the open, to just after the close. */
-export const RAIL = { from: 9 * 60, to: 15 * 60 + 45, open: 9 * 60 + 15, close: 15 * 60 + 30 };
-
-/** Minutes since midnight, IST, of an instant. */
-export function istMinutes(at: string | Date): number {
-  const shifted = new Date(new Date(at).getTime() + 5.5 * 3_600_000);
-  return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
-}
+export const RAIL = { from: 9 * 60, to: 15 * 60 + 45, open: OPEN, close: CLOSE };
 
 /** Where on the rail a minute of the day sits, 0 to 100, held to the rail. */
 export function railPct(minutes: number): number {
@@ -212,7 +207,7 @@ export function railLooks(turns: readonly Turn[]): { looks: RailLook[]; offUntil
     const label = wakeLabel(job.trigger);
     looks.push({
       id: job.job_id,
-      at: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+      at: toClock(minutes),
       pct: railPct(minutes),
       tier,
       label: label.charAt(0).toUpperCase() + label.slice(1),
@@ -239,11 +234,9 @@ export function nextLook(
     return { when: "Off", why: "It won't wake on its own. Turn it on to plan the day." };
   const today = istMinutes(now);
   if (nextWakeAt) {
-    const ist = (at: Date) => new Date(at.getTime() + 5.5 * 3_600_000);
-    const wake = ist(new Date(nextWakeAt));
-    const sameDay = wake.toISOString().slice(0, 10) === ist(now).toISOString().slice(0, 10);
-    const minutes = istMinutes(nextWakeAt);
-    const hhmm = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const wake = istShift(nextWakeAt);
+    const sameDay = istDay(new Date(nextWakeAt)) === istDay(now);
+    const hhmm = toClock(istMinutes(nextWakeAt));
     const weekday = wake.toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" });
     return {
       // Short enough for a stat card; the why carries the words.
@@ -267,11 +260,6 @@ export function effortLevel(effort: string | null | undefined, levels: readonly 
   const i = levels.indexOf(effort);
   if (i < 0 || levels.length === 0) return 3;
   return Math.max(1, Math.round(((i + 1) / levels.length) * 5));
-}
-
-/** The exchange-local date of a moment, "2026-10-15". */
-export function istDay(at: Date): string {
-  return new Date(at.getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 }
 
 /** A date some days before another, both "YYYY-MM-DD"; negative goes after. */

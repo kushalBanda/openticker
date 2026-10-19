@@ -6,6 +6,7 @@ import { Instrument } from "../../components/Instrument";
 import { SideBadge } from "../../components/PlacedBy";
 import { Segmented } from "../../components/Segmented";
 import { TableEmpty } from "../../components/TableStates";
+import { Tile, TileHead } from "../../components/Tile";
 import {
   direction,
   istClock,
@@ -122,17 +123,18 @@ function LegsTile({
   );
 
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>{summary?.kind === "signal" ? "Legs" : "Legs · this run"}</h2>
-        <span className="flex-1" />
-        {run && (
+    <Tile
+      title={summary?.kind === "signal" ? "Legs" : "Legs · this run"}
+      actions={
+        run && (
           <span className="note">
             entered {istClock(new Date(run.started_at))}
             {total !== null && ` · P&L ${rupees(total, { sign: true })}`}
           </span>
-        )}
-      </div>
+        )
+      }
+      flush
+    >
       {!run ? (
         <TableEmpty>
           {summary?.state === "listening"
@@ -176,9 +178,7 @@ function LegsTile({
       )}
       {alerts && (
         <>
-          <div className="tile-head" style={{ borderTop: "1px solid var(--line)", marginTop: 8 }}>
-            <h2>Recent alerts</h2>
-          </div>
+          <TileHead title="Recent alerts" divider />
           {alerts.length === 0 ? (
             <TableEmpty>No alerts yet.</TableEmpty>
           ) : (
@@ -204,7 +204,7 @@ function LegsTile({
           )}
         </>
       )}
-    </div>
+    </Tile>
   );
 }
 

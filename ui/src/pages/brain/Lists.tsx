@@ -2,6 +2,7 @@ import { useNavigate } from "react-router";
 import { type BrainFound, useBrainSearch, useStrategies } from "../../api/queries";
 import { type Column, DataTable } from "../../components/DataTable";
 import { TableSkeleton } from "../../components/TableStates";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import { heldText, type NoteKind, noteHref, statusLabel, statusTone } from "../../lib/brain";
 import { istDate } from "../../lib/format";
 
@@ -106,18 +107,11 @@ export function NoteList({ kind }: { kind: "day" | "lesson" | "proposal" }) {
       {list.isPending ? (
         <TableSkeleton label={`Loading ${NAME[kind].toLowerCase()}`} rows={3} />
       ) : list.isError ? (
-        <div className="empty" role="alert">
-          <h2>{NAME[kind]} didn't load</h2>
-          <p className="note">{list.error.message}</p>
-          <button type="button" className="btn" onClick={() => list.refetch()}>
-            Try again
-          </button>
-        </div>
+        <FailedTile inset what={NAME[kind]} error={list.error} retry={list.refetch} />
       ) : list.data.notes.length === 0 ? (
-        <div className="empty">
-          <h2>{EMPTY[kind].title}</h2>
-          <p className="note">{EMPTY[kind].text}</p>
-        </div>
+        <EmptyTile inset title={EMPTY[kind].title}>
+          {EMPTY[kind].text}
+        </EmptyTile>
       ) : (
         <DataTable
           label={NAME[kind]}

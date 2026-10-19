@@ -148,11 +148,16 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Two columns that stack on their own, so a short tile leaves no gap beside a tall one. */}
+          {/* What's live leads: positions and strategies on the left, what just
+              happened on the right; the record (days, margin, charges) follows.
+              Two columns that stack on their own, so a short tile leaves no gap. */}
           <div className="dash-grid">
             <div className="dash-col">
               <Reveal>
                 <OpenPositionsTile rows={rows} loading={loading} failed={failureOf(positions)} />
+              </Reveal>
+              <Reveal>
+                <StrategiesTile strategies={list} failed={failureOf(strategies)} />
               </Reveal>
               <Reveal>
                 <DailyCalendar
@@ -162,23 +167,20 @@ export function Dashboard() {
                   failed={failureOf(history)}
                 />
               </Reveal>
-              <Reveal>
-                <StrategiesTile strategies={list} failed={failureOf(strategies)} />
-              </Reveal>
             </div>
             <div className="dash-col">
-              <Reveal>
-                <MarginTile funds={funds.data} failed={failureOf(funds)} />
-              </Reveal>
-              <Reveal>
-                <ChargesTile summary={charges.data} failed={failureOf(charges)} />
-              </Reveal>
               <Reveal>
                 <RecentEventsTile
                   entries={recent.data?.entries}
                   names={names}
                   failed={failureOf(recent)}
                 />
+              </Reveal>
+              <Reveal>
+                <MarginTile funds={funds.data} failed={failureOf(funds)} />
+              </Reveal>
+              <Reveal>
+                <ChargesTile summary={charges.data} failed={failureOf(charges)} />
               </Reveal>
             </div>
           </div>

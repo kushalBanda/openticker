@@ -8,7 +8,6 @@ import {
   disagreement,
   effortLevel,
   endedToday,
-  istDay,
   isWake,
   type LineChange,
   lineLabel,
@@ -366,8 +365,7 @@ describe("the day rail", () => {
 });
 
 describe("the tape of days", () => {
-  it("names the exchange-local day and steps back by calendar days", () => {
-    expect(istDay(new Date("2026-10-14T19:00:00Z"))).toBe("2026-10-15"); // 00:30 IST
+  it("steps back by calendar days", () => {
     expect(daysBefore("2026-10-15", 40)).toBe("2026-09-05");
   });
 

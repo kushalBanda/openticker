@@ -6,6 +6,7 @@ import { Instrument } from "../../components/Instrument";
 import { PlacedBy, SideBadge } from "../../components/PlacedBy";
 import { Segmented } from "../../components/Segmented";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { istClock, MISSING, price, qty } from "../../lib/format";
 import { type Order, statusLabel } from "../../lib/orders";
 import { useActions } from "../../shell/actions";
@@ -17,7 +18,8 @@ type Executed = "all" | "FILLED" | "REJECTED" | "CANCELLED";
 const time = (order: Order) => istClock(new Date(order.placed_at));
 const filled = (order: Order) => (order.status === "FILLED" ? order.quantity : 0);
 
-function Status({ order }: { order: Order }) {
+/** An order's status as a tag: live in `accent`, refused in `down`. */
+export function Status({ order }: { order: Order }) {
   const tone =
     order.status === "PENDING"
       ? "accent"
@@ -167,13 +169,12 @@ export function OrderBook({
 
   return (
     <>
-      <section className="tile" data-flush="true" aria-labelledby="open-orders">
-        <div className="tile-head">
-          <h2 id="open-orders">
-            Open orders{!loading && <span className="count"> ({open.length})</span>}
-          </h2>
-          <span className="flex-1" />
-          {cancelAllShown && openAll.length > 0 && (
+      <Tile
+        title="Open orders"
+        count={loading ? undefined : open.length}
+        actions={
+          cancelAllShown &&
+          openAll.length > 0 && (
             <HoldButton
               label="Hold to cancel all"
               size="sm"
@@ -195,8 +196,10 @@ export function OrderBook({
                 }
               }}
             />
-          )}
-        </div>
+          )
+        }
+        flush
+      >
         {loading ? (
           <TableSkeleton label="Loading open orders" />
         ) : open.length === 0 ? (
@@ -236,14 +239,12 @@ export function OrderBook({
             )}
           />
         )}
-      </section>
+      </Tile>
 
-      <section className="tile" data-flush="true" aria-labelledby="executed-orders">
-        <div className="tile-head">
-          <h2 id="executed-orders">
-            Executed orders{!loading && <span className="count"> ({done.length})</span>}
-          </h2>
-          <span className="flex-1" />
+      <Tile
+        title="Executed orders"
+        count={loading ? undefined : done.length}
+        actions={
           <Segmented<Executed>
             label="Status"
             value={executed}
@@ -255,7 +256,9 @@ export function OrderBook({
               { value: "CANCELLED", label: "Cancelled" },
             ]}
           />
-        </div>
+        }
+        flush
+      >
         {loading ? (
           <TableSkeleton label="Loading executed orders" />
         ) : done.length === 0 ? (
@@ -273,8 +276,8 @@ export function OrderBook({
             }
           />
         )}
-      </section>
-      <p className="note" style={{ marginTop: 16 }}>
+      </Tile>
+      <p className="note page-note">
         Today's paper orders. Open orders fill when a live price reaches them; unfilled ones are
         cancelled at the session's end.
       </p>

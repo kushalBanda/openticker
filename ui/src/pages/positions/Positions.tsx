@@ -9,6 +9,7 @@ import { Page } from "../../components/Page";
 import { PortfolioTabs } from "../../components/PortfolioTabs";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import {
   brokerName,
   direction,
@@ -367,22 +368,13 @@ export function Positions() {
       {loading ? (
         <Skeleton />
       ) : source.isError ? (
-        <div className="tile empty" role="alert">
-          <h2>Positions didn't load</h2>
-          <p className="note">{source.error.message}</p>
-          <button type="button" className="btn" onClick={() => source.refetch()}>
-            Try again
-          </button>
-        </div>
+        <FailedTile what="Positions" error={source.error} retry={source.refetch} />
       ) : rows.length === 0 ? (
-        <div className="tile empty">
-          <h2>{view === "open" ? "No open positions" : "No closed positions"}</h2>
-          <p className="note">
-            {view === "open"
-              ? "Place a paper order, or ask your agent to: place_order."
-              : "Positions closed in the paper account show here with their realized P&L."}
-          </p>
-        </div>
+        <EmptyTile title={view === "open" ? "No open positions" : "No closed positions"}>
+          {view === "open"
+            ? "Place a paper order, or ask your agent to: place_order."
+            : "Positions closed in the paper account show here with their realized P&L."}
+        </EmptyTile>
       ) : (
         <div className="tile" data-flush="true">
           <DataTable
@@ -435,7 +427,7 @@ export function Positions() {
           />
         </div>
       )}
-      <p className="note" style={{ marginTop: 16 }}>
+      <p className="note page-note">
         MIS positions are squared off at 15:20 IST. P&L moves with every tick; the server's figure
         replaces it after each close and every 30 seconds.
       </p>

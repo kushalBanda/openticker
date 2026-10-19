@@ -2,6 +2,8 @@
 // Indian digit grouping, an explicit sign on every change, hyphen-minus, and
 // "—" for a value that is missing, never 0.
 
+import { istDay } from "./session";
+
 export const MISSING = "—";
 
 /** A share as a percentage to one decimal: 0.00125 is "0.1", 0.18 is "18.0". */
@@ -122,7 +124,7 @@ const MONTH_NAMES = [
 /** 6 Oct: a plain date ("2026-10-06"), an expiry, in Kite's months. */
 /** Calendar days from today (exchange-local) to a date: "2026-10-27" from 28 Sep is 29. */
 export function daysUntil(iso: string, now: Date): number {
-  const today = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const today = istDay(now);
   return Math.round((Date.parse(iso.slice(0, 10)) - Date.parse(today)) / 86_400_000);
 }
 

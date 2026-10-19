@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { type Script, useScheduleScript } from "../../api/queries";
 import { Dialog } from "../../components/Dialog";
+import { SessionWindow } from "../../components/SessionWindow";
+import { TimeField } from "../../components/TimeField";
 import { useActions } from "../../shell/actions";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -63,26 +65,17 @@ export function ScheduleDialog({
         OpenTicker starts it at the start time on each day you pick that the exchange trades, and
         stops it at the stop time, whoever started it. Without a stop time it runs until it exits.
       </p>
+      <SessionWindow start={start} stop={stop} onStart={setStart} onStop={setStop} />
       <div className="fields">
-        <label className="field">
-          <span className="label">Start</span>
-          <input
-            className="input"
-            type="time"
-            value={start}
-            required
-            onChange={(e) => setStart(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span className="label">Stop (optional)</span>
-          <input
-            className="input"
-            type="time"
-            value={stop}
-            onChange={(e) => setStop(e.target.value)}
-          />
-        </label>
+        <TimeField label="Start" value={start} onChange={setStart} />
+        <TimeField
+          label="Stop (optional)"
+          value={stop}
+          onChange={setStop}
+          optional
+          seed="15:30"
+          invalid={Boolean(stop) && stop <= start}
+        />
       </div>
       <fieldset className="day-picker" aria-label="Days">
         {DAYS.map((label, day) => (

@@ -1,4 +1,5 @@
 import { type ManagerDay, useAgentSettings, useAgentThread, useHarnesses } from "../../api/queries";
+import { Tile } from "../../components/Tile";
 import { effortLabel, modelName } from "../../lib/agents";
 import { railLooks } from "../../lib/manager";
 import { DayRail } from "./DayRail";
@@ -15,15 +16,7 @@ export function HowItRan({ day }: { day: ManagerDay }) {
   const name = (model: string) => modelName(info?.models, model);
   const { looks, offUntil } = railLooks(thread.data?.turns ?? []);
   return (
-    <section
-      className="tile mgr-run"
-      data-flush="true"
-      data-testid="how-it-ran"
-      aria-labelledby="mgr-ran-title"
-    >
-      <div className="tile-head">
-        <h2 id="mgr-ran-title">How it ran</h2>
-      </div>
+    <Tile title="How it ran" flush className="mgr-run" testId="how-it-ran">
       <DayRail
         looks={looks}
         offUntil={offUntil}
@@ -48,6 +41,6 @@ export function HowItRan({ day }: { day: ManagerDay }) {
       <p className="mgr-run-foot">
         What it ran on that day. The choices for the days ahead are today's.
       </p>
-    </section>
+    </Tile>
   );
 }

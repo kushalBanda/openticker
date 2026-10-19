@@ -13,6 +13,7 @@ import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { Select } from "../../components/Select";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import { MISSING, qty } from "../../lib/format";
 import {
   atLimit,
@@ -76,10 +77,7 @@ export function Script() {
   if (detail.isError) {
     return (
       <Page title="Script" back={{ to: "/scripts", label: "Scripts" }}>
-        <div className="tile empty" role="alert">
-          <h2>No script {id}</h2>
-          <p className="note">{detail.error.message}</p>
-        </div>
+        <FailedTile what="The script" title={`No script ${id}`} error={detail.error} />
       </Page>
     );
   }
@@ -207,10 +205,9 @@ export function Script() {
         (detail.isPending ? (
           <div className="tile code-tile skeleton" />
         ) : !run ? (
-          <div className="tile empty">
-            <h2>Not run yet</h2>
-            <p className="note">Start it, and what it prints shows here as it prints it.</p>
-          </div>
+          <EmptyTile title="Not run yet">
+            Start it, and what it prints shows here as it prints it.
+          </EmptyTile>
         ) : (
           <>
             <CodeBox>

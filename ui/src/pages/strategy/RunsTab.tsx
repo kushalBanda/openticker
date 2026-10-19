@@ -2,6 +2,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import type { Schemas } from "../../api/client";
 import { type Column, DataTable } from "../../components/DataTable";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { direction, istDate, MISSING, rupees, signed } from "../../lib/format";
 import { reasonLabel, triggerLabel } from "../../lib/strategies";
 
@@ -60,16 +61,17 @@ export function RunsTab({ ledger }: { ledger: UseQueryResult<Ledger> }) {
     },
   ];
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>
-          Runs <span className="count">({ledger.data?.total_runs ?? 0})</span>
-        </h2>
-        <span className="flex-1" />
-        {ledger.data && ledger.data.total_runs > ledger.data.runs.length && (
+    <Tile
+      title="Runs"
+      count={ledger.data?.total_runs ?? 0}
+      actions={
+        ledger.data &&
+        ledger.data.total_runs > ledger.data.runs.length && (
           <span className="note">the newest {ledger.data.runs.length}</span>
-        )}
-      </div>
+        )
+      }
+      flush
+    >
       {ledger.isPending ? (
         <TableSkeleton label="Loading runs" />
       ) : ledger.isError ? (
@@ -84,6 +86,6 @@ export function RunsTab({ ledger }: { ledger: UseQueryResult<Ledger> }) {
           rowKey={(r) => r.run_id}
         />
       )}
-    </div>
+    </Tile>
   );
 }

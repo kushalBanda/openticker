@@ -294,7 +294,7 @@ export function Rail({ current, onSearch }: { current: string | null; onSearch: 
       .sort((a, b) => (a.subject_name ?? "").localeCompare(b.subject_name ?? ""));
 
   return (
-    <nav className="aw-rail" aria-label="Chats">
+    <nav className="aw-rail scroll" aria-label="Chats">
       <div className="aw-rail-top">
         <h1>Agents</h1>
         <button

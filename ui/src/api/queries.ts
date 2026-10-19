@@ -581,7 +581,6 @@ export function useBell(eventTypes: string[]) {
 
 // Settings (ADR 33, ADR 37).
 
-export type BrokerSession = Schemas["BrokerSessionResult"];
 export type ApiKey = Schemas["ApiKeyResult"];
 
 export function useBrokerSession(broker: string | undefined) {
@@ -768,7 +767,6 @@ export function useRecentEvents(limit: number) {
 }
 
 export type Interval = Schemas["Interval"];
-export type Bars = Schemas["BarsResult"];
 export type Depth = Schemas["MarketDepthResult"];
 
 /** Candles from `from` to `to` (exchange-local dates), oldest first. Ticks move the last one. */
@@ -1577,8 +1575,6 @@ export function useDecideProposal() {
     onSettled: () => client.invalidateQueries({ queryKey: ["brain"] }),
   });
 }
-
-export type DebriefSchedule = Schemas["DebriefScheduleResult"];
 
 /** When the daily debrief runs on its own, and when it's next due. */
 export function useDebriefSchedule() {

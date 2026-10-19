@@ -154,7 +154,7 @@ export function ChoicePicker({
               {...enter}
               exit={leave}
             >
-              <div className="aw-menu-col">
+              <div className="aw-menu-col scroll">
                 <div className="menu-note">Model · {harnessLabel(harness)}</div>
                 {folderDefault.model === null && (
                   <Row
@@ -220,7 +220,7 @@ export function ChoicePicker({
                   </button>
                 )}
               </div>
-              <div className="aw-menu-col aw-menu-effort">
+              <div className="aw-menu-col aw-menu-effort scroll">
                 <div className="menu-note">Effort{running ? ` · ${running.name}` : ""}</div>
                 {levels.length === 0 ? (
                   <p className="aw-menu-none">This model has no effort setting.</p>

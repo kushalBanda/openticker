@@ -60,7 +60,7 @@ export function SidePanel({
         ))}
       </div>
       <div
-        className="aw-side-body"
+        className="aw-side-body scroll"
         id="aw-side-body"
         role="tabpanel"
         aria-labelledby={`aw-tab-${shown}`}

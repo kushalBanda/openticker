@@ -15,6 +15,7 @@ import { Segmented } from "../../components/Segmented";
 import { Select } from "../../components/Select";
 import { StatCard } from "../../components/StatCard";
 import { TableSkeleton } from "../../components/TableStates";
+import { FailedTile, Tile } from "../../components/Tile";
 import {
   addPick,
   INDICES,
@@ -324,14 +325,15 @@ function PayoffCard({
   );
   const data = legs.length ? payoff.data : undefined;
   return (
-    <section className="tile payoff-tile" aria-labelledby="payoff-title">
-      <div className="tile-head">
-        <h2 id="payoff-title">Payoff</h2>
-        <span className="flex-1" />
+    <Tile
+      title="Payoff"
+      actions={
         <span className="note legend">
           <span className="key-expiry" /> at expiry <span className="key-today" /> today
         </span>
-      </div>
+      }
+      className="payoff-tile"
+    >
       {legs.length === 0 ? (
         <div className="chart-note">
           Pick a bid to sell or an ask to buy. The basket's payoff shows here before you place it.
@@ -368,7 +370,7 @@ function PayoffCard({
           </p>
         </>
       )}
-    </section>
+    </Tile>
   );
 }
 
@@ -480,10 +482,12 @@ export function OptionChain() {
       <UnderlyingDialog open={choosing} onClose={() => setChoosing(false)} onChoose={choose} />
 
       {chain.isError && !data ? (
-        <div className="tile empty">
-          <h2>No option chain for {name}</h2>
-          <p className="note">{chain.error.message}</p>
-        </div>
+        <FailedTile
+          what="The option chain"
+          title={`No option chain for ${name}`}
+          error={chain.error}
+          retry={chain.refetch}
+        />
       ) : (
         <>
           <div className="stats chain-stats">
@@ -539,29 +543,29 @@ export function OptionChain() {
 
           <div className="chain-charts">
             <PayoffCard broker={broker} legs={legs} spot={spot} />
-            <section className="tile" aria-labelledby="smile-title">
-              <div className="tile-head">
-                <h2 id="smile-title">IV smile</h2>
-                <span className="flex-1" />
+            <Tile
+              title="IV smile"
+              actions={
                 <span className="note legend">
                   <span className="key-calls" /> calls <span className="key-puts" /> puts
                 </span>
-              </div>
+              }
+            >
               <SmileChart
                 rows={byStrike((q) => q.implied_volatility)}
                 atm={data?.atm_strike ?? 0}
               />
-            </section>
-            <section className="tile" aria-labelledby="oi-title">
-              <div className="tile-head">
-                <h2 id="oi-title">OI by strike</h2>
-                <span className="flex-1" />
+            </Tile>
+            <Tile
+              title="OI by strike"
+              actions={
                 <span className="note legend">
                   <span className="key-calls" /> calls <span className="key-puts" /> puts
                 </span>
-              </div>
+              }
+            >
               <OiChart rows={byStrike((q) => q.open_interest)} atm={data?.atm_strike ?? 0} />
-            </section>
+            </Tile>
           </div>
         </>
       )}

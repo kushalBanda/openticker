@@ -23,6 +23,7 @@ import { LivePrice } from "../../components/LivePrice";
 import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { EmptyTile, FailedTile } from "../../components/Tile";
 import {
   change,
   direction,
@@ -210,38 +211,33 @@ export function WatchlistPage() {
       }
     >
       {lists.isError ? (
-        <div className="tile empty" role="alert">
-          <h2>Watchlists didn't load</h2>
-          <p className="note">{lists.error.message}</p>
-          <button type="button" className="btn" onClick={() => lists.refetch()}>
-            Try again
-          </button>
-        </div>
+        <FailedTile what="Watchlists" error={lists.error} retry={lists.refetch} />
       ) : loading ? (
         <div className="tile" data-flush="true">
           <TableSkeleton label="Loading watchlists" rows={4} />
         </div>
       ) : !current ? (
-        <div className="tile empty">
-          <h2>No watchlists yet</h2>
-          <p className="note">
-            Keep the instruments you follow in named lists, priced live. Your agent can read and
-            change them too.
-          </p>
-          <div className="empty-actions">
-            <button
-              type="button"
-              className="btn"
-              data-variant="primary"
-              onClick={() => setDialog("new")}
-            >
-              New list
-            </button>
-          </div>
-          <div className="empty-prompt">
-            <CopyLine text={ASK_AGENT} label="Copy the request for your agent" />
-          </div>
-        </div>
+        <EmptyTile
+          title="No watchlists yet"
+          action={
+            <>
+              <button
+                type="button"
+                className="btn"
+                data-variant="primary"
+                onClick={() => setDialog("new")}
+              >
+                New list
+              </button>
+              <div className="empty-prompt">
+                <CopyLine text={ASK_AGENT} label="Copy the request for your agent" />
+              </div>
+            </>
+          }
+        >
+          Keep the instruments you follow in named lists, priced live. Your agent can read and
+          change them too.
+        </EmptyTile>
       ) : (
         <>
           <div className="toolbar wl-tabs">
@@ -323,7 +319,7 @@ export function WatchlistPage() {
               />
             )}
           </section>
-          <p className="note" style={{ marginTop: 16 }}>
+          <p className="note page-note">
             Click a row to open the instrument. <span className="kbd">↑</span>{" "}
             <span className="kbd">↓</span> select one; <span className="kbd">B</span> /{" "}
             <span className="kbd">S</span> opens a paper order for it. Lists are saved on this

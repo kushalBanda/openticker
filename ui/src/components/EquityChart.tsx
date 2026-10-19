@@ -1,60 +1,10 @@
-import {
-  BaselineSeries,
-  createChart,
-  type IChartApi,
-  type ISeriesApi,
-  LineStyle,
-} from "lightweight-charts";
+import { BaselineSeries, createChart, type IChartApi, type ISeriesApi } from "lightweight-charts";
 import { useEffect, useRef } from "react";
+import { baselineColours, chartFrame, onThemeChange } from "../lib/chart";
 
 export interface EquityPoint {
   day: string; // YYYY-MM-DD
   net_pnl: number;
-}
-
-const token = (name: string) =>
-  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
-function colours() {
-  return {
-    layout: {
-      // TradingView is credited in Settings → App instead (the library's license allows it).
-      attributionLogo: false,
-      background: { color: "transparent" },
-      textColor: token("--ink-muted"),
-      fontFamily: getComputedStyle(document.body).fontFamily,
-      fontSize: 11,
-    },
-    grid: {
-      vertLines: { visible: false },
-      horzLines: { color: token("--chart-grid") },
-    },
-    rightPriceScale: { borderColor: token("--line") },
-    timeScale: { borderColor: token("--line") },
-    crosshair: {
-      vertLine: {
-        color: token("--ink-muted"),
-        style: LineStyle.Dashed,
-        labelBackgroundColor: token("--ink"),
-      },
-      horzLine: {
-        color: token("--ink-muted"),
-        style: LineStyle.Dashed,
-        labelBackgroundColor: token("--ink"),
-      },
-    },
-  };
-}
-
-function seriesColours() {
-  return {
-    topLineColor: token("--up"),
-    topFillColor1: token("--up-soft"),
-    topFillColor2: token("--up-soft"),
-    bottomLineColor: token("--down"),
-    bottomFillColor1: token("--down-soft"),
-    bottomFillColor2: token("--down-soft"),
-  };
 }
 
 /**
@@ -70,7 +20,7 @@ export function EquityChart({ points, height = 200 }: { points: EquityPoint[]; h
   useEffect(() => {
     if (!box.current) return;
     const made = createChart(box.current, {
-      ...colours(),
+      ...chartFrame({ grid: "rows" }),
       height,
       autoSize: true,
       handleScroll: false,
@@ -82,16 +32,15 @@ export function EquityChart({ points, height = 200 }: { points: EquityPoint[]; h
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      ...seriesColours(),
+      ...baselineColours(),
     });
     chart.current = made;
-    const theme = new MutationObserver(() => {
-      made.applyOptions(colours());
-      series.current?.applyOptions(seriesColours());
+    const stop = onThemeChange(() => {
+      made.applyOptions(chartFrame({ grid: "rows" }));
+      series.current?.applyOptions(baselineColours());
     });
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
-      theme.disconnect();
+      stop();
       made.remove();
       chart.current = null;
       series.current = null;

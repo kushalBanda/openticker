@@ -11,12 +11,12 @@ import { type Column, DataTable } from "../../components/DataTable";
 import { Page } from "../../components/Page";
 import { loaded, StatCard } from "../../components/StatCard";
 import { failureOf, TableEmpty, TableFailed, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { direction, MISSING, rupees } from "../../lib/format";
 import {
   asStop,
   disagreement,
   endedToday,
-  istDay,
   lineLabel,
   type ManagerLine,
   market,
@@ -24,6 +24,7 @@ import {
   setByLabel,
   tableOrder,
 } from "../../lib/manager";
+import { istDay } from "../../lib/session";
 import { useActions } from "../../shell/actions";
 import { useServerNow } from "../../stream/StreamProvider";
 import { Amount } from "./Amount";
@@ -116,8 +117,11 @@ export function Manager() {
         )
       }
     >
-      <DayTape selected={past ?? today} today={today} />
-      {past ? <PastDay day={past} /> : <TodayBody today={today} />}
+      {/* One tape for every day, so it keeps its focus as the days change. */}
+      <div className="mgr-layout">
+        <DayTape selected={past ?? today} today={today} />
+        {past ? <PastDay day={past} /> : <TodayBody today={today} />}
+      </div>
     </Page>
   );
 }
@@ -129,48 +133,46 @@ function TodayBody({ today }: { today: string }) {
   const serverNow = useServerNow();
   return (
     <>
-      {data?.enabled && data.stalled && (
-        <p className="error-line mgr-stalled" role="status">
-          {data.stalled === "capped"
-            ? `It used its ${data.wakes_per_day} wakes today and won't wake again until tomorrow's plan.`
-            : "Its turns keep failing. It tries again every 30 minutes; its thread below says why."}
-        </p>
-      )}
-      <div className="stats">
-        <StatCard
-          label="Today"
-          value={loaded(manager, (m) => rupees(m.desk_today?.net, { sign: true }))}
-          tone={direction(data?.desk_today?.net)}
-          note={data?.desk_today ? <Split figure={data.desk_today} /> : "after charges"}
-        />
-        <StatCard
-          label="Given to strategies"
-          value={loaded(manager, (m) => rupees(m.given, { decimals: 0 }))}
-          note={data && `of ${rupees(data.account, { decimals: 0 })}`}
-        />
-        <StatCard
-          label="Next look"
-          value={loaded(
-            manager,
-            (m) => nextLook(m.enabled, m.next_wake_at, m.next_wake_reason, serverNow()).when,
-          )}
-          note={
-            data &&
-            nextLook(data.enabled, data.next_wake_at, data.next_wake_reason, serverNow()).why
-          }
-        />
-        <StatCard
-          label="Looks today"
-          value={loaded(manager, (m) => m.wakes_today)}
-          note={data && `of ${data.wakes_per_day} a day`}
-        />
-      </div>
-      <Lines manager={manager} today={today} />
-      {data && (
-        <div className="mgr-row">
-          <Decisions threadId={data.thread_id} />
-          <div className="mgr-side">
-            <HowItRuns manager={data} />
+      <div className="mgr-main">
+        {data?.enabled && data.stalled && (
+          <p className="error-line mgr-stalled" role="status">
+            {data.stalled === "capped"
+              ? `It used its ${data.wakes_per_day} wakes today and won't wake again until tomorrow's plan.`
+              : "Its turns keep failing. It tries again every 30 minutes; its thread below says why."}
+          </p>
+        )}
+        <div className="stats">
+          <StatCard
+            label="Today"
+            value={loaded(manager, (m) => rupees(m.desk_today?.net, { sign: true }))}
+            tone={direction(data?.desk_today?.net)}
+            note={data?.desk_today ? <Split figure={data.desk_today} /> : "after charges"}
+          />
+          <StatCard
+            label="Given to strategies"
+            value={loaded(manager, (m) => rupees(m.given, { decimals: 0 }))}
+            note={data && `of ${rupees(data.account, { decimals: 0 })}`}
+          />
+          <StatCard
+            label="Next look"
+            value={loaded(
+              manager,
+              (m) => nextLook(m.enabled, m.next_wake_at, m.next_wake_reason, serverNow()).when,
+            )}
+            note={
+              data &&
+              nextLook(data.enabled, data.next_wake_at, data.next_wake_reason, serverNow()).why
+            }
+          />
+          <StatCard
+            label="Looks today"
+            value={loaded(manager, (m) => m.wakes_today)}
+            note={data && `of ${data.wakes_per_day} a day`}
+          />
+        </div>
+        {data && (
+          // What it intends beside how it runs, the same height; its numbers under both.
+          <div className="mgr-pair">
             <Plan
               plan={data.plan?.day === today ? data.plan : null}
               lines={data.lines}
@@ -182,9 +184,12 @@ function TodayBody({ today }: { today: string }) {
                   : "Turn the manager on, and it plans each trading day before the open."
               }
             />
+            <HowItRuns manager={data} />
           </div>
-        </div>
-      )}
+        )}
+      </div>
+      <Decisions threadId={data ? data.thread_id : undefined} />
+      <Lines manager={manager} today={today} />
     </>
   );
 }
@@ -293,14 +298,16 @@ function Lines({ manager, today }: { manager: ReturnType<typeof useManager>; tod
     },
   ];
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>Its numbers</h2>
-        <span className="flex-1" />
+    <Tile
+      title="Its numbers"
+      className="mgr-wide"
+      actions={
         <span className="note">
           Click a number to change it. Yours stand until you hand them back.
         </span>
-      </div>
+      }
+      flush
+    >
       {failure ? (
         <TableFailed what="The manager" failure={failure} />
       ) : !manager.data ? (
@@ -346,6 +353,6 @@ function Lines({ manager, today }: { manager: ReturnType<typeof useManager>; tod
         whenever the run started. Its stops act when it looks; each strategy's own stop loss acts at
         once.
       </p>
-    </div>
+    </Tile>
   );
 }

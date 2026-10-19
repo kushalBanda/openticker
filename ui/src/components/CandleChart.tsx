@@ -11,9 +11,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 import { applyTick, type Candle, type Choice, type Fill, fillMarks } from "../lib/candles";
-
-const token = (name: string) =>
-  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+import { candleColours, chartFrame, onThemeChange, token } from "../lib/chart";
 
 const SHOWN = 120; // candles in view when a range loads; wheel and drag for more
 
@@ -34,49 +32,8 @@ const onDay = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
 });
 
-function colours() {
-  return {
-    layout: {
-      // TradingView is credited in Settings → App instead (the library's license allows it).
-      attributionLogo: false,
-      background: { color: "transparent" },
-      textColor: token("--ink-muted"),
-      fontFamily: getComputedStyle(document.body).fontFamily,
-      fontSize: 11,
-    },
-    grid: {
-      vertLines: { color: token("--chart-grid") },
-      horzLines: { color: token("--chart-grid") },
-    },
-    rightPriceScale: { borderColor: token("--line") },
-    timeScale: { borderColor: token("--line") },
-    crosshair: {
-      vertLine: {
-        color: token("--ink-muted"),
-        style: LineStyle.Dashed,
-        labelBackgroundColor: token("--ink"),
-      },
-      horzLine: {
-        color: token("--ink-muted"),
-        style: LineStyle.Dashed,
-        labelBackgroundColor: token("--ink"),
-      },
-    },
-  };
-}
-
 function seriesColours(dayUp: boolean) {
-  const up = token("--up");
-  const down = token("--down");
-  return {
-    upColor: up,
-    borderUpColor: up,
-    wickUpColor: up,
-    downColor: down,
-    borderDownColor: down,
-    wickDownColor: down,
-    priceLineColor: dayUp ? up : down,
-  };
+  return { ...candleColours(), priceLineColor: token(dayUp ? "--up" : "--down") };
 }
 
 /**
@@ -115,7 +72,7 @@ export function CandleChart({
     if (!box.current) return;
     const day = choice.minutes === 0;
     const made = createChart(box.current, {
-      ...colours(),
+      ...chartFrame(),
       height,
       autoSize: true,
       timeScale: { timeVisible: !day, secondsVisible: false, rightOffset: 4 },
@@ -135,13 +92,12 @@ export function CandleChart({
     series.current = line;
     markers.current = createSeriesMarkers(line, []);
     chart.current = made;
-    const theme = new MutationObserver(() => {
-      made.applyOptions(colours());
+    const stop = onThemeChange(() => {
+      made.applyOptions(chartFrame());
       series.current?.applyOptions(seriesColours(up.current));
     });
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
-      theme.disconnect();
+      stop();
       made.remove();
       chart.current = null;
       series.current = null;

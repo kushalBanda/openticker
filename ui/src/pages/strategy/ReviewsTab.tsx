@@ -3,6 +3,7 @@ import type { Schemas } from "../../api/client";
 import { useManager } from "../../api/queries";
 import { Markdown } from "../../components/Markdown";
 import { TableEmpty, TableSkeleton } from "../../components/TableStates";
+import { Tile } from "../../components/Tile";
 import { istDate } from "../../lib/format";
 import { askedBy, reviewedWhen } from "../../lib/strategies";
 import { ReviewNow, VerdictBadge } from "./LatestReview";
@@ -38,13 +39,12 @@ function Outcome({ job }: { job: Job }) {
 export function ReviewsTab({ id, reviews }: { id: string; reviews: UseQueryResult<Jobs> }) {
   const managerOn = useManager().data?.enabled === true;
   return (
-    <div className="tile" data-flush="true">
-      <div className="tile-head">
-        <h2>Reviews</h2>
-        <span className="note">{reviewedWhen(managerOn)}</span>
-        <span className="flex-1" />
-        <ReviewNow id={id} reviews={reviews.data?.jobs} variant="primary" />
-      </div>
+    <Tile
+      title="Reviews"
+      note={reviewedWhen(managerOn)}
+      actions={<ReviewNow id={id} reviews={reviews.data?.jobs} variant="primary" />}
+      flush
+    >
       {reviews.isPending ? (
         <TableSkeleton label="Loading reviews" />
       ) : reviews.isError ? (
@@ -74,6 +74,6 @@ export function ReviewsTab({ id, reviews }: { id: string; reviews: UseQueryResul
           ))}
         </ol>
       )}
-    </div>
+    </Tile>
   );
 }

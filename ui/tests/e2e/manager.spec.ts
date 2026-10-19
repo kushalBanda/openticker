@@ -251,7 +251,15 @@ test("a day it was off, a day further back, and days there weren't", async ({ pa
   await expect(page.getByText("No plan: it wasn't on.")).toBeVisible();
 
   // A day before the tape's reach: the tape moves to it.
-  await page.getByLabel("A day to open").fill("2026-08-03");
+  await page.getByRole("button", { name: "Pick a day" }).click();
+  const picker = page.getByRole("dialog", { name: "Pick a day" });
+  await expect(picker.getByRole("heading", { name: "September 2026" })).toBeVisible();
+  // Weekends aren't on it; a holiday and a day to come can't be picked.
+  await expect(picker.getByRole("button", { name: /^2026-09-19/ })).toHaveCount(0);
+  await expect(picker.getByRole("button", { name: /^2026-09-23/ })).toBeDisabled();
+  await picker.getByRole("button", { name: "The month before" }).click();
+  await expect(picker.getByRole("heading", { name: "August 2026" })).toBeVisible();
+  await picker.getByRole("button", { name: /^2026-08-03/ }).click();
   await expect(page).toHaveURL(/\/manager\/2026-08-03$/);
   const tape = page.getByRole("listbox", { name: "Trading days" });
   await expect(tape.getByRole("option", { name: /^Mon 3 Aug/ })).toHaveAttribute(

@@ -17,6 +17,7 @@ import { Page } from "../../components/Page";
 import { Segmented } from "../../components/Segmented";
 import { loaded, StatCard } from "../../components/StatCard";
 import { failureOf, TableFailed } from "../../components/TableStates";
+import { EmptyTile } from "../../components/Tile";
 import { direction, MISSING, rupees } from "../../lib/format";
 import {
   isToday,
@@ -120,12 +121,9 @@ export function Strategy() {
   if (gone) {
     return (
       <Page title="Strategy not found" back={{ to: "/strategies", label: "Strategies" }}>
-        <div className="tile empty">
-          <h2>No strategy with id {id}</h2>
-          <p className="note">
-            It may have been deleted by your agent. <Link to="/strategies">All strategies ›</Link>
-          </p>
-        </div>
+        <EmptyTile title={`No strategy with id ${id}`}>
+          It may have been deleted by your agent. <Link to="/strategies">All strategies ›</Link>
+        </EmptyTile>
       </Page>
     );
   }
