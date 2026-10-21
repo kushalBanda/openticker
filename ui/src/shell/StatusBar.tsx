@@ -21,7 +21,6 @@ import { useBarTitle } from "./title";
 
 const INDICES: { key: InstrumentKey; name: string }[] = [
   { key: "NSE:NIFTY 50", name: "NIFTY 50" },
-  { key: "NSE:NIFTY BANK", name: "NIFTY BANK" },
   { key: "BSE:SENSEX", name: "SENSEX" },
 ];
 
