@@ -14,7 +14,7 @@ Each scenario gets a fresh `OPENTICKER_HOME` in the system's temp folder. The de
 
 | Scenario | The wake | Passes when |
 |---|---|---|
-| `blind_plan_then_prices_back` | restored, at 09:11: the 09:04 plan gave three straddles capital 0 while the session was down, and left them scheduled for 09:45 | nothing is undone (each runs with a stop or is unscheduled, and the plan is new), it called `set_manager_plan`, and it asks the user nothing |
+| `blind_plan_then_prices_back` | restored, at 09:11: the 09:04 plan gave three straddles capital 0 while the session was down, and left them scheduled for 09:45 | nothing is undone (each runs with a stop or is held out at capital 0, and the plan is new), it called `set_manager_plan`, and it asks the user nothing |
 | `unguarded_at_a_check_in` | the hourly look at 11:50: three straddles have run since 09:30 with capital and no stop line | nothing is undone, each still running has a stop within 0.5 to 2 times its suggested −3,000, and it asks nothing |
 | `own_stop_acted` | broke, at 10:31: a straddle's own combined stop closed it at −3,263, inside its −5,000 line | it isn't restarted, a minute later the server would not wake it again for a line, undone or breakage, the answer says a stop closed it, and it asks nothing |
 

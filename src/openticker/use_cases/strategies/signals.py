@@ -8,7 +8,9 @@ recorded, the same answer whether it never existed or was rotated); the
 strategy's calls stay under SIGNALS_PER_MINUTE (else 429, not recorded, so a
 flood can't fill the table); its kill switch is off; the caller's address is
 in its allowlist; the body is a JSON object naming legs and actions the
-strategy takes. Every call past the first two is recorded.
+strategy takes. Every call past the first two is recorded. An entry outside
+the schedule's window, or while the strategy's line holds it out (ADR 46),
+is ignored; an exit still closes what's held.
 """
 
 import hashlib
@@ -21,10 +23,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from openticker.core.agents.manager import LineKey, LineKind, held
 from openticker.core.strategies.models import SignalStrategySpec
 from openticker.core.strategies.runs import CommandKind
 from openticker.core.strategies.signals import SignalRefused, read_alert, window_note
-from openticker.storage.sqlite import runs_repo, signals_repo, strategies_repo
+from openticker.storage.sqlite import manager_repo, runs_repo, signals_repo, strategies_repo
 from openticker.storage.sqlite.runs_repo import WEBHOOK_TRIGGER
 from openticker.storage.sqlite.strategies_repo import write_transaction
 
@@ -34,6 +37,8 @@ SIGNALS_PER_MINUTE = 100  # calls to one strategy's URL
 MAX_ALERT_BYTES = 16_384  # an alert is a few hundred bytes
 TOKEN_PREFIX = "otw_"
 _TOKEN = re.compile(TOKEN_PREFIX + r"[A-Za-z0-9_-]{16,128}")
+# An alert URL's token written into a hosted script's source (ADR 46).
+TOKEN_IN_SOURCE = re.compile(r"(?<![A-Za-z0-9_-])" + _TOKEN.pattern + r"(?![A-Za-z0-9_-])")
 _PAYLOAD_KEPT = 2_000  # characters of the body kept with the call
 _SECRET_KEYS = ("token", "secret", "password", "apikey", "api_key", "auth", "signature")
 _REDACTED = "[redacted]"
@@ -120,8 +125,13 @@ def accept_signal(token: str, client_ip: str | None, body: bytes, now: datetime)
 
     notes: list[str] = []
     wanted = []
+    held_out = str(LineKey(LineKind.STRATEGY, strategy_id)) in held(
+        manager_repo.get_state(), manager_repo.lines()
+    )
     for signal in alert.signals:
         why = window_note(spec.schedule, signal.action, now)
+        if why is None and held_out and signal.action.entry:
+            why = "held out: its line on the Manager page gives it capital 0"
         if why is None:
             wanted.append(signal)
         else:

@@ -3743,11 +3743,13 @@ class ManagerPlanResult(BaseModel):
 
 
 class UndoneResult(BaseModel):
-    kind: Literal["unguarded", "contradicted", "blind_plan"] = Field(
+    kind: Literal["unguarded", "contradicted", "blind_plan", "starved", "locked"] = Field(
         description="unguarded: it trades today (running, listening, or entering later today) "
-        "with no stop on your line. contradicted: your line gives it capital 0, yet it "
-        "trades today. blind_plan: today's plan was made while prices were down, and "
-        "they're back."
+        "with no stop on your line. contradicted: your line gives it capital 0, yet a run of "
+        "it is open. blind_plan: today's plan was made while prices were down, and they're "
+        "back. starved: it listens for alerts, but the hosted script that sends them isn't "
+        "running and won't start today. locked: you killed it on an earlier day and it is "
+        "still locked, though no line holds it out."
     )
     key: str = Field(description="The line it is about (strategy:<id>), or plan.")
     name: str

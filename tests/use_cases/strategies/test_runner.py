@@ -33,6 +33,8 @@ from openticker.use_cases.strategies.runner import (
     step_runs,
     watched_legs,
 )
+from tests.fixtures.events import SET_UP_AT, Recorded
+from tests.fixtures.manager import hold_out
 from tests.fixtures.strategies import NOW, STRADDLE
 from tests.fixtures.strategy_desk import CE, LOT, PE, Desk
 
@@ -603,7 +605,7 @@ POSITIONAL = replace(STRADDLE, horizon=Horizon.POSITIONAL, limits=StrategyLimits
 
 def _scheduled(desk: Desk, spec: OptionsStrategySpec = STRADDLE) -> str:
     stored = create_strategy("scheduled", spec, desk.now)
-    schedule_strategy(stored.id, "fake")
+    schedule_strategy(stored.id, "fake", Recorded(), "you", SET_UP_AT)
     return stored.id
 
 
@@ -653,9 +655,24 @@ def test_a_strategy_not_scheduled_waits_for_start_strategy(desk: Desk) -> None:
 
     assert runs_repo.recent_commands(stored.id, 5) == []
     strategy_id = _scheduled(desk, replace(STRADDLE, legs=STRADDLE.legs[:1]))
-    unschedule_strategy(strategy_id)
+    unschedule_strategy(strategy_id, Recorded(), "you", SET_UP_AT)
     _pass(desk)
     assert runs_repo.recent_commands(strategy_id, 5) == []
+
+
+def test_a_line_at_capital_zero_holds_a_scheduled_entry_back(desk: Desk) -> None:
+    desk.now = ENTRY_AT
+    strategy_id = _scheduled(desk)
+    hold_out(f"strategy:{strategy_id}")
+
+    _pass(desk)
+    assert runs_repo.recent_commands(strategy_id, 5) == []
+    assert strategies_repo.find_strategy(strategy_id).scheduled_broker == "fake"  # type: ignore[union-attr]
+
+    hold_out(f"strategy:{strategy_id}", enabled=False)  # the manager turned off: lines hold nothing
+    desk.now += timedelta(seconds=30)
+    _pass(desk)
+    assert desk.run(strategy_id).status is RunStatus.OPEN
 
 
 def test_an_entry_missed_while_the_daemon_was_down_is_skipped(desk: Desk) -> None:

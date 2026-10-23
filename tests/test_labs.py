@@ -220,12 +220,14 @@ def test_manage_desk_says_to_decide_not_ask_and_finish_the_look() -> None:
     assert "Decide; don't ask." in text
     assert "A look is finished when `undone` is empty" in text
     assert "1. Read the wake's tags" in text  # its steps on every look, kept out of its answer
-    from openticker.core.agents.manager import WakeReason
+    from openticker.core.agents.manager import UndoneKind, WakeReason
 
     for reason in WakeReason:
         assert f"`{reason.value}`" in text  # each wake reason, in the wake's own word
-    for kind in ("unguarded", "contradicted", "blind_plan"):
-        assert f"`{kind}`" in text
+    for kind in UndoneKind:
+        assert f"`{kind.value}`" in text  # each undone item, with its fix
+    # holds, not unschedules (ADR 46)
+    assert "A line at capital 0 holds its strategy or script out" in text
     # what it must never do appears only as what to leave out
     answers = (skill / "references" / "answers.md").read_text()
     leave_out = answers.split("## What to leave out", 1)[1]

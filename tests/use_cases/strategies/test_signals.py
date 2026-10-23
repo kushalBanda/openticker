@@ -38,7 +38,9 @@ from openticker.use_cases.strategies.signals import (
     accept_signal,
     ip_allowed,
 )
+from tests.fixtures.events import SET_UP_AT, Recorded
 from tests.fixtures.fake_broker import FAKE_INSTRUMENT, FakeBrokerPort
+from tests.fixtures.manager import hold_out
 from tests.fixtures.strategies import NOW, STRADDLE, list_nifty_market
 from tests.fixtures.strategy_desk import CE, LOT
 
@@ -240,6 +242,21 @@ def test_alerts_outside_the_schedule_are_ignored(strategy_id: str) -> None:
     assert exit_early.result is SignalResult.ACCEPTED
 
 
+def test_a_line_at_capital_zero_ignores_entries_but_takes_exits(
+    strategy_id: str, token: str
+) -> None:
+    hold_out(f"strategy:{strategy_id}")
+
+    entry = _send(token, {"action": "long_entry", "leg_id": "leg2"})
+    exit_ = _send(token, {"action": "long_exit", "leg_id": "leg2"})
+
+    assert entry.result is SignalResult.IGNORED and not entry.command_ids
+    assert entry.message == (
+        "leg2 long_entry ignored: held out: its line on the Manager page gives it capital 0"
+    )
+    assert exit_.result is SignalResult.ACCEPTED and exit_.command_ids
+
+
 def test_the_webhook_is_for_signal_strategies_only(strategy_id: str) -> None:
     options = create_strategy("straddle", STRADDLE, NOW)
 
@@ -248,7 +265,7 @@ def test_the_webhook_is_for_signal_strategies_only(strategy_id: str) -> None:
     with pytest.raises(StrategyKindError, match="nothing to start"):
         request_start(strategy_id, "fake", "mcp", NOW)
     with pytest.raises(StrategyKindError, match="nothing to schedule"):
-        schedule_strategy(strategy_id, "fake")
+        schedule_strategy(strategy_id, "fake", Recorded(), "you", SET_UP_AT)
     with pytest.raises(StrategyKindError, match="nothing to resolve"):
         preview_strategy(strategy_id, FakeBrokerPort(), NOW)
     with pytest.raises(StrategyKindError, match="a strategy keeps its kind"):

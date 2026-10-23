@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from openticker.core.agents.manager import LineKey, LineKind, held
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.scripts.models import (
     ENDED_BY_ABSENCE,
@@ -38,7 +39,7 @@ from openticker.ports.script_process_port import (
     ScriptProcesses,
 )
 from openticker.storage import script_files
-from openticker.storage.sqlite import scripts_repo
+from openticker.storage.sqlite import manager_repo, scripts_repo
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError, revoke_api_key
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.api_keys import create_script_key, revoke_script_keys, script_key_name
@@ -101,13 +102,16 @@ def process_script_commands(context: SupervisorContext, now: datetime) -> None:
 
 
 def start_scheduled_scripts(context: SupervisorContext, now: datetime) -> None:
-    """Starts each scheduled script inside its window once a trading day.
+    """Starts each scheduled script inside its window once a trading day,
+    unless its line holds it out (ADR 46): given capital again inside its
+    window, it starts then.
     A run it ended by itself, or was stopped from, since today's start_time
     is that day's run; one openticker-serve's absence ended isn't."""
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    held_out = held(manager_repo.get_state(), manager_repo.lines())
     for stored in scripts_repo.list_scripts():
         schedule = stored.schedule
-        if schedule is None:
+        if schedule is None or str(LineKey(LineKind.SCRIPT, stored.id)) in held_out:
             continue
         if not in_window(schedule, context.calendar, now):
             continue

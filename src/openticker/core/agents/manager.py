@@ -209,6 +209,21 @@ class ManagerState:
 OFF = ManagerState()
 
 
+def held(state: ManagerState, lines: Sequence[ManagerLine]) -> frozenset[str]:
+    """Keys of the strategies and scripts the desk holds out (ADR 46): while
+    the manager is on, a line at capital 0, whoever set it. A held strategy
+    takes no scheduled entry and no alert's entry, a held script no scheduled
+    start; nothing open is closed and nothing is unscheduled, so a line given
+    capital again, or the manager turned off, lets it trade as before."""
+    if not state.enabled:
+        return frozenset()
+    return frozenset(
+        str(line.key)
+        for line in lines
+        if line.key.kind in (LineKind.STRATEGY, LineKind.SCRIPT) and line.capital == 0
+    )
+
+
 def crossed_lines(
     lines: Sequence[ManagerLine], today: Mapping[str, DayFigure | None]
 ) -> frozenset[str]:
@@ -440,8 +455,10 @@ class UndoneKind(StrEnum):
     look on any model is told what it hasn't done."""
 
     UNGUARDED = "unguarded"  # it trades today with no stop line
-    CONTRADICTED = "contradicted"  # its line says capital 0, and it trades today
+    CONTRADICTED = "contradicted"  # its line says capital 0, and a run of it is open
     BLIND_PLAN = "blind_plan"  # today's plan was made while prices were down; they're back
+    STARVED = "starved"  # it listens for alerts, but no script that sends them runs today
+    LOCKED = "locked"  # the manager killed it on an earlier day, and it is still locked
 
 
 @dataclass(frozen=True)
@@ -450,10 +467,13 @@ class DeskRow:
 
     key: str  # "strategy:<id>"
     name: str
-    trades_today: bool  # running, listening, or entering later today
+    trades_today: bool  # running, listening, or entering later today, and not held
     when: str  # "running", "listening", "enters 09:20"
     owned_by_user: bool  # stopped by the user's hand today
     suggested: SuggestedStop | None = None  # from its record
+    feeders: tuple[str, ...] = ()  # hosted scripts that send its alerts, by name
+    fed: bool = True  # one of them runs, or its schedule starts it later today
+    killed_by_manager_on: date | None = None  # the day its kill switch was thrown, if by it
 
 
 @dataclass(frozen=True)
@@ -474,13 +494,20 @@ def undone(
     rows: Sequence[DeskRow],
     lines: Mapping[str, ManagerLine],
     blind: tuple[datetime, datetime] | None = None,
+    today: date | None = None,
 ) -> list[Undone]:
-    """Each strategy trading today that a line of the manager's says not to
-    run (capital 0: contradicted), or that has no stop on one (unguarded),
-    in the order given; one item each, contradicted first. A line the user
-    set is theirs, and a strategy they stopped by hand stays theirs:
-    neither is listed. `blind`, (when the plan was set, when prices came
-    back), puts the plan itself first: it was made without prices."""
+    """Each strategy, in the order given, with at most one item:
+    - locked: the manager's kill from before `today` still holds it, and no
+      line holds it out (capital 0), so it can't trade and nobody said so;
+    - starved: it listens for alerts, but no hosted script that sends them
+      runs or starts later today;
+    - contradicted: a line of the manager's gives it capital 0, and a run of
+      it is open (a hold doesn't close what's open);
+    - unguarded: it trades today with no stop line.
+    A strategy the user stopped by hand today stays theirs, and a line the
+    user set is theirs for the last two: neither is listed. `blind`, (when
+    the plan was set, when prices came back), puts the plan itself first: it
+    was made without prices."""
     found = []
     if blind is not None:
         planned, back = (f"{_hhmm(moment)}" for moment in blind)
@@ -495,7 +522,35 @@ def undone(
         )
     for row in rows:
         line = lines.get(row.key)
-        if not row.trades_today or row.owned_by_user:
+        if row.owned_by_user:
+            continue
+        held_out = line is not None and line.capital == 0
+        killed = row.killed_by_manager_on
+        if killed is not None and today is not None and killed < today and not held_out:
+            found.append(
+                Undone(
+                    UndoneKind.LOCKED,
+                    row.key,
+                    row.name,
+                    f"{row.name}: you killed it on {killed:%a %d %b} and it is still locked, so "
+                    "it can't trade. release_kill_switch lets it trade again; if it should "
+                    "stay out, give its line capital 0 and say why.",
+                )
+            )
+            continue
+        if row.trades_today and row.feeders and not row.fed:
+            names = ", ".join(row.feeders)
+            found.append(
+                Undone(
+                    UndoneKind.STARVED,
+                    row.key,
+                    row.name,
+                    f"{row.name}: listening, but the script that sends its alerts ({names}) "
+                    "isn't running and won't start today, so it can't trade. start_script it "
+                    "(a script line at capital 0 holds its schedule back), or give this line "
+                    "capital 0 to hold it out.",
+                )
+            )
             continue
         if line is not None and line.set_by is SetBy.YOU:
             continue
@@ -505,14 +560,14 @@ def undone(
             if stop
             else " It has no record or stop of its own to size one from."
         )
-        if line is not None and line.capital == 0:
+        if held_out and row.when == "running":
             kind = UndoneKind.CONTRADICTED
-            # Unscheduling a running strategy leaves its run trading.
-            act = "stop_strategy" if row.when in ("running", "listening") else "unschedule_strategy"
             text = (
-                f"{row.name}: {row.when}, but your line gives it capital 0. Run {act} on it, "
-                f"or give it capital and a stop.{fix}"
+                f"{row.name}: running, but your line gives it capital 0. Run stop_strategy on "
+                f"it, or give it capital and a stop.{fix}"
             )
+        elif not row.trades_today:
+            continue
         elif line is None or line.stop is None:
             kind = UndoneKind.UNGUARDED
             text = f"{row.name}: {row.when}, no stop line.{fix}"
@@ -727,9 +782,9 @@ def _task(reason: WakeReason, when: str) -> str:
         return (
             f"Plan today, {when}. Work through the skill's plan in order and don't skip a step: "
             "account for everything above, explain the desk's figure, then set every line "
-            "(set_manager_numbers), the plan (set_manager_plan), and start, unschedule or stop "
-            "what the plan needs. Set a next look only if something needs one before anything "
-            "else would wake you."
+            "(set_manager_numbers: capital 0 holds one out), the plan (set_manager_plan), and "
+            "start or stop what the plan needs. Set a next look only if something needs one "
+            "before anything else would wake you."
         )
     if reason is WakeReason.RESTORED:
         return (
@@ -739,8 +794,8 @@ def _task(reason: WakeReason, when: str) -> str:
         )
     if reason is WakeReason.UNDONE:
         return (
-            "The desk shows the duties above undone. Do each now (a stop line, a stop or "
-            "unschedule, a new plan); for any you leave, say why in your answer."
+            "The desk shows the duties above undone. Do each now (a stop line, a stop, a "
+            "start, a hold, a new plan); for any you leave, say why in your answer."
         )
     if reason is WakeReason.BROKE:
         return "Something broke. Look, act if it needs it, and say what you did and why."
@@ -823,8 +878,10 @@ def manager_context(day: date) -> str:
         "check your reasoning. If you can't, say what's missing rather than guess.\n"
         "- Every strategy that trades today gets a stop line before it trades, so a bad day "
         "is caught at your next look rather than after it.\n"
-        "- Your lines say what the desk does: capital 0 means you stopped or unscheduled it "
-        "in the same look.\n"
+        "- Your lines say what the desk does: a line at capital 0 holds its strategy or script "
+        "out (no scheduled entry, no alert's entry, no scheduled start) until you give it "
+        "capital again. It closes nothing, so stop_strategy a run that's open. Schedules are "
+        "the user's: you hold things out, you don't unschedule them.\n"
         "- The user's lines (set_by you) and the strategies they stopped by hand stand. Never "
         "change or work around them.\n"
         "The server works out what's still undone and says so: the undone tag in a wake, and "

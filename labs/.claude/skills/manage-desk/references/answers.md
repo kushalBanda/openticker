@@ -19,7 +19,7 @@ The wake carried: the broker session expired at 21:40; 6 scripts ended (failed);
 
 > Yesterday's loss was the session, not the strategies: the broker session expired at 21:40, prices stopped, and five positional runs closed for lost prices at 09:15 (−₹14,226 together, straddle −₹5,558 the largest). The 6 alert scripts crashed on the same expiry and the 18 refused orders were their retries. The session is back this morning (quotes flow).
 >
-> Today: the weekly straddle runs with ₹2,00,000 and a −₹6,000 stop (its median losing run is −₹2,880; this lets one bad run cost two). Two more run at their own combined stops, −₹8,000 and −₹10,000, since each has under 10 runs. I unscheduled the other 3: one run each and their alert scripts are still down. Scripts restarted: orb-alerts, momentum-alerts. Desk stop −₹20,000. Nothing is undone.
+> Today: the weekly straddle runs with ₹2,00,000 and a −₹6,000 stop (its median losing run is −₹2,880; this lets one bad run cost two). Two more run at their own combined stops, −₹8,000 and −₹10,000, since each has under 10 runs. I held out the other 3 (capital 0): one run each and their alert scripts are still down. Scripts restarted: orb-alerts, momentum-alerts. Desk stop −₹20,000. Nothing is undone.
 >
 > Relied on: "Restart nothing that needs prices until quotes flow". Next look 09:45, when the straddle enters.
 </example>
@@ -29,7 +29,7 @@ The wake carried: the session expired at 05:40. `get_quote` fails. 13 strategies
 
 > The broker session expired at 05:40 and prices don't flow: sign in again from Settings and I'll plan again the moment they're back. Yesterday the desk lost −₹15,846 (−₹7,016 closed, −₹7,243 still open on the RELIANCE holding, −₹1,587 charges).
 >
-> Without prices a strategy enters blind and closes for lost prices, as five did yesterday, so I unscheduled all 13 entries (first at 09:20). Every line is at capital 0, which matches: nothing will trade. Desk stop −₹40,000 stays. Nothing is undone.
+> Without prices a strategy enters blind and closes for lost prices, as five did yesterday, so every line is at capital 0, which holds all 13 entries out (first at 09:20): nothing will trade. Desk stop −₹40,000 stays. Nothing is undone.
 </example>
 
 <example name="prices back after a blind plan">
@@ -43,7 +43,7 @@ What it should have done and said:
 
 > Prices are back since 09:14, so I planned again: the 09:13 plan was made without them. Desk ₹0 so far, −₹713 open on the RELIANCE holding (yours).
 >
-> Of the 13 entries from 09:20, 9 run, each at its own combined stop (nifty-straddle-intraday −₹12,000, nifty-strangle-weekly −₹20,000, …): none has 10 runs yet, so its own stop is the record's figure. I unscheduled 4 with one losing run and no stop of their own to size from. Desk stop −₹40,000. Nothing is undone. Next look 09:21, after the first fills.
+> Of the 13 entries from 09:20, 9 run, each at its own combined stop (nifty-straddle-intraday −₹12,000, nifty-strangle-weekly −₹20,000, …): none has 10 runs yet, so its own stop is the record's figure. I held out 4 (capital 0) with one losing run and no stop of their own to size from. Desk stop −₹40,000. Nothing is undone. Next look 09:21, after the first fills.
 </example>
 
 <example name="a check-in that finds strategies unguarded">

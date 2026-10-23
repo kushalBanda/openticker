@@ -157,6 +157,18 @@ def commands_by_id(ids: list[int]) -> dict[int, Command]:
         return {row.id: _command(row) for row in session.scalars(statement).all()}
 
 
+def last_kills() -> dict[str, Command]:
+    """Each strategy's newest kill, by strategy id."""
+    newest = (
+        select(func.max(StrategyCommandRow.id))
+        .where(StrategyCommandRow.kind == CommandKind.KILL.value)
+        .group_by(StrategyCommandRow.strategy_id)
+    )
+    statement = select(StrategyCommandRow).where(StrategyCommandRow.id.in_(newest))
+    with Session(get_engine()) as session:
+        return {row.strategy_id: _command(row) for row in session.scalars(statement).all()}
+
+
 def recent_commands(strategy_id: str, limit: int) -> list[Command]:
     """Newest first."""
     statement = (

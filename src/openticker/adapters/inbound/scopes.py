@@ -23,7 +23,8 @@ both: an MCP call is allowed exactly when its tool's route would be.
   stopping agent jobs, and the routes with no tool (API keys, settings,
   chats): the user asked, so it may trade on paper and run strategies, and
   no agent starts another, but the desk manager's day (ADR 41), which may
-  start a review of a strategy it runs.
+  start a review of a strategy it runs. The manager's key doesn't change
+  schedules: it holds things out with its lines (ADR 46).
 - A read-only chat's key (`chat-read:<thread_id>`, ADR 40) reaches the
   chat's tools that change nothing: the tools annotated read-only, and
   historical bars, which only fill the local cache.
@@ -280,6 +281,12 @@ _NOT_FOR_CHATS = (
     "wake_manager",
 )
 CHAT_ROUTES = frozenset(TOOL_ROUTES.values()) - {TOOL_ROUTES[t] for t in _NOT_FOR_CHATS}
+# Schedules are the user's (ADR 46): the desk manager holds a strategy or
+# script out for the day with a line at capital 0, and never unschedules it.
+_NOT_FOR_THE_MANAGER = frozenset(
+    TOOL_ROUTES[t]
+    for t in ("schedule_strategy", "unschedule_strategy", "schedule_script", "unschedule_script")
+)
 
 # A read-only chat's key: the chat's tools whose MCP annotation is read-only
 # (a test keeps this list and the annotations the same), and historical
@@ -383,6 +390,11 @@ def refusal(
             return f"a debrief's key reads and writes the day {day} only"
         return None
     if scope.startswith(CHAT_SCOPE_PREFIX):
+        if route in _NOT_FOR_THE_MANAGER and is_manager_key(scope):
+            return (
+                "schedules are the user's: give the line capital 0 to hold it out today "
+                "(set_manager_numbers), or start_strategy / start_script to run it now"
+            )
         if route in CHAT_ROUTES:
             return None
         if route == TOOL_ROUTES["start_review"] and is_manager_key(scope):

@@ -25,6 +25,7 @@ from openticker.storage.sqlite.agent_clients_repo import note_client
 from openticker.storage.sqlite.models import AgentThreadRow
 from openticker.storage.sqlite.strategies_repo import write_transaction
 from openticker.use_cases.scripts.manage import schedule_script, upload_script
+from tests.fixtures.events import SET_UP_AT, Recorded
 
 REL_TRAIL = '''"""Trails a stop under the RELIANCE position."""
 
@@ -96,7 +97,11 @@ def seed_scripts(trail_id: str, clock: Callable[[], datetime]) -> None:
     """rel_trail.py was uploaded by the caller (its stop is in the book)."""
     now = clock()
     schedule_script(
-        trail_id, ScriptSchedule(_local(now, 0, 9, 16).time(), _local(now, 0, 15, 15).time())
+        trail_id,
+        ScriptSchedule(_local(now, 0, 9, 16).time(), _local(now, 0, 15, 15).time()),
+        Recorded(),
+        "you",
+        SET_UP_AT,
     )
     _run(
         trail_id,
@@ -114,7 +119,9 @@ def seed_scripts(trail_id: str, clock: Callable[[], datetime]) -> None:
     )
 
     gaps = upload_script("gap_scanner.py", GAP_SCANNER, now)
-    schedule_script(gaps.id, ScriptSchedule(_local(now, 0, 9, 10).time()))
+    schedule_script(
+        gaps.id, ScriptSchedule(_local(now, 0, 9, 10).time()), Recorded(), "you", SET_UP_AT
+    )
     _run(
         gaps.id,
         "schedule",

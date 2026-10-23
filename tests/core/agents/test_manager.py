@@ -42,6 +42,7 @@ from openticker.core.agents.manager import (
     crossed_lines,
     day_use,
     digest,
+    held,
     is_wake,
     lines_at,
     manager_context,
@@ -340,7 +341,8 @@ def test_manager_context_says_decide_dont_ask_and_finish_the_look() -> None:
     context = manager_context(DAY)
     assert "never hand a decision back or ask the user to choose" in context
     assert "A look is finished when undone is empty" in context
-    assert "capital 0 means you stopped or unscheduled it" in context
+    assert "a line at capital 0 holds its strategy or script out" in context
+    assert "you don't unschedule them" in context
     # one prompt for every model and harness
     for name in ("Claude", "Codex", "Haiku", "Sonnet", "Opus", "GPT"):
         assert name not in context
@@ -596,11 +598,17 @@ def test_undone_names_the_suggested_stop_and_its_basis() -> None:
     )
 
 
-def test_undone_says_capital_zero_contradicts_a_strategy_that_trades() -> None:
+def test_undone_says_capital_zero_contradicts_only_a_run_still_open() -> None:
     zero = replace(_line("strategy:stg_a", -5000.0), capital=0.0)
     off = replace(_line("strategy:stg_b", None), capital=0.0)
-    rows = [_row("a"), _row("b", "stopped", trades=False)]
-    (found,) = undone(rows, {"strategy:stg_a": zero, "strategy:stg_b": off})
+    later = replace(_line("strategy:stg_c", None), capital=0.0)
+    rows = [
+        _row("a"),
+        _row("b", "stopped", trades=False),
+        _row("c", "enters 09:20", trades=False),  # held out: it won't enter
+    ]
+    lines = {"strategy:stg_a": zero, "strategy:stg_b": off, "strategy:stg_c": later}
+    (found,) = undone(rows, lines)
     assert found.kind is UndoneKind.CONTRADICTED
     assert found.text.startswith(
         "a: running, but your line gives it capital 0. Run stop_strategy on it, or give it "
@@ -612,6 +620,42 @@ def test_undone_never_lists_what_the_user_owns() -> None:
     yours = replace(_line("strategy:stg_a", None), set_by=SetBy.YOU)
     rows = [_row("a"), _row("b", yours=True)]
     assert undone(rows, {"strategy:stg_a": yours}) == []
+
+
+def test_held_is_every_strategy_and_script_line_at_capital_zero_while_on() -> None:
+    lines = [
+        replace(_line("desk", None), capital=0.0),
+        replace(_line("strategy:stg_a", -5000.0), capital=0.0),
+        replace(_line("strategy:stg_b", None), capital=50_000.0),
+        replace(_line("script:scr_c", None), capital=0.0, set_by=SetBy.YOU),
+        _line("script:scr_d", None),
+    ]
+    assert held(ON, lines) == {"strategy:stg_a", "script:scr_c"}
+    assert held(ManagerState(), lines) == frozenset()
+
+
+def test_undone_says_a_listening_strategy_with_no_script_to_alert_it_is_starved() -> None:
+    starved = replace(_row("a", "listening"), feeders=("a-alerts",), fed=False)
+    fed = replace(_row("b", "listening"), feeders=("b-alerts",), fed=True)
+    yours = replace(_line("strategy:stg_a", -5000.0), set_by=SetBy.YOU)
+    (found, other) = undone([starved, fed], {"strategy:stg_a": yours}, today=DAY)
+    assert found.kind is UndoneKind.STARVED
+    assert found.text.startswith(
+        "a: listening, but the script that sends its alerts (a-alerts) isn't running and "
+        "won't start today, so it can't trade. start_script it"
+    )
+    assert (other.kind, other.key) == (UndoneKind.UNGUARDED, "strategy:stg_b")
+
+
+def test_undone_says_a_strategy_it_killed_on_an_earlier_day_is_still_locked() -> None:
+    def killed(name: str, on: date) -> DeskRow:
+        return replace(_row(name, "killed", trades=False), killed_by_manager_on=on)
+
+    rows = [killed("a", DAY - timedelta(days=1)), killed("b", DAY), killed("c", date(2026, 9, 1))]
+    held_out = replace(_line("strategy:stg_c", None), capital=0.0)
+    (found,) = undone(rows, {"strategy:stg_c": held_out}, today=DAY)
+    assert (found.kind, found.key) == (UndoneKind.LOCKED, "strategy:stg_a")
+    assert found.text.startswith("a: you killed it on Mon 21 Sep and it is still locked")
 
 
 def test_every_wake_carries_the_undone_tag_before_the_task() -> None:

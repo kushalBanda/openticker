@@ -22,6 +22,7 @@ from openticker.use_cases.strategies.define import create_strategy
 from openticker.use_cases.strategies.ledger import get_strategy_ledger
 from openticker.use_cases.strategies.runner import process_commands
 from tests.fixtures.calendar import NO_HOLIDAYS
+from tests.fixtures.events import SET_UP_AT, Recorded
 from tests.fixtures.strategies import POSITIONAL_STRADDLE, STRADDLE
 from tests.fixtures.strategy_desk import CE, Desk
 
@@ -134,7 +135,7 @@ def test_a_scheduled_strategy_says_when_it_enters_next() -> None:
     desk = Desk()
     spec = STRADDLE.__class__(**{**STRADDLE.__dict__, "schedule": Schedule(entry_time=time(9, 20))})
     stored = create_strategy("weekly", spec, desk.now)
-    schedule_strategy(stored.id, "fake")
+    schedule_strategy(stored.id, "fake", Recorded(), "you", SET_UP_AT)
 
     row = _row(desk, "weekly")
 

@@ -21,6 +21,7 @@ from openticker.storage.sqlite.instruments_repo import get_instrument
 from openticker.use_cases.strategies.control import request_start, schedule_strategy
 from openticker.use_cases.strategies.define import create_strategy
 from openticker.use_cases.strategies.runner import RunnerContext, process_commands, step_runs
+from tests.fixtures.events import SET_UP_AT, Recorded
 from tests.fixtures.fake_broker import FAKE_LAST_PRICE
 from tests.fixtures.priced_broker import PricedBroker
 from tests.fixtures.strategies import list_nifty_market
@@ -89,7 +90,7 @@ class EvalDesk:
 
     def schedule(self, name: str, spec: OptionsStrategySpec) -> str:
         stored = create_strategy(name, spec, self.clock())
-        schedule_strategy(stored.id, BROKER)
+        schedule_strategy(stored.id, BROKER, Recorded(), "you", SET_UP_AT)
         return stored.id
 
     def move(self, ce: float, pe: float) -> None:
