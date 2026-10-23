@@ -55,7 +55,7 @@ Say it in one or two sentences: "Desk −₹15,846: −₹7,016 closed (straddle
 
 A line is capital and a stop for one strategy, one script, your own trades (`own`) or the whole desk (`desk`).
 
-- **Capital is your stated allocation.** A strategy trades its own definition's size whatever its capital. Capital 0 is the one figure the server acts on: it holds the strategy or script out (no scheduled entry, no alert's entry, no scheduled start) until the line gets capital again or you're turned off. It closes nothing, so a run already open needs `stop_strategy`; until then `undone` lists it as `contradicted`.
+- **Capital is your stated allocation.** A strategy trades its own definition's size whatever its capital. Capital 0 is the one figure the server acts on: it holds the strategy or script out (no scheduled entry, no alert's entry, no scheduled start) for the trading day you set it for (the user's capital 0 until they change it), or until you're turned off. It closes nothing, so a run already open needs `stop_strategy`; until then `undone` lists it as `contradicted`.
 - **A stop acts only when you look.** When a line's `today.net` is at or past its stop, a `line` wake comes; you decide whether to stop the strategy. Each strategy's own stop loss and daily loss limit act at once, without you. So a stop line protects against a day the strategy's own rules allow but you wouldn't.
 - **Sizing a stop.** `suggested_stop` (in `get_strategy_ledger` and in each `undone` item) does the arithmetic:
   - with 10 or more runs after costs, 1.75 times its median losing run, never tighter than its own combined stop (it would cross before the strategy's own rules act);

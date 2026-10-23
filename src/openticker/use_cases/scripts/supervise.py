@@ -14,10 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from openticker.core.agents.manager import LineKey, LineKind, held
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.scripts.models import (
-    ENDED_BY_ABSENCE,
     LOG_LIMIT_BYTES,
     PEAK_MEMORY_STEP_KB,
     ScriptCommand,
@@ -29,7 +27,7 @@ from openticker.core.scripts.models import (
     ScriptStopReason,
     exit_reason,
 )
-from openticker.core.scripts.schedule import in_window, stop_due
+from openticker.core.scripts.schedule import in_window, next_scheduled_start, stop_due
 from openticker.events.bus import EventPublisher
 from openticker.events.types import ScriptExited, ScriptStarted
 from openticker.ports.models import EXCHANGE_TIMEZONE
@@ -39,9 +37,10 @@ from openticker.ports.script_process_port import (
     ScriptProcesses,
 )
 from openticker.storage import script_files
-from openticker.storage.sqlite import manager_repo, scripts_repo
+from openticker.storage.sqlite import scripts_repo
 from openticker.storage.sqlite.api_keys_repo import DuplicateApiKeyNameError, revoke_api_key
 from openticker.storage.sqlite.strategies_repo import write_transaction
+from openticker.use_cases.agents.holds import held_now, script_held
 from openticker.use_cases.api_keys import create_script_key, revoke_script_keys, script_key_name
 
 log = logging.getLogger(__name__)
@@ -103,21 +102,21 @@ def process_script_commands(context: SupervisorContext, now: datetime) -> None:
 
 def start_scheduled_scripts(context: SupervisorContext, now: datetime) -> None:
     """Starts each scheduled script inside its window once a trading day,
-    unless its line holds it out (ADR 46): given capital again inside its
-    window, it starts then.
-    A run it ended by itself, or was stopped from, since today's start_time
-    is that day's run; one openticker-serve's absence ended isn't."""
+    unless its line holds it out today (ADR 46): once the hold ends inside its
+    window, it starts then. A run since today's start_time is the day's run
+    unless openticker-serve's absence ended it, or it crashed: a crash is
+    started again after a backoff, a few times (`next_scheduled_start`)."""
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
-    held_out = held(manager_repo.get_state(), manager_repo.lines())
+    held_out = held_now(context.calendar, now)
     for stored in scripts_repo.list_scripts():
         schedule = stored.schedule
-        if schedule is None or str(LineKey(LineKind.SCRIPT, stored.id)) in held_out:
+        if schedule is None or script_held(stored.id, held_out):
             continue
         if not in_window(schedule, context.calendar, now):
             continue
         since = datetime.combine(today, schedule.start_time, EXCHANGE_TIMEZONE)
-        runs = scripts_repo.runs_started_since(stored.id, since)
-        if any(run.stop_reason not in ENDED_BY_ABSENCE for run in runs):
+        start_at = next_scheduled_start(scripts_repo.runs_started_since(stored.id, since))
+        if start_at is None or start_at > now:
             continue
         _launch(context, stored.id, SCHEDULE_TRIGGER, None, now)  # not if still running
 

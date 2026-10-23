@@ -6,11 +6,20 @@ from openticker.core.calendar.models import Holiday, MarketCalendar, SpecialSess
 from openticker.core.scripts.models import (
     InvalidScriptError,
     ScriptLimits,
+    ScriptRun,
+    ScriptRunStatus,
     ScriptSchedule,
     ScriptStopReason,
     exit_reason,
 )
-from openticker.core.scripts.schedule import in_window, stop_due
+from openticker.core.scripts.schedule import (
+    AT_ONCE,
+    CRASH_BACKOFF,
+    MAX_CRASH_RESTARTS,
+    in_window,
+    next_scheduled_start,
+    stop_due,
+)
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 from tests.fixtures.calendar import NO_HOLIDAYS
 
@@ -109,3 +118,43 @@ def test_how_a_run_ended_is_read_from_its_exit_status(
     found, why = exit_reason(returncode)
     assert found is reason
     assert detail in why
+
+
+def _ended(reason: ScriptStopReason | None, minute: int) -> ScriptRun:
+    at = datetime(2026, 9, 22, 4, minute, tzinfo=UTC)
+    return ScriptRun(
+        "srn_1",
+        "scr_1",
+        ScriptRunStatus.RUNNING if reason is None else ScriptRunStatus.ENDED,
+        "schedule",
+        at,
+        stop_reason=reason,
+        ended_at=None if reason is None else at,
+    )
+
+
+def test_a_crash_is_started_again_after_a_growing_backoff_until_the_cap() -> None:
+    failed = ScriptStopReason.FAILED
+    assert next_scheduled_start([]) == AT_ONCE
+    assert next_scheduled_start([_ended(ScriptStopReason.DAEMON_STOPPED, 0)]) == AT_ONCE
+    first = _ended(failed, 10)
+    assert next_scheduled_start([first]) == first.started_at + CRASH_BACKOFF
+    second = _ended(failed, 20)
+    assert next_scheduled_start([first, second]) == second.started_at + 2 * CRASH_BACKOFF
+    crashes = [_ended(failed, minute) for minute in range(MAX_CRASH_RESTARTS + 1)]
+    assert next_scheduled_start(crashes) is None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        None,  # still running
+        ScriptStopReason.EXITED,
+        ScriptStopReason.STOPPED,
+        ScriptStopReason.SCHEDULE,
+        ScriptStopReason.MEMORY_LIMIT,
+        ScriptStopReason.START_FAILED,
+    ],
+)
+def test_any_other_end_is_the_days_run(reason: ScriptStopReason | None) -> None:
+    assert next_scheduled_start([_ended(ScriptStopReason.FAILED, 0), _ended(reason, 5)]) is None

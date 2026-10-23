@@ -76,7 +76,7 @@ from openticker.core.calendar.calendar import last_session, session_hours
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.pnl import DayFigure, Source, source_of
 from openticker.core.risk.models import StrategyStopReason
-from openticker.core.scripts.models import ENDED_BY_ABSENCE
+from openticker.core.scripts.schedule import next_scheduled_start
 from openticker.core.strategies.ledger import SuggestedStop, day_figure, suggest_stop
 from openticker.core.strategies.runs import Command
 from openticker.events.bus import EventPublisher
@@ -105,6 +105,7 @@ from openticker.storage.sqlite.audit_repo import AuditEntry, list_audit
 from openticker.storage.sqlite.sandbox_repo import read_funds
 from openticker.storage.sqlite.scripts_repo import StoredScript, find_script
 from openticker.storage.sqlite.strategies_repo import find_strategy, write_transaction
+from openticker.use_cases.agents.holds import script_held
 from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError
 from openticker.use_cases.agents.supervise import AgentContext
 from openticker.use_cases.brain.read import UnknownNoteError
@@ -638,12 +639,12 @@ class _Feeds:
 
     def will_run(self, script: StoredScript, held_out: frozenset[str]) -> bool:
         """Running now, or its schedule starts it later today: today is one of
-        its days, its stop_time hasn't passed, no line holds it, and no run
-        since today's start_time ended by itself (that day's run)."""
+        its days, its stop_time hasn't passed, no line holds it, and its
+        day's run isn't over (a crash is started again, ADR 46)."""
         if script.id in self._running:
             return True
         schedule = script.schedule
-        if schedule is None or str(LineKey(LineKind.SCRIPT, script.id)) in held_out:
+        if schedule is None or script_held(script.id, held_out):
             return False
         local = self._now.astimezone(EXCHANGE_TIMEZONE)
         if local.weekday() not in schedule.weekdays:
@@ -653,8 +654,7 @@ class _Feeds:
         if schedule.stop_time is not None and local.time() >= schedule.stop_time:
             return False
         since = datetime.combine(local.date(), schedule.start_time, EXCHANGE_TIMEZONE)
-        runs = scripts_repo.runs_started_since(script.id, since)
-        return all(run.stop_reason in ENDED_BY_ABSENCE for run in runs)
+        return next_scheduled_start(scripts_repo.runs_started_since(script.id, since)) is not None
 
 
 def _undone(
@@ -665,10 +665,10 @@ def _undone(
     now: datetime,
 ) -> list[Undone]:
     """The desk's undone (ADR 44, 46) from one read of it."""
-    held_out = held(manager_repo.get_state(), lines)
+    held_out = held(manager_repo.get_state(), lines, now, calendar)
     rows = _desk_rows(read, held_out, _Feeds(calendar, now), runs_repo.last_kills(), now)
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
-    return undone(rows, {str(line.key): line for line in lines}, blind, today)
+    return undone(rows, {str(line.key): line for line in lines}, blind, today, held_out)
 
 
 BLIND_LOOKBACK = timedelta(days=5)  # a session expired over a long weekend still counts

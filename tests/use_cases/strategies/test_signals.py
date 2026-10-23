@@ -245,7 +245,7 @@ def test_alerts_outside_the_schedule_are_ignored(strategy_id: str) -> None:
 def test_a_line_at_capital_zero_ignores_entries_but_takes_exits(
     strategy_id: str, token: str
 ) -> None:
-    hold_out(f"strategy:{strategy_id}")
+    hold_out(f"strategy:{strategy_id}", NOW)
 
     entry = _send(token, {"action": "long_entry", "leg_id": "leg2"})
     exit_ = _send(token, {"action": "long_exit", "leg_id": "leg2"})
