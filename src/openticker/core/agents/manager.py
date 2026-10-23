@@ -29,10 +29,11 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from openticker.core.agents.jobs import AgentJob, AgentJobEndReason, Harness
-from openticker.core.calendar.models import SessionHours
+from openticker.core.calendar.calendar import next_session
+from openticker.core.calendar.models import MarketCalendar, SessionHours
 from openticker.core.pnl import DayFigure
 from openticker.core.strategies.ledger import SuggestedStop
-from openticker.ports.models import EXCHANGE_TIMEZONE
+from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
 
 # A wake turn's agent job `trigger`: then why it woke.
 MANAGER_WAKE_TRIGGER = "manager-wake:"
@@ -209,19 +210,32 @@ class ManagerState:
 OFF = ManagerState()
 
 
-def held(state: ManagerState, lines: Sequence[ManagerLine]) -> frozenset[str]:
-    """Keys of the strategies and scripts the desk holds out (ADR 46): while
-    the manager is on, a line at capital 0, whoever set it. A held strategy
-    takes no scheduled entry and no alert's entry, a held script no scheduled
-    start; nothing open is closed and nothing is unscheduled, so a line given
-    capital again, or the manager turned off, lets it trade as before."""
+def held(
+    state: ManagerState, lines: Sequence[ManagerLine], now: datetime, calendar: MarketCalendar
+) -> frozenset[str]:
+    """Keys of the strategies and scripts the desk holds out at `now` (ADR
+    46): while the manager is on, a line at capital 0. The user's holds
+    until they change it; the manager's only on the trading day it was set
+    for (the session open or next to open when it set it), so each plan holds
+    out afresh and a hold from a morning without prices can't outlive it. A
+    held strategy takes no scheduled entry and no alert's entry, a held script
+    no scheduled start; nothing open is closed and nothing is unscheduled."""
     if not state.enabled:
         return frozenset()
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
     return frozenset(
         str(line.key)
         for line in lines
-        if line.key.kind in (LineKind.STRATEGY, LineKind.SCRIPT) and line.capital == 0
+        if line.key.kind in (LineKind.STRATEGY, LineKind.SCRIPT)
+        and line.capital == 0
+        and (line.set_by is SetBy.YOU or hold_day(line.set_at, calendar) == today)
     )
+
+
+def hold_day(set_at: datetime, calendar: MarketCalendar) -> date:
+    """The trading day a hold the manager set at `set_at` is for: the session
+    in progress then, or the next to open (a close's lines are tomorrow's)."""
+    return next_session(set_at, Exchange.NSE, calendar).day
 
 
 def crossed_lines(
@@ -495,14 +509,15 @@ def undone(
     lines: Mapping[str, ManagerLine],
     blind: tuple[datetime, datetime] | None = None,
     today: date | None = None,
+    held_out: frozenset[str] = frozenset(),
 ) -> list[Undone]:
     """Each strategy, in the order given, with at most one item:
     - locked: the manager's kill from before `today` still holds it, and no
       line holds it out (capital 0), so it can't trade and nobody said so;
     - starved: it listens for alerts, but no hosted script that sends them
       runs or starts later today;
-    - contradicted: a line of the manager's gives it capital 0, and a run of
-      it is open (a hold doesn't close what's open);
+    - contradicted: a line of the manager's holds it out (`held_out`), and a
+      run of it is open (a hold doesn't close what's open);
     - unguarded: it trades today with no stop line.
     A strategy the user stopped by hand today stays theirs, and a line the
     user set is theirs for the last two: neither is listed. `blind`, (when
@@ -524,9 +539,9 @@ def undone(
         line = lines.get(row.key)
         if row.owned_by_user:
             continue
-        held_out = line is not None and line.capital == 0
+        is_held = row.key in held_out
         killed = row.killed_by_manager_on
-        if killed is not None and today is not None and killed < today and not held_out:
+        if killed is not None and today is not None and killed < today and not is_held:
             found.append(
                 Undone(
                     UndoneKind.LOCKED,
@@ -546,9 +561,8 @@ def undone(
                     row.key,
                     row.name,
                     f"{row.name}: listening, but the script that sends its alerts ({names}) "
-                    "isn't running and won't start today, so it can't trade. start_script it "
-                    "(a script line at capital 0 holds its schedule back), or give this line "
-                    "capital 0 to hold it out.",
+                    "isn't running and won't start today, so it can't trade. start_script it, "
+                    "or give this line capital 0 to hold it out.",
                 )
             )
             continue
@@ -560,7 +574,7 @@ def undone(
             if stop
             else " It has no record or stop of its own to size one from."
         )
-        if held_out and row.when == "running":
+        if is_held and row.when == "running":
             kind = UndoneKind.CONTRADICTED
             text = (
                 f"{row.name}: running, but your line gives it capital 0. Run stop_strategy on "
@@ -879,8 +893,9 @@ def manager_context(day: date) -> str:
         "- Every strategy that trades today gets a stop line before it trades, so a bad day "
         "is caught at your next look rather than after it.\n"
         "- Your lines say what the desk does: a line at capital 0 holds its strategy or script "
-        "out (no scheduled entry, no alert's entry, no scheduled start) until you give it "
-        "capital again. It closes nothing, so stop_strategy a run that's open. Schedules are "
+        "out (no scheduled entry, no alert's entry, no scheduled start) for the trading day "
+        "you set it for: each plan holds out afresh. It closes nothing, so stop_strategy a run "
+        "that's open. You kill only a run you can't stop otherwise. Schedules are "
         "the user's: you hold things out, you don't unschedule them.\n"
         "- The user's lines (set_by you) and the strategies they stopped by hand stand. Never "
         "change or work around them.\n"

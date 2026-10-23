@@ -1,11 +1,17 @@
 """When a scheduled script should be running, and when its run must stop.
 Pure. Rules: ADR 25 in docs/adr."""
 
-from datetime import datetime, timedelta
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 from openticker.core.calendar.calendar import session_hours
 from openticker.core.calendar.models import MarketCalendar
-from openticker.core.scripts.models import ScriptSchedule
+from openticker.core.scripts.models import (
+    ENDED_BY_ABSENCE,
+    ScriptRun,
+    ScriptSchedule,
+    ScriptStopReason,
+)
 from openticker.ports.models import EXCHANGE_TIMEZONE
 
 
@@ -33,3 +39,28 @@ def stop_due(schedule: ScriptSchedule, started_at: datetime, now: datetime) -> d
     if at > now:
         at -= timedelta(days=1)
     return at if started_at < at else None
+
+
+MAX_CRASH_RESTARTS = 3  # a scheduled script that keeps crashing is left for the day
+CRASH_BACKOFF = timedelta(minutes=1)  # doubled after each crash
+AT_ONCE = datetime.min.replace(tzinfo=UTC)
+
+
+def next_scheduled_start(runs: Sequence[ScriptRun]) -> datetime | None:
+    """When the schedule may start the script again, given its runs since
+    today's start_time; None when the day's run is over (ADR 25, 46).
+
+    A run openticker-serve's absence ended doesn't count. One that ended by
+    itself, was stopped, hit its stop_time or a limit, or couldn't start is
+    the day's run. A crash (`failed`) is started again after CRASH_BACKOFF,
+    doubled each time, until MAX_CRASH_RESTARTS restarts are used up: one
+    timeout shouldn't end a scheduled script's day."""
+    counted = [run for run in runs if run.stop_reason not in ENDED_BY_ABSENCE]
+    if not counted:
+        return AT_ONCE
+    if any(run.stop_reason is not ScriptStopReason.FAILED for run in counted):
+        return None  # still running, or its day's run ended
+    if len(counted) > MAX_CRASH_RESTARTS:
+        return None
+    last = max(run.ended_at or run.started_at for run in counted)
+    return last + CRASH_BACKOFF * (1 << (len(counted) - 1))

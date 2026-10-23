@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from openticker.core.pnl import Source, source_of
 from openticker.core.strategies.models import InvalidStrategyError, SignalStrategySpec
 from openticker.core.strategies.runs import Command, CommandKind, CommandStatus, LegStatus, Run
 from openticker.events.bus import EventPublisher
@@ -81,9 +82,19 @@ def request_stop(strategy_id: str, triggered_by: str, now: datetime) -> Command:
 def request_kill(strategy_id: str, triggered_by: str, now: datetime) -> Command:
     """Locks the strategy at once, so nothing can start it and its alert URL
     refuses alerts, then closes every open leg. Stays locked until
-    `release_kill_switch`."""
+    `release_kill_switch`. The desk manager may kill only a strategy with a
+    run open: to keep one out for the day it holds it out with its line,
+    which lapses by itself; a kill lasts until someone releases it (ADR 46)."""
     with write_transaction() as session:
-        _strategy(session, strategy_id)
+        stored = _strategy(session, strategy_id)
+        if (
+            source_of(triggered_by) is Source.MANAGER
+            and runs_repo.active_run_of(session, strategy_id) is None
+        ):
+            raise StrategyStateError(
+                f"{stored.name!r} has no run open, so there is nothing to kill: give its line "
+                "capital 0 (set_manager_numbers) to hold it out today"
+            )
         strategies_repo.set_locked(session, strategy_id, True)
         _cancel_pending_starts(
             session, strategy_id, "cancelled by the kill switch", now, CommandKind.SIGNAL

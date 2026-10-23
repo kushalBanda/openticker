@@ -663,15 +663,25 @@ def test_a_strategy_not_scheduled_waits_for_start_strategy(desk: Desk) -> None:
 def test_a_line_at_capital_zero_holds_a_scheduled_entry_back(desk: Desk) -> None:
     desk.now = ENTRY_AT
     strategy_id = _scheduled(desk)
-    hold_out(f"strategy:{strategy_id}")
+    hold_out(f"strategy:{strategy_id}", desk.now)
 
     _pass(desk)
     assert runs_repo.recent_commands(strategy_id, 5) == []
     assert strategies_repo.find_strategy(strategy_id).scheduled_broker == "fake"  # type: ignore[union-attr]
 
-    hold_out(f"strategy:{strategy_id}", enabled=False)  # the manager turned off: lines hold nothing
+    hold_out(f"strategy:{strategy_id}", desk.now, enabled=False)  # off: lines hold nothing
     desk.now += timedelta(seconds=30)
     _pass(desk)
+    assert desk.run(strategy_id).status is RunStatus.OPEN
+
+
+def test_the_managers_hold_from_an_earlier_day_has_lapsed(desk: Desk) -> None:
+    desk.now = ENTRY_AT
+    strategy_id = _scheduled(desk)
+    hold_out(f"strategy:{strategy_id}", desk.now - timedelta(days=1))
+
+    _pass(desk)
+
     assert desk.run(strategy_id).status is RunStatus.OPEN
 
 

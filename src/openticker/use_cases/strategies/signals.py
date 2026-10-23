@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from openticker.core.agents.manager import LineKey, LineKind, held
 from openticker.core.strategies.models import SignalStrategySpec
 from openticker.core.strategies.runs import CommandKind
 from openticker.core.strategies.signals import SignalRefused, read_alert, window_note
-from openticker.storage.sqlite import manager_repo, runs_repo, signals_repo, strategies_repo
+from openticker.storage.calendar_file import load_calendar
+from openticker.storage.sqlite import runs_repo, signals_repo, strategies_repo
 from openticker.storage.sqlite.runs_repo import WEBHOOK_TRIGGER
 from openticker.storage.sqlite.strategies_repo import write_transaction
+from openticker.use_cases.agents.holds import held_now, strategy_held
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +126,7 @@ def accept_signal(token: str, client_ip: str | None, body: bytes, now: datetime)
 
     notes: list[str] = []
     wanted = []
-    held_out = str(LineKey(LineKind.STRATEGY, strategy_id)) in held(
-        manager_repo.get_state(), manager_repo.lines()
-    )
+    held_out = strategy_held(strategy_id, held_now(load_calendar(), now))
     for signal in alert.signals:
         why = window_note(spec.schedule, signal.action, now)
         if why is None and held_out and signal.action.entry:

@@ -132,6 +132,17 @@ def test_kill_locks_at_once_and_cancels_a_pending_start() -> None:
         request_start(stored.id, "zerodha", "mcp", NOW)
 
 
+def test_the_manager_kills_only_a_strategy_with_a_run_open() -> None:
+    stored = create_strategy("straddle", STRADDLE, NOW)
+
+    with pytest.raises(StrategyStateError, match="nothing to kill: give its line capital 0"):
+        request_kill(stored.id, "manager:claude:thr_m", NOW)
+
+    assert not get_strategy(stored.id).locked
+    request_kill(stored.id, "ui", NOW)  # the user may lock it whenever
+    assert get_strategy(stored.id).locked
+
+
 def test_release_waits_for_the_kill_to_finish() -> None:
     desk = Desk()
     strategy_id = desk.start()

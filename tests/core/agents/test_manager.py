@@ -62,6 +62,7 @@ from openticker.core.calendar.models import SessionHours
 from openticker.core.pnl import DayFigure, Source, source_of
 from openticker.core.strategies.ledger import SuggestedStop
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
+from tests.fixtures.calendar import NO_HOLIDAYS
 
 AT = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)
 
@@ -608,7 +609,7 @@ def test_undone_says_capital_zero_contradicts_only_a_run_still_open() -> None:
         _row("c", "enters 09:20", trades=False),  # held out: it won't enter
     ]
     lines = {"strategy:stg_a": zero, "strategy:stg_b": off, "strategy:stg_c": later}
-    (found,) = undone(rows, lines)
+    (found,) = undone(rows, lines, held_out=frozenset(lines))
     assert found.kind is UndoneKind.CONTRADICTED
     assert found.text.startswith(
         "a: running, but your line gives it capital 0. Run stop_strategy on it, or give it "
@@ -630,8 +631,20 @@ def test_held_is_every_strategy_and_script_line_at_capital_zero_while_on() -> No
         replace(_line("script:scr_c", None), capital=0.0, set_by=SetBy.YOU),
         _line("script:scr_d", None),
     ]
-    assert held(ON, lines) == {"strategy:stg_a", "script:scr_c"}
-    assert held(ManagerState(), lines) == frozenset()
+    assert held(ON, lines, AT, NO_HOLIDAYS) == {"strategy:stg_a", "script:scr_c"}
+    assert held(ManagerState(), lines, AT, NO_HOLIDAYS) == frozenset()
+
+
+def test_the_managers_hold_lasts_the_trading_day_it_was_set_for_the_users_until_changed() -> None:
+    morning = replace(_line("strategy:stg_a", None), capital=0.0)  # Tue 09:30
+    at_close = replace(morning, key=parse_key("strategy:stg_b"), set_at=_ist(15, 40))
+    yours = replace(morning, key=parse_key("script:scr_c"), set_by=SetBy.YOU)
+    lines = [morning, at_close, yours]
+    wednesday = AT + timedelta(days=1)
+
+    assert held(ON, lines, _ist(14), NO_HOLIDAYS) == {"strategy:stg_a", "script:scr_c"}
+    assert held(ON, lines, wednesday, NO_HOLIDAYS) == {"strategy:stg_b", "script:scr_c"}
+    assert held(ON, lines, wednesday + timedelta(days=1), NO_HOLIDAYS) == {"script:scr_c"}
 
 
 def test_undone_says_a_listening_strategy_with_no_script_to_alert_it_is_starved() -> None:
@@ -653,7 +666,8 @@ def test_undone_says_a_strategy_it_killed_on_an_earlier_day_is_still_locked() ->
 
     rows = [killed("a", DAY - timedelta(days=1)), killed("b", DAY), killed("c", date(2026, 9, 1))]
     held_out = replace(_line("strategy:stg_c", None), capital=0.0)
-    (found,) = undone(rows, {"strategy:stg_c": held_out}, today=DAY)
+    lines = {"strategy:stg_c": held_out}
+    (found,) = undone(rows, lines, today=DAY, held_out=frozenset(lines))
     assert (found.kind, found.key) == (UndoneKind.LOCKED, "strategy:stg_a")
     assert found.text.startswith("a: you killed it on Mon 21 Sep and it is still locked")
 

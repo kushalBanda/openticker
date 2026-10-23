@@ -229,6 +229,7 @@ def test_set_numbers_returns_whats_still_undone() -> None:
     desk = Desk()
     first = desk.start(STRADDLE)
     second = desk.start(STRADDLE, name="second")
+    set_manager(True, None, _Events(), "ui", NOW)  # a line holds only while it is on
     _, _, left = _set(_Events(), MANAGER, LineChange(f"strategy:{first}", 0.0, None, "no evidence"))
     assert {(u.key, u.kind.value) for u in left} == {
         (f"strategy:{first}", "contradicted"),

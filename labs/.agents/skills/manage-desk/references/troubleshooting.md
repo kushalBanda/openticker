@@ -7,7 +7,7 @@
 - You can't sign in: it's the user's. Say plainly, first in your answer, that they need to sign in again from Settings.
 - `get_market_status` and a `get_quote` on one contract tell you whether prices flow again.
 - Restart nothing that needs prices until they do, and hold out (capital 0) what would enter before then: a strategy entering blind closes for lost prices.
-- When they sign in, a "prices back" wake comes (`undone` lists `blind_plan`): plan again from the desk as it is then, and give capital back to what should run. A hold you leave keeps it out all day.
+- When they sign in, a "prices back" wake comes (`undone` lists `blind_plan`): plan again from the desk as it is then, and give capital back to what should run. A hold you leave keeps it out for the rest of the day.
 
 ## A strategy stopped for lost prices (`tick_stale`)
 
@@ -15,7 +15,7 @@ Its prices went quiet for a minute and it closed its legs. Read `get_strategy_ru
 
 ## A script crashed
 
-`get_script_logs` shows why. A script that crashed on the same session expiry will crash again until prices return. Restart with `start_script` once they do; a script that crashes on its own code is the user's to fix: name the error line.
+`get_script_logs` shows why. A script that crashed on the same session expiry will crash again until prices return. The server starts a scheduled script that crashed again on its own, after 1, 2 and 4 minutes, then leaves it for the day; restart one after that, or one started by hand, with `start_script` once prices are back. A script that crashes on its own code is the user's to fix: name the error line.
 
 ## Orders refused
 

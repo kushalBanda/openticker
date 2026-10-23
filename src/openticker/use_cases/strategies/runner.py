@@ -17,7 +17,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
-from openticker.core.agents.manager import LineKey, LineKind, held
 from openticker.core.calendar.calendar import intraday_allowed, market_status, session_hours
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.orders.models import (
@@ -60,10 +59,11 @@ from openticker.events.bus import EventPublisher
 from openticker.events.types import StrategyLegClosed, StrategyStarted, StrategyStopped
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange, Instrument, Product, Side, Tick
 from openticker.ports.sandbox_port import OrderSandbox
-from openticker.storage.sqlite import manager_repo, runs_repo, strategies_repo
+from openticker.storage.sqlite import runs_repo, strategies_repo
 from openticker.storage.sqlite.instruments_repo import get_instrument
 from openticker.storage.sqlite.runs_repo import SCHEDULE_TRIGGER, WEBHOOK_TRIGGER, RunOrder
 from openticker.storage.sqlite.strategies_repo import StoredStrategy, write_transaction
+from openticker.use_cases.agents.holds import held_now, strategy_held
 from openticker.use_cases.place_order import place_order
 from openticker.use_cases.strategies.define import resolve_legs
 
@@ -144,12 +144,12 @@ def start_scheduled(context: RunnerContext, now: datetime) -> None:
     no line holds out. Once per entry: whatever becomes of it (a refusal, a
     strategy already running) is the command's answer, carried out with the
     other commands."""
-    held_out = held(manager_repo.get_state(), manager_repo.lines())
+    held_out = held_now(context.calendar, now)
     for stored in strategies_repo.list_scheduled():
         if not isinstance(stored.spec, OptionsStrategySpec):
             continue
-        if str(LineKey(LineKind.STRATEGY, stored.id)) in held_out:
-            continue  # its line holds it out (ADR 46); given capital again, it enters
+        if strategy_held(stored.id, held_out):
+            continue  # its line holds it out today (ADR 46)
         due = entry_due(stored.spec.schedule, stored.spec.exchange, context.calendar, now)
         if due is None:
             continue

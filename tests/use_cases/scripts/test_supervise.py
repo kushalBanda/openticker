@@ -12,6 +12,7 @@ from openticker.core.scripts.models import (
     ScriptSchedule,
     ScriptStopReason,
 )
+from openticker.core.scripts.schedule import CRASH_BACKOFF
 from openticker.events.types import ScriptExited, ScriptStarted
 from openticker.storage import script_files
 from openticker.storage.sqlite import scripts_repo
@@ -491,17 +492,34 @@ def test_shutdown_gives_up_on_a_process_not_even_sigkill_ends(
     assert (ended.stop_reason, ended.exit_code) == (ScriptStopReason.DAEMON_STOPPED, None)
 
 
+def test_a_scheduled_script_that_crashes_is_started_again_after_a_backoff(
+    context: SupervisorContext, processes: FakeProcesses
+) -> None:
+    script_id = _script()
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
+    start_scheduled_scripts(context, NOW)
+    (run,) = scripts_repo.recent_runs(script_id, 5)
+    processes.exit(run.pid, 1)  # type: ignore[arg-type]
+    watch_scripts(context, NOW)
+
+    start_scheduled_scripts(context, NOW + CRASH_BACKOFF - timedelta(seconds=1))
+    assert len(processes.launches) == 1
+    start_scheduled_scripts(context, NOW + CRASH_BACKOFF)
+    assert len(processes.launches) == 2
+    assert scripts_repo.recent_runs(script_id, 1)[0].trigger == "schedule"
+
+
 def test_a_line_at_capital_zero_holds_a_scheduled_script_back(
     context: SupervisorContext, processes: FakeProcesses
 ) -> None:
     script_id = _script()
     manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
-    hold_out(f"script:{script_id}")
+    hold_out(f"script:{script_id}", NOW)
 
     start_scheduled_scripts(context, NOW)
     assert processes.launches == []
 
-    hold_out(f"script:{script_id}", enabled=False)
+    hold_out(f"script:{script_id}", NOW, enabled=False)
     start_scheduled_scripts(context, NOW + timedelta(minutes=5))
     assert len(processes.launches) == 1
 
