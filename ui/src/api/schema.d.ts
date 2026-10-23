@@ -7220,10 +7220,10 @@ export interface components {
         UndoneResult: {
             /**
              * Kind
-             * @description unguarded: it trades today (running, listening, or entering later today) with no stop on your line. contradicted: your line gives it capital 0, yet it trades today. blind_plan: today's plan was made while prices were down, and they're back.
+             * @description unguarded: it trades today (running, listening, or entering later today) with no stop on your line. contradicted: your line gives it capital 0, yet a run of it is open. blind_plan: today's plan was made while prices were down, and they're back. starved: it listens for alerts, but the hosted script that sends them isn't running and won't start today. locked: you killed it on an earlier day and it is still locked, though no line holds it out.
              * @enum {string}
              */
-            kind: "unguarded" | "contradicted" | "blind_plan";
+            kind: "unguarded" | "contradicted" | "blind_plan" | "starved" | "locked";
             /**
              * Key
              * @description The line it is about (strategy:<id>), or plan.

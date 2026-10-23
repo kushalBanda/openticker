@@ -30,7 +30,9 @@ from openticker.use_cases.scripts.supervise import (
     watch_scripts,
 )
 from tests.fixtures.calendar import NO_HOLIDAYS
+from tests.fixtures.events import SET_UP_AT
 from tests.fixtures.fake_processes import FakeProcesses
+from tests.fixtures.manager import hold_out
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 LIMITS = ScriptLimits(memory_mb=256, cpu_seconds=60)
@@ -261,7 +263,9 @@ def test_stop_time_stops_a_run_whoever_started_it(
 ) -> None:
     script_id = _script()
     run = _started(context, script_id)
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15), stop_time=time(15, 0)))
+    manage.schedule_script(
+        script_id, ScriptSchedule(time(9, 15), stop_time=time(15, 0)), Recorded(), "you", SET_UP_AT
+    )
     at_stop = datetime(2026, 9, 22, 9, 30, tzinfo=UTC)  # 15:00 IST
 
     watch_scripts(context, at_stop - timedelta(seconds=1))
@@ -277,7 +281,9 @@ def test_a_scheduled_script_starts_once_a_day_inside_its_window(
     context: SupervisorContext, processes: FakeProcesses
 ) -> None:
     script_id = _script()
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15), stop_time=time(15, 0)))
+    manage.schedule_script(
+        script_id, ScriptSchedule(time(9, 15), stop_time=time(15, 0)), Recorded(), "you", SET_UP_AT
+    )
 
     start_scheduled_scripts(context, NOW - timedelta(minutes=16))  # 09:14
     assert processes.launches == []
@@ -301,7 +307,7 @@ def test_a_run_the_daemons_absence_ended_doesnt_count_as_the_days(
     context: SupervisorContext, processes: FakeProcesses
 ) -> None:
     script_id = _script()
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
     start_scheduled_scripts(context, NOW)
     stop_all_scripts(context, lambda: NOW, sleep=lambda _: None)
 
@@ -320,7 +326,7 @@ def test_a_run_by_hand_before_start_time_doesnt_take_the_days_run(
     assert run.pid is not None
     processes.exit(run.pid, 0)
     watch_scripts(context, early)
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
 
     start_scheduled_scripts(context, NOW)
 
@@ -338,7 +344,7 @@ def test_a_script_that_cant_start_is_recorded_and_not_retried(
     context: SupervisorContext, processes: FakeProcesses, events: Recorded
 ) -> None:
     script_id = _script()
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
     processes.unsupported = True
     command = manage.request_start(script_id, "mcp", NOW)
 
@@ -382,7 +388,7 @@ def test_recovery_watches_scripts_still_running_and_ends_the_rest(
     alive = _started(context, _script("alive"))
     by_hand = _started(context, _script("by-hand"))
     scheduled_id = _script("scheduled")
-    manage.schedule_script(scheduled_id, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(scheduled_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
     start_scheduled_scripts(context, NOW)
     scheduled = scripts_repo.recent_runs(scheduled_id, 1)[0]
     unrecorded_id = _script("unrecorded")
@@ -485,11 +491,26 @@ def test_shutdown_gives_up_on_a_process_not_even_sigkill_ends(
     assert (ended.stop_reason, ended.exit_code) == (ScriptStopReason.DAEMON_STOPPED, None)
 
 
+def test_a_line_at_capital_zero_holds_a_scheduled_script_back(
+    context: SupervisorContext, processes: FakeProcesses
+) -> None:
+    script_id = _script()
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
+    hold_out(f"script:{script_id}")
+
+    start_scheduled_scripts(context, NOW)
+    assert processes.launches == []
+
+    hold_out(f"script:{script_id}", enabled=False)
+    start_scheduled_scripts(context, NOW + timedelta(minutes=5))
+    assert len(processes.launches) == 1
+
+
 def test_a_running_scheduled_script_is_not_started_twice(
     context: SupervisorContext, processes: FakeProcesses
 ) -> None:
     script_id = _script()
-    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(script_id, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
 
     for seconds in range(3):
         start_scheduled_scripts(context, NOW + timedelta(seconds=seconds))

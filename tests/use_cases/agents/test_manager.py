@@ -12,6 +12,7 @@ from openticker.core.agents.threads import Folder
 from openticker.core.brain.notes import Debrief
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.pnl import DayFigure, DayPnl, IntradayPoint
+from openticker.core.scripts.models import ScriptSchedule
 from openticker.events.subscribers.audit_log import record_event
 from openticker.events.types import (
     ManagerNumbersChanged,
@@ -23,6 +24,7 @@ from openticker.events.types import (
 from openticker.ports.models import EXCHANGE_TIMEZONE
 from openticker.storage.sqlite import agent_jobs_repo, agent_threads_repo
 from openticker.storage.sqlite.audit_repo import list_audit, write_audit
+from openticker.storage.sqlite.instruments_repo import upsert_instruments
 from openticker.storage.sqlite.manager_repo import get_state, save_state
 from openticker.storage.sqlite.models import AgentJobRow
 from openticker.storage.sqlite.pnl_repo import upsert_day, upsert_point
@@ -48,11 +50,21 @@ from openticker.use_cases.agents.supervise import AgentContext, start_next_chat_
 from openticker.use_cases.agents.threads import recorded_as
 from openticker.use_cases.brain.read import UnknownNoteError
 from openticker.use_cases.brain.write import write_debrief
-from openticker.use_cases.strategies.control import request_stop, schedule_strategy
+from openticker.use_cases.scripts.manage import schedule_script, upload_script
+from openticker.use_cases.strategies.control import (
+    request_kill,
+    request_stop,
+    rotate_webhook,
+    schedule_strategy,
+)
+from openticker.use_cases.strategies.define import create_strategy
 from openticker.use_cases.strategies.runner import process_commands
-from tests.fixtures.strategies import POSITIONAL_STRADDLE, STRADDLE
+from tests.fixtures.events import SET_UP_AT, Recorded
+from tests.fixtures.fake_broker import FAKE_INSTRUMENT
+from tests.fixtures.strategies import POSITIONAL_STRADDLE, STRADDLE, list_nifty_market
 from tests.fixtures.strategy_desk import Desk
 from tests.use_cases.agents.test_agent_jobs import SETTINGS, _Events, _Processes
+from tests.use_cases.strategies.test_signals import SPEC as SIGNAL_SPEC
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 CALENDAR = MarketCalendar(years=frozenset({2026}), holidays=(), special_sessions=())
@@ -165,7 +177,7 @@ def test_get_manager_lists_a_strategy_trading_without_a_stop_line() -> None:
     desk = Desk()
     running = desk.start(STRADDLE)
     later = insert_strategy("Later straddle", STRADDLE, desk.now)  # enters at 09:20
-    schedule_strategy(later.id, "fake")
+    schedule_strategy(later.id, "fake", Recorded(), "you", SET_UP_AT)
 
     view = get_manager(1_000_000.0, CALENDAR, _ist(9, 10))
     assert {(u.key, u.text) for u in view.undone} == {
@@ -176,6 +188,41 @@ def test_get_manager_lists_a_strategy_trading_without_a_stop_line() -> None:
     _set(_Events(), MANAGER, LineChange(f"strategy:{running}", 50_000.0, -2000.0, "its record"))
     _set(_Events(), "ui", LineChange(f"strategy:{later.id}", 50_000.0, None, "mine"))
     assert get_manager(1_000_000.0, CALENDAR, _ist(9, 10)).undone == []
+
+
+def test_get_manager_says_a_strategy_whose_alert_script_wont_run_is_starved() -> None:
+    upsert_instruments([FAKE_INSTRUMENT])
+    list_nifty_market()
+    alerts = create_strategy("alerts", SIGNAL_SPEC, NOW)
+    token = rotate_webhook(alerts.id, "fake", [], NOW)[2]
+    script = upload_script("alerts-feed", f'TOKEN = "{token}"\nprint(TOKEN)\n', NOW)
+    upload_script("unrelated", 'print("hi")\n', NOW)
+
+    (item,) = [
+        u for u in get_manager(1_000_000.0, CALENDAR, NOW).undone if u.kind.value == "starved"
+    ]
+    assert (item.key, item.name) == (f"strategy:{alerts.id}", "alerts")
+    assert "(alerts-feed)" in item.text
+
+    schedule_script(script.id, ScriptSchedule(time(9, 45)), Recorded(), "you", SET_UP_AT)
+    left = get_manager(1_000_000.0, CALENDAR, NOW).undone
+    assert [u.kind.value for u in left] == ["unguarded"]
+
+    set_manager(True, None, _Events(), "ui", NOW)
+    _set(_Events(), MANAGER, LineChange(f"script:{script.id}", 0.0, None, "held today"))
+    assert {u.kind.value for u in get_manager(1_000_000.0, CALENDAR, NOW).undone} == {"starved"}
+
+
+def test_get_manager_says_a_strategy_it_killed_yesterday_is_still_locked() -> None:
+    desk = Desk()
+    strategy_id = desk.start(STRADDLE)
+    request_kill(strategy_id, MANAGER, NOW - timedelta(days=1))
+    other = desk.start(STRADDLE, name="other")
+    request_kill(other, "ui", NOW - timedelta(days=1))
+    process_commands(desk.context, NOW)
+
+    left = get_manager(1_000_000.0, CALENDAR, NOW).undone
+    assert [(u.key, u.kind.value) for u in left] == [(f"strategy:{strategy_id}", "locked")]
 
 
 def test_set_numbers_returns_whats_still_undone() -> None:

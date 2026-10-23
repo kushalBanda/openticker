@@ -55,6 +55,7 @@ from openticker.core.agents.manager import (
     crossed_lines,
     day_use,
     digest,
+    held,
     is_wake,
     lines_at,
     parse_key,
@@ -75,7 +76,9 @@ from openticker.core.calendar.calendar import last_session, session_hours
 from openticker.core.calendar.models import MarketCalendar
 from openticker.core.pnl import DayFigure, Source, source_of
 from openticker.core.risk.models import StrategyStopReason
+from openticker.core.scripts.models import ENDED_BY_ABSENCE
 from openticker.core.strategies.ledger import SuggestedStop, day_figure, suggest_stop
+from openticker.core.strategies.runs import Command
 from openticker.events.bus import EventPublisher
 from openticker.events.types import (
     ManagerNumbersChanged,
@@ -86,6 +89,7 @@ from openticker.events.types import (
     PlannedCall,
 )
 from openticker.ports.models import EXCHANGE_TIMEZONE, Exchange
+from openticker.storage import script_files
 from openticker.storage.calendar_file import load_calendar
 from openticker.storage.sqlite import (
     agent_jobs_repo,
@@ -93,10 +97,13 @@ from openticker.storage.sqlite import (
     brain_repo,
     manager_repo,
     pnl_repo,
+    runs_repo,
+    scripts_repo,
+    signals_repo,
 )
 from openticker.storage.sqlite.audit_repo import AuditEntry, list_audit
 from openticker.storage.sqlite.sandbox_repo import read_funds
-from openticker.storage.sqlite.scripts_repo import find_script
+from openticker.storage.sqlite.scripts_repo import StoredScript, find_script
 from openticker.storage.sqlite.strategies_repo import find_strategy, write_transaction
 from openticker.use_cases.agents.manage import AgentJobBusyError, AgentJobCapError
 from openticker.use_cases.agents.supervise import AgentContext
@@ -104,6 +111,7 @@ from openticker.use_cases.brain.read import UnknownNoteError
 from openticker.use_cases.pnl_history import trading_day
 from openticker.use_cases.strategies.board import BoardRow, RunEnd, StrategyState, strategy_board
 from openticker.use_cases.strategies.ledger import every_ledger
+from openticker.use_cases.strategies.signals import TOKEN_IN_SOURCE, token_hash
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +177,7 @@ def get_manager(starting_capital: float, calendar: MarketCalendar, now: datetime
             sum(v.line.capital or 0.0 for v in views if v.line.key.kind is not LineKind.DESK), 2
         ),
         desk_today=figures.get(LineKind.DESK.value),
-        undone=_undone(rows, lines, _blind(state.plan, now), now),
+        undone=_undone(rows, lines, _blind(state.plan, now), calendar, now),
     )
 
 
@@ -450,7 +458,11 @@ def set_manager_numbers(
     lines = manager_repo.lines()
     wanted_keys = {str(key) for key in keys}
     views = [v for v in _line_views(lines, figures) if str(v.line.key) in wanted_keys]
-    return views, kept, _undone(read, lines, _blind(manager_repo.get_state().plan, now), now)
+    return (
+        views,
+        kept,
+        _undone(read, lines, _blind(manager_repo.get_state().plan, now), calendar, now),
+    )
 
 
 def clear_override(
@@ -546,12 +558,22 @@ _TRADES = {StrategyState.RUNNING, StrategyState.LISTENING}
 _NOT_THE_USER = {Source.MANAGER, Source.SYSTEM, Source.STRATEGY, Source.SCHEDULE, Source.ALERT}
 
 
-def _desk_rows(read: Sequence["DeskRead"], now: datetime) -> list[DeskRow]:
+def _desk_rows(
+    read: Sequence["DeskRead"],
+    held_out: frozenset[str],
+    feeds: "_Feeds",
+    kills: dict[str, Command],
+    now: datetime,
+) -> list[DeskRow]:
     """Each strategy as `undone` reads it: whether it trades today, how,
-    whether the user stopped it by hand today, and its record's stop."""
+    whether the user stopped it by hand today, its record's stop, the
+    scripts that send its alerts and whether one will, and the day the
+    manager killed it, if it did. A strategy its line holds out (ADR 46)
+    trades today only while a run of it is open."""
     today = now.astimezone(EXCHANGE_TIMEZONE).date()
     found = []
     for row, suggested in ((r.row, r.suggested) for r in read):
+        key = _strategy_key(row)
         entry = row.next_entry
         enters = (
             row.state is StrategyState.SCHEDULED
@@ -565,27 +587,88 @@ def _desk_rows(read: Sequence["DeskRead"], now: datetime) -> list[DeskRow]:
             when = f"enters {entry.astimezone(EXCHANGE_TIMEZONE):%H:%M}"
         else:
             when = row.state.value
+        running = row.state is StrategyState.RUNNING
+        trades = running or (key not in held_out and (row.state in _TRADES or enters))
+        feeders = feeds.of(row.strategy.id)
+        kill = kills.get(row.strategy.id) if row.state is StrategyState.KILLED else None
         found.append(
             DeskRow(
-                _strategy_key(row),
+                key,
                 row.strategy.name,
-                row.state in _TRADES or enters,
+                trades,
                 when,
                 _stopped_by_user(row.last_end, today),
                 suggested,
+                feeders=tuple(script.name for script in feeders),
+                fed=not feeders or any(feeds.will_run(script, held_out) for script in feeders),
+                killed_by_manager_on=(
+                    kill.created_at.astimezone(EXCHANGE_TIMEZONE).date()
+                    if kill and source_of(kill.triggered_by) is Source.MANAGER
+                    else None
+                ),
             )
         )
     return found
+
+
+class _Feeds:
+    """The hosted scripts that send each signal strategy its alerts: those
+    whose source holds the strategy's alert URL token, matched by its hash
+    as the alert URL itself is (ADR 24, 46). An alert sent from anywhere
+    else (TradingView, ChartInk) isn't known, so its strategy has none."""
+
+    def __init__(self, calendar: MarketCalendar, now: datetime) -> None:
+        self._calendar = calendar
+        self._now = now
+        strategy_of = signals_repo.strategies_by_token_hash()
+        self._by_strategy: dict[str, list[StoredScript]] = {}
+        for script in scripts_repo.list_scripts() if strategy_of else []:
+            try:
+                source = script_files.read_source(script.id)
+            except OSError:
+                continue
+            for token in set(TOKEN_IN_SOURCE.findall(source)):
+                strategy_id = strategy_of.get(token_hash(token))
+                if strategy_id is not None:
+                    self._by_strategy.setdefault(strategy_id, []).append(script)
+        self._running = {run.script_id for run in scripts_repo.active_runs()}
+
+    def of(self, strategy_id: str) -> list[StoredScript]:
+        return self._by_strategy.get(strategy_id, [])
+
+    def will_run(self, script: StoredScript, held_out: frozenset[str]) -> bool:
+        """Running now, or its schedule starts it later today: today is one of
+        its days, its stop_time hasn't passed, no line holds it, and no run
+        since today's start_time ended by itself (that day's run)."""
+        if script.id in self._running:
+            return True
+        schedule = script.schedule
+        if schedule is None or str(LineKey(LineKind.SCRIPT, script.id)) in held_out:
+            return False
+        local = self._now.astimezone(EXCHANGE_TIMEZONE)
+        if local.weekday() not in schedule.weekdays:
+            return False
+        if session_hours(local.date(), schedule.exchange, self._calendar) is None:
+            return False
+        if schedule.stop_time is not None and local.time() >= schedule.stop_time:
+            return False
+        since = datetime.combine(local.date(), schedule.start_time, EXCHANGE_TIMEZONE)
+        runs = scripts_repo.runs_started_since(script.id, since)
+        return all(run.stop_reason in ENDED_BY_ABSENCE for run in runs)
 
 
 def _undone(
     read: Sequence[DeskRead],
     lines: Sequence[ManagerLine],
     blind: tuple[datetime, datetime] | None,
+    calendar: MarketCalendar,
     now: datetime,
 ) -> list[Undone]:
-    """The desk's undone (ADR 44) from one read of it."""
-    return undone(_desk_rows(read, now), {str(line.key): line for line in lines}, blind)
+    """The desk's undone (ADR 44, 46) from one read of it."""
+    held_out = held(manager_repo.get_state(), lines)
+    rows = _desk_rows(read, held_out, _Feeds(calendar, now), runs_repo.last_kills(), now)
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    return undone(rows, {str(line.key): line for line in lines}, blind, today)
 
 
 BLIND_LOOKBACK = timedelta(days=5)  # a session expired over a long weekend still counts
@@ -717,7 +800,7 @@ def queue_due_manager_wake(context: AgentContext, now: datetime) -> AgentJob | N
     if hours is not None and now >= hours.opens_at - PLAN_LEAD:
         rows, figures = _desk_read(calendar, now)
         blind = _blind(manager_repo.get_state().plan, now)
-        left = _undone(rows, lines, blind, now)
+        left = _undone(rows, lines, blind, calendar, now)
     crossed_now = crossed_lines(lines, figures)
     notice: ManagerStalled | None = None
     with write_transaction() as session:

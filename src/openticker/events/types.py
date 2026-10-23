@@ -191,6 +191,20 @@ class StrategyStarted:
 
 
 @dataclass(frozen=True)
+class StrategyScheduleChanged:
+    """A strategy was scheduled or unscheduled (ADR 46): audited with the
+    broker it entered through before, so one taken away can be seen and put
+    back. Its entry time stays in its definition either way."""
+
+    strategy_id: str
+    name: str
+    broker: str | None  # the broker its scheduled entries go through; None: unscheduled
+    previous_broker: str | None
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
 class StrategyLegClosed:
     strategy_id: str
     run_id: str
@@ -220,6 +234,19 @@ class ScriptStarted:
     script_id: str
     run_id: str
     name: str
+    triggered_by: str
+    occurred_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True)
+class ScriptScheduleChanged:
+    """A hosted script was scheduled or unscheduled (ADR 46): audited with
+    the schedule it had, so one taken away can be seen and put back."""
+
+    script_id: str
+    name: str
+    schedule: str | None  # "09:15-15:10 Mon-Fri NSE"; None: unscheduled
+    previous: str | None
     triggered_by: str
     occurred_at: datetime = field(default_factory=_now)
 

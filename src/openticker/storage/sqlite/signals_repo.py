@@ -73,6 +73,13 @@ def strategies_with_webhooks() -> set[str]:
         return set(session.scalars(select(StrategyWebhookRow.strategy_id)).all())
 
 
+def strategies_by_token_hash() -> dict[str, str]:
+    """Each alert URL's token hash, with the strategy it belongs to."""
+    statement = select(StrategyWebhookRow.token_hash, StrategyWebhookRow.strategy_id)
+    with Session(get_engine()) as session:
+        return {token_hash: strategy_id for token_hash, strategy_id in session.execute(statement)}
+
+
 def webhook_by_hash(token_hash: str) -> StoredWebhook | None:
     statement = select(StrategyWebhookRow).where(StrategyWebhookRow.token_hash == token_hash)
     with Session(get_engine()) as session:

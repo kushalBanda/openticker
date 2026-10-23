@@ -35,6 +35,7 @@ from openticker.storage.sqlite.engine import get_engine
 from openticker.storage.sqlite.models import SandboxOrderRow, SandboxTradeRow
 from openticker.storage.sqlite.strategies_repo import insert_strategy, write_transaction
 from openticker.use_cases.strategies.control import rotate_webhook, schedule_strategy
+from tests.fixtures.events import SET_UP_AT, Recorded
 from tests.fixtures.strategies import STRADDLE
 
 # The straddle with the mock's 30% stop on each leg.
@@ -375,7 +376,7 @@ def seed_strategies(now: Callable[[], datetime], straddle_id: str, trend_id: str
         rng=rng,
         product="MIS",
     )
-    schedule_strategy(condor.id, "fake")
+    schedule_strategy(condor.id, "fake", Recorded(), "you", SET_UP_AT)
     _review(
         condor.id,
         today - timedelta(days=7),

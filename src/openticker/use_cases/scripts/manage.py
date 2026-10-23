@@ -20,6 +20,8 @@ from openticker.core.scripts.models import (
     ScriptRun,
     ScriptSchedule,
 )
+from openticker.events.bus import EventPublisher
+from openticker.events.types import ScriptScheduleChanged
 from openticker.storage import script_files
 from openticker.storage.sqlite import scripts_repo
 from openticker.storage.sqlite.scripts_repo import StoredScript
@@ -110,20 +112,47 @@ def list_scripts() -> list[ScriptSummary]:
     return summaries
 
 
-def schedule_script(script_id: str, schedule: ScriptSchedule) -> StoredScript:
+def schedule_script(
+    script_id: str,
+    schedule: ScriptSchedule,
+    events: EventPublisher,
+    triggered_by: str,
+    now: datetime,
+) -> StoredScript:
     """Runs it from start_time on its weekdays, skipping days its exchange
     doesn't trade, until stop_time. Replaces any schedule it had."""
-    with write_transaction() as session:
-        _script(session, script_id)
-        scripts_repo.set_schedule(session, script_id, schedule)
-    return _find(script_id)
+    return _set_schedule(script_id, schedule, events, triggered_by, now)
 
 
-def unschedule_script(script_id: str) -> StoredScript:
+def unschedule_script(
+    script_id: str, events: EventPublisher, triggered_by: str, now: datetime
+) -> StoredScript:
     """No more scheduled starts or stops; a run already going carries on."""
+    return _set_schedule(script_id, None, events, triggered_by, now)
+
+
+def _set_schedule(
+    script_id: str,
+    schedule: ScriptSchedule | None,
+    events: EventPublisher,
+    triggered_by: str,
+    now: datetime,
+) -> StoredScript:
+    """Audited with the schedule it had (ADR 46)."""
     with write_transaction() as session:
-        _script(session, script_id)
-        scripts_repo.set_schedule(session, script_id, None)
+        before = _script(session, script_id)
+        scripts_repo.set_schedule(session, script_id, schedule)
+    if before.schedule != schedule:
+        events.publish(
+            ScriptScheduleChanged(
+                script_id=script_id,
+                name=before.name,
+                schedule=str(schedule) if schedule else None,
+                previous=str(before.schedule) if before.schedule else None,
+                triggered_by=triggered_by,
+                occurred_at=now,
+            )
+        )
     return _find(script_id)
 
 

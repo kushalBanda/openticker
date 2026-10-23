@@ -1753,7 +1753,9 @@ def schedule_strategy(broker: Broker, strategy_id: StrategyId) -> StrategyResult
     strategy's exit_time and expiry-day exit close every run, scheduled or
     not."""
     with _agent_facing_errors():
-        stored = control.schedule_strategy(strategy_id, require_broker(broker))
+        stored = control.schedule_strategy(
+            strategy_id, require_broker(broker), event_bus(), _who(), clock()
+        )
     return StrategyResult.of(stored, _SCHEDULE_NEXT_STEP)
 
 
@@ -1767,7 +1769,7 @@ def unschedule_strategy(strategy_id: StrategyId) -> StrategyResult:
     """Stop entering the strategy on its schedule. A run already open
     carries on; stop_strategy ends it."""
     with _agent_facing_errors():
-        stored = control.unschedule_strategy(strategy_id)
+        stored = control.unschedule_strategy(strategy_id, event_bus(), _who(), clock())
     return StrategyResult.of(stored)
 
 
@@ -2044,7 +2046,9 @@ def schedule_script(
     exchange doesn't trade, until stop_time or until it exits: once a day.
     Scheduled while its window is open, it starts within a second."""
     with _agent_facing_errors():
-        stored = scripts.schedule_script(script_id, schedule.to_core())
+        stored = scripts.schedule_script(
+            script_id, schedule.to_core(), event_bus(), _who(), clock()
+        )
     return ScriptResult.of_stored(stored, "get_script shows each run.")
 
 
@@ -2058,7 +2062,7 @@ def unschedule_script(script_id: ScriptId) -> ScriptResult:
     """No more scheduled starts or stops. A run already going carries on;
     stop_script ends it."""
     with _agent_facing_errors():
-        stored = scripts.unschedule_script(script_id)
+        stored = scripts.unschedule_script(script_id, event_bus(), _who(), clock())
     return ScriptResult.of_stored(stored)
 
 

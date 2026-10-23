@@ -37,6 +37,8 @@ const RECORDS = new Set([
   "OrderCancelled",
   "InstrumentSyncCompleted",
   "ScriptStarted",
+  "ScriptScheduleChanged",
+  "StrategyScheduleChanged",
   "AgentJobStarted",
   "BrokerConnected",
   "BrokerDisconnected",
@@ -244,6 +246,25 @@ export function describe(
     }
     case "ScriptStarted":
       return { kind: "Script", tone: undefined, text: `${text(d, "name")} started` };
+    case "ScriptScheduleChanged": {
+      const schedule = text(d, "schedule");
+      const before = text(d, "previous");
+      return {
+        kind: "Schedule",
+        tone: undefined,
+        text: schedule
+          ? `${text(d, "name")} scheduled ${schedule}`
+          : `${text(d, "name")} unscheduled${before ? ` (was ${before})` : ""}`,
+      };
+    }
+    case "StrategyScheduleChanged":
+      return {
+        kind: "Schedule",
+        tone: undefined,
+        text: text(d, "broker")
+          ? `${strategy} scheduled on ${text(d, "broker")}`
+          : `${strategy} unscheduled`,
+      };
     case "ScriptExited": {
       const reason = text(d, "reason");
       const fine = reason === "exited" || reason === "stopped" || reason === "schedule";
@@ -474,6 +495,7 @@ export function queriesToInvalidate(entry: AuditEntry): Key[] {
   if (type === "InstrumentSyncCompleted") return [["instruments-status"]];
   if (type === "ChargeRatesChecked") return [["account"]];
   if (type === "WatchlistChanged") return [["watchlists"]];
+  if (type === "ScriptScheduleChanged") return [["scripts"], ["script"]];
   if (type.startsWith("Manager")) return [["manager"]];
   if (type === "AgentSettingsChanged") return [["agent-settings"]];
   if (type.startsWith("AgentChat")) return [["agent-threads"]];
@@ -533,8 +555,13 @@ export const KINDS: Record<Exclude<KindFilter, "all">, string[]> = {
     "OrderCancelled",
     "PositionSettled",
   ],
-  strategies: ["StrategyStarted", "StrategyLegClosed", "StrategyStopped"],
-  scripts: ["ScriptStarted", "ScriptExited"],
+  strategies: [
+    "StrategyStarted",
+    "StrategyLegClosed",
+    "StrategyStopped",
+    "StrategyScheduleChanged",
+  ],
+  scripts: ["ScriptStarted", "ScriptExited", "ScriptScheduleChanged"],
   risk: ["RiskBreached"],
   broker: [
     "BrokerSessionExpired",

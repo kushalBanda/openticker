@@ -1508,16 +1508,20 @@ def create_app(
         return StrategyResult.of(control.release_kill_switch(strategy_id))
 
     @api.post("/strategies/{strategy_id}/schedule")
-    def schedule(strategy_id: str, body: BrokerBody) -> StrategyResult:
+    def schedule(strategy_id: str, body: BrokerBody, caller: Caller) -> StrategyResult:
         """Enters the strategy at its entry_time on its weekdays, skipping holidays."""
         return StrategyResult.of(
-            control.schedule_strategy(strategy_id, require_broker(body.broker))
+            control.schedule_strategy(
+                strategy_id, require_broker(body.broker), events, caller.triggered_by, clock()
+            )
         )
 
     @api.delete("/strategies/{strategy_id}/schedule")
-    def unschedule(strategy_id: str) -> StrategyResult:
+    def unschedule(strategy_id: str, caller: Caller) -> StrategyResult:
         """No more scheduled entries; a run already open carries on."""
-        return StrategyResult.of(control.unschedule_strategy(strategy_id))
+        return StrategyResult.of(
+            control.unschedule_strategy(strategy_id, events, caller.triggered_by, clock())
+        )
 
     @api.post("/strategies/{strategy_id}/legs/{leg_id}/close")
     def close_leg(strategy_id: str, leg_id: str, caller: Caller) -> StrategyCommandResult:
@@ -1816,12 +1820,18 @@ def create_app(
         return ScriptCommandResult.of(command, _SCRIPT_COMMAND_NEXT_STEP)
 
     @api.post("/scripts/{script_id}/schedule")
-    def schedule_script(script_id: str, body: ScriptScheduleDefinition) -> ScriptResult:
-        return ScriptResult.of_stored(scripts.schedule_script(script_id, body.to_core()))
+    def schedule_script(
+        script_id: str, body: ScriptScheduleDefinition, caller: Caller
+    ) -> ScriptResult:
+        return ScriptResult.of_stored(
+            scripts.schedule_script(script_id, body.to_core(), events, caller.triggered_by, clock())
+        )
 
     @api.delete("/scripts/{script_id}/schedule")
-    def unschedule_script(script_id: str) -> ScriptResult:
-        return ScriptResult.of_stored(scripts.unschedule_script(script_id))
+    def unschedule_script(script_id: str, caller: Caller) -> ScriptResult:
+        return ScriptResult.of_stored(
+            scripts.unschedule_script(script_id, events, caller.triggered_by, clock())
+        )
 
     @api.get("/scripts/{script_id}/logs")
     def script_logs(

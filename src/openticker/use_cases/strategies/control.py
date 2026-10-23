@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from openticker.core.strategies.models import InvalidStrategyError, SignalStrategySpec
 from openticker.core.strategies.runs import Command, CommandKind, CommandStatus, LegStatus, Run
+from openticker.events.bus import EventPublisher
+from openticker.events.types import StrategyScheduleChanged
 from openticker.storage.sqlite import runs_repo, signals_repo, strategies_repo
 from openticker.storage.sqlite.runs_repo import RunEvent, RunOrder
 from openticker.storage.sqlite.signals_repo import SignalCall, StoredWebhook
@@ -104,7 +106,9 @@ def release_kill_switch(strategy_id: str) -> StoredStrategy:
     return strategies_repo.find_strategy(strategy_id) or stored
 
 
-def schedule_strategy(strategy_id: str, broker: str) -> StoredStrategy:
+def schedule_strategy(
+    strategy_id: str, broker: str, events: EventPublisher, triggered_by: str, now: datetime
+) -> StoredStrategy:
     """Enters the strategy at its entry_time on its weekdays, skipping market
     holidays, through `broker`, until `unschedule_strategy`."""
     with write_transaction() as session:
@@ -119,16 +123,41 @@ def schedule_strategy(strategy_id: str, broker: str) -> StoredStrategy:
                 f"{stored.name!r} is locked by its kill switch; release_kill_switch first"
             )
         strategies_repo.set_scheduled(session, strategy_id, broker)
+    _schedule_changed(stored, broker, events, triggered_by, now)
     return strategies_repo.find_strategy(strategy_id) or stored
 
 
-def unschedule_strategy(strategy_id: str) -> StoredStrategy:
+def unschedule_strategy(
+    strategy_id: str, events: EventPublisher, triggered_by: str, now: datetime
+) -> StoredStrategy:
     """No more scheduled entries. A run already open carries on, and its
     exit_time still closes it."""
     with write_transaction() as session:
         stored = _strategy(session, strategy_id)
         strategies_repo.set_scheduled(session, strategy_id, None)
+    _schedule_changed(stored, None, events, triggered_by, now)
     return strategies_repo.find_strategy(strategy_id) or stored
+
+
+def _schedule_changed(
+    before: StoredStrategy,
+    broker: str | None,
+    events: EventPublisher,
+    triggered_by: str,
+    now: datetime,
+) -> None:
+    """Audited with the broker it had (ADR 46)."""
+    if before.scheduled_broker != broker:
+        events.publish(
+            StrategyScheduleChanged(
+                strategy_id=before.id,
+                name=before.name,
+                broker=broker,
+                previous_broker=before.scheduled_broker,
+                triggered_by=triggered_by,
+                occurred_at=now,
+            )
+        )
 
 
 def request_close_leg(strategy_id: str, leg_id: str, triggered_by: str, now: datetime) -> Command:

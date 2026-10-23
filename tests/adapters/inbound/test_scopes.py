@@ -201,6 +201,25 @@ def test_the_desk_managers_key_may_start_a_review_only() -> None:
         assert "chat's key" in (manager(tool) or ""), tool
 
 
+def test_the_desk_managers_key_holds_things_out_and_never_changes_a_schedule() -> None:
+    def call(scope: str, tool: str) -> str | None:
+        method, path = TOOL_ROUTES[tool]
+        return refusal(
+            scope, method, path, {}, RUNS.get, is_manager_key=lambda s: s == "chat:thr_m"
+        )
+
+    for tool in (
+        "schedule_strategy",
+        "unschedule_strategy",
+        "schedule_script",
+        "unschedule_script",
+    ):
+        assert "schedules are the user's" in (call("chat:thr_m", tool) or ""), tool
+        assert call("chat:thr_1", tool) is None, tool
+    for tool in ("set_manager_numbers", "start_strategy", "start_script", "stop_strategy"):
+        assert call("chat:thr_m", tool) is None, tool
+
+
 def test_a_chats_key_reaches_no_route_without_a_tool() -> None:
     scope = "chat:thr_1"
 

@@ -6,8 +6,8 @@
 
 - You can't sign in: it's the user's. Say plainly, first in your answer, that they need to sign in again from Settings.
 - `get_market_status` and a `get_quote` on one contract tell you whether prices flow again.
-- Restart nothing that needs prices until they do, and unschedule what would enter before then: a strategy entering blind closes for lost prices.
-- When they sign in, a "prices back" wake comes (`undone` lists `blind_plan`): plan again from the desk as it is then.
+- Restart nothing that needs prices until they do, and hold out (capital 0) what would enter before then: a strategy entering blind closes for lost prices.
+- When they sign in, a "prices back" wake comes (`undone` lists `blind_plan`): plan again from the desk as it is then, and give capital back to what should run. A hold you leave keeps it out all day.
 
 ## A strategy stopped for lost prices (`tick_stale`)
 

@@ -10,6 +10,7 @@ from openticker.core.scripts.models import (
     ScriptSchedule,
     ScriptStopReason,
 )
+from openticker.events.types import ScriptScheduleChanged
 from openticker.storage import script_files
 from openticker.storage.sqlite import scripts_repo
 from openticker.storage.sqlite.scripts_repo import DuplicateScriptNameError
@@ -20,6 +21,7 @@ from openticker.use_cases.scripts.manage import (
     ScriptStateError,
     UnknownScriptError,
 )
+from tests.fixtures.events import SET_UP_AT, Recorded
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
 SOURCE = "print('hello')\n"
@@ -151,11 +153,38 @@ def test_a_schedule_is_stored_and_removed() -> None:
     stored = manage.upload_script("daily", SOURCE, NOW)
     schedule = ScriptSchedule(start_time=time(9, 20), stop_time=time(15, 0))
 
-    assert manage.schedule_script(stored.id, schedule).schedule == schedule
+    assert (
+        manage.schedule_script(stored.id, schedule, Recorded(), "you", SET_UP_AT).schedule
+        == schedule
+    )
     assert manage.get_script(stored.id, 1, False).script.schedule == schedule
-    assert manage.unschedule_script(stored.id).schedule is None
+    assert manage.unschedule_script(stored.id, Recorded(), "you", SET_UP_AT).schedule is None
     with pytest.raises(UnknownScriptError):
-        manage.schedule_script("scr_missing", schedule)
+        manage.schedule_script("scr_missing", schedule, Recorded(), "you", SET_UP_AT)
+
+
+def test_a_schedule_change_is_audited_with_the_schedule_it_had() -> None:
+    stored = manage.upload_script("daily", SOURCE, NOW)
+    events = Recorded()
+    schedule = ScriptSchedule(start_time=time(9, 20), stop_time=time(15, 0))
+
+    manage.schedule_script(stored.id, schedule, events, "mcp:codex", NOW)
+    manage.schedule_script(stored.id, schedule, events, "mcp:codex", NOW)  # no change
+    manage.unschedule_script(stored.id, events, "manager:claude:thr_m", NOW)
+
+    assert events.events == [
+        ScriptScheduleChanged(
+            stored.id, "daily", "09:20-15:00 Mon,Tue,Wed,Thu,Fri NSE", None, "mcp:codex", NOW
+        ),
+        ScriptScheduleChanged(
+            stored.id,
+            "daily",
+            None,
+            "09:20-15:00 Mon,Tue,Wed,Thu,Fri NSE",
+            "manager:claude:thr_m",
+            NOW,
+        ),
+    ]
 
 
 def test_get_script_returns_the_source_only_when_asked() -> None:

@@ -14,6 +14,7 @@ from openticker.core.scripts.models import (
 from openticker.storage.sqlite import scripts_repo
 from openticker.use_cases.scripts import manage
 from tests.fixtures.calendar import NO_HOLIDAYS
+from tests.fixtures.events import SET_UP_AT
 from tests.fixtures.fake_processes import FakeProcesses
 
 NOW = datetime(2026, 9, 22, 4, 0, tzinfo=UTC)  # Tuesday 09:30 IST
@@ -53,7 +54,7 @@ def test_a_pass_starts_what_was_asked_and_what_is_scheduled_then_records_exits()
     loop = _loop(processes, clock)
     by_hand = manage.upload_script("by-hand", "pass\n", NOW).id
     scheduled = manage.upload_script("scheduled", "pass\n", NOW).id
-    manage.schedule_script(scheduled, ScriptSchedule(time(9, 15)))
+    manage.schedule_script(scheduled, ScriptSchedule(time(9, 15)), Recorded(), "you", SET_UP_AT)
     manage.request_start(by_hand, "mcp", NOW)
 
     loop.step()

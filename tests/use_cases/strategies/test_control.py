@@ -4,6 +4,7 @@ import pytest
 
 from openticker.core.strategies.models import Schedule
 from openticker.core.strategies.runs import CommandKind, CommandStatus, LegStatus
+from openticker.events.types import StrategyScheduleChanged
 from openticker.storage.sqlite import runs_repo, strategies_repo
 from openticker.use_cases.strategies.control import (
     StrategyLockedError,
@@ -27,6 +28,7 @@ from openticker.use_cases.strategies.define import (
     update_strategy,
 )
 from openticker.use_cases.strategies.runner import process_commands
+from tests.fixtures.events import SET_UP_AT, Recorded
 from tests.fixtures.strategies import NOW, STRADDLE, list_nifty_market
 from tests.fixtures.strategy_desk import Desk
 
@@ -40,16 +42,34 @@ def test_scheduling_needs_an_entry_time_and_no_kill_switch() -> None:
     stored = create_strategy("straddle", STRADDLE, NOW)
     manual = create_strategy("manual", replace(STRADDLE, schedule=Schedule()), NOW)
 
-    assert schedule_strategy(stored.id, "zerodha").scheduled_broker == "zerodha"
+    assert (
+        schedule_strategy(stored.id, "zerodha", Recorded(), "you", SET_UP_AT).scheduled_broker
+        == "zerodha"
+    )
     assert [s.id for s in strategies_repo.list_scheduled()] == [stored.id]
     with pytest.raises(StrategyStateError, match="no entry_time"):
-        schedule_strategy(manual.id, "zerodha")
+        schedule_strategy(manual.id, "zerodha", Recorded(), "you", SET_UP_AT)
     request_kill(stored.id, "mcp", NOW)
     with pytest.raises(StrategyLockedError):
-        schedule_strategy(stored.id, "zerodha")
+        schedule_strategy(stored.id, "zerodha", Recorded(), "you", SET_UP_AT)
 
-    assert unschedule_strategy(stored.id).scheduled_broker is None
+    assert unschedule_strategy(stored.id, Recorded(), "you", SET_UP_AT).scheduled_broker is None
     assert strategies_repo.list_scheduled() == []
+
+
+def test_a_schedule_change_is_audited_with_the_broker_it_had() -> None:
+    stored = create_strategy("straddle", STRADDLE, NOW)
+    events = Recorded()
+
+    schedule_strategy(stored.id, "zerodha", events, "ui", NOW)
+    schedule_strategy(stored.id, "zerodha", events, "ui", NOW)  # no change
+    unschedule_strategy(stored.id, events, "mcp:codex", NOW)
+    unschedule_strategy(stored.id, events, "mcp:codex", NOW)  # no change
+
+    assert events.events == [
+        StrategyScheduleChanged(stored.id, "straddle", "zerodha", None, "ui", NOW),
+        StrategyScheduleChanged(stored.id, "straddle", None, "zerodha", "mcp:codex", NOW),
+    ]
 
 
 def test_start_is_queued_for_the_daemon() -> None:

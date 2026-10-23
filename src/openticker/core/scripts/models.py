@@ -18,6 +18,9 @@ class InvalidScriptError(Exception):
     pass
 
 
+_DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
 @dataclass(frozen=True)
 class ScriptSchedule:
     """When the daemon runs a script by itself: from `start_time` on each of
@@ -37,6 +40,12 @@ class ScriptSchedule:
             raise InvalidScriptError(
                 f"stop_time {self.stop_time:%H:%M} must be after start_time {self.start_time:%H:%M}"
             )
+
+    def __str__(self) -> str:
+        """ "09:15-15:10 Mon,Tue,Wed,Thu,Fri NSE", or "09:15 …" with no stop_time."""
+        hours = f"{self.start_time:%H:%M}" + (f"-{self.stop_time:%H:%M}" if self.stop_time else "")
+        days = ",".join(_DAY_NAMES[day] for day in sorted(self.weekdays))
+        return f"{hours} {days} {self.exchange.value}"
 
 
 @dataclass(frozen=True)
