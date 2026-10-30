@@ -1,9 +1,9 @@
-import NumberFlow from "@number-flow/react";
 import { CircleUser, Search, SunMoon } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { useEffect, useRef, useState } from "react";
 import { useSession, useSignOut } from "../api/queries";
+import { RollingNumber } from "../components/RollingNumber";
 import { brokerName, change, direction, istClock, price } from "../lib/format";
 import { enter, leave } from "../lib/motion";
 import { useTheme } from "../lib/theme";
@@ -35,7 +35,7 @@ function Index({ id, name }: { id: InstrumentKey; name: string }) {
     <span data-testid={`index-${name}`} role="img" aria-label={label}>
       <b>{name}</b>
       {tick ? (
-        <NumberFlow value={tick.last_price} locales="en-IN" format={PRICE} />
+        <RollingNumber value={tick.last_price} locales="en-IN" format={PRICE} />
       ) : (
         <span className="muted">—</span>
       )}{" "}

@@ -1,4 +1,3 @@
-import NumberFlow from "@number-flow/react";
 import { Star } from "lucide-react";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
@@ -19,6 +18,7 @@ import { type Column, DataTable } from "../../components/DataTable";
 import type { From } from "../../components/Instrument";
 import { Page } from "../../components/Page";
 import { SideBadge } from "../../components/PlacedBy";
+import { RollingNumber } from "../../components/RollingNumber";
 import { Segmented } from "../../components/Segmented";
 import { StatCard } from "../../components/StatCard";
 import {
@@ -514,7 +514,7 @@ export function SymbolPage() {
             ) : (
               <span className="tabular" data-testid="ltp-value" data-value={ltp}>
                 {currency && "₹"}
-                <NumberFlow value={ltp} locales="en-IN" format={FIGURE} />
+                <RollingNumber value={ltp} locales="en-IN" format={FIGURE} />
               </span>
             )
           }

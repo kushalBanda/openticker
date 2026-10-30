@@ -1,8 +1,8 @@
-import NumberFlow from "@number-flow/react";
 import { Fragment, lazy, Suspense, useState } from "react";
 import { Link } from "react-router";
 import type { Today } from "../../api/queries";
 import type { IntradayStyle } from "../../components/IntradayChart";
+import { RollingNumber } from "../../components/RollingNumber";
 import { Segmented } from "../../components/Segmented";
 import { direction, istClock, qty, rupees } from "../../lib/format";
 import { sinceSentence } from "../../lib/today";
@@ -105,7 +105,7 @@ export function TodayHero({
           <>
             <span className="today-sign">{net > 0 ? "+" : net < 0 ? "-" : ""}</span>
             <span className="today-cur">₹</span>
-            <NumberFlow value={Math.abs(net)} locales="en-IN" format={FIGURE} />
+            <RollingNumber value={Math.abs(net)} locales="en-IN" format={FIGURE} />
           </>
         )}
       </div>
